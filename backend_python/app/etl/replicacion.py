@@ -217,6 +217,16 @@ def _otras_tablas_costo(destino: dict | None, db: str, bodega: str, producto: st
                                   for k, v in r.items() if v not in (None, "", 0, 0.0) and ("costo" in k or "instal" in k or "bodega" in k or "cia" in k)})
                 hallado.append({"tabla": t, "columnas_costo": cs, "filas": filas})
             destino["otras_tablas_costo"] = hallado
+            # el reporte "Existencia a la fecha por bodega" saca el costo (ins) de este SP: mostramos de donde lo lee
+            try:
+                d = cn.execute(text("SELECT OBJECT_DEFINITION(OBJECT_ID('dbo.sp_cons_inv_exitencias'))")).scalar() or ""
+                ls = d.splitlines(); sal = []
+                for i, l in enumerate(ls):
+                    if "costo_prom_unit_ins" in l.lower():
+                        sal += [x.rstrip() for x in ls[max(0, i - 3):i + 4]] + ["-----"]
+                destino["sp_costo"] = "\n".join(sal[:80]) if sal else ("(el SP no menciona costo_prom_unit_ins; puede llamar a otro SP) EXECs: " + "; ".join(l.strip() for l in ls if "exec" in l.lower())[:600] if d else "(no se pudo leer la definición del SP)")
+            except Exception as e:
+                destino["sp_costo"] = "(no se pudo leer la definición del SP: " + str(e)[:150] + ")"
     except Exception as e:
         destino["otras_tablas_costo"] = [{"tabla": "(error)", "columnas_costo": [str(e)[:200]], "filas": []}]
 
