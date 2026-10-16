@@ -11,8 +11,9 @@ def _solo_admin(user):
 
 
 @router.post("/correr-pipeline")
-def pipeline(bg: BackgroundTasks, user=Depends(usuario_actual)):
-    _solo_admin(user); bg.add_task(pipeline_nocturno); return {"estado": "lanzado"}
+def pipeline(bg: BackgroundTasks, dias_ventas: int = 7, user=Depends(usuario_actual)):
+    """Primera carga: dias_ventas=365 (o mas) para poblar el historico."""
+    _solo_admin(user); bg.add_task(pipeline_nocturno, dias_ventas); return {"estado": "lanzado"}
 
 
 @router.post("/correr-motor")

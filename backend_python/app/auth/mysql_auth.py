@@ -1,20 +1,23 @@
-"""Autenticacion contra MySQL 'reloj'. El query se parametriza por .env (AUTH_USER_QUERY)
-hasta conocer el esquema real. Ajustar verify_password al hash que use esa base."""
+"""Autenticacion contra MySQL de reloj (solo usuario y clave; perfiles/permisos viven en esta app).
+Misma logica que admin/Log.php: USUARIOS.CODIGO + USUARIOS.CLAVE, donde CLAVE es md5 (32 hex) o hash PHP password_hash
+(bcrypt $2y$). Solo lectura: no se migra ni se reescribe la clave desde aqui."""
+import hashlib, hmac
 from sqlalchemy import text
-from passlib.context import CryptContext
+from passlib.hash import bcrypt
 from ..config import settings
 from ..db import mysql_engine
 
-_pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 
 def verify_password(plain: str, stored: str) -> bool:
-    try:
-        if stored.startswith("$2"):
-            return _pwd.verify(plain, stored)
-    except Exception:
-        return False
-    return False  # TODO: soportar el formato real del hash de reloj (md5/sha/etc.)
+    stored = (stored or "").strip()
+    if stored.startswith(("$2y$", "$2a$", "$2b$")):
+        try:
+            return bcrypt.verify(plain, stored.replace("$2y$", "$2b$", 1))
+        except ValueError:
+            return False
+    if len(stored) == 32:
+        return hmac.compare_digest(hashlib.md5(plain.encode()).hexdigest(), stored.lower())
+    return False
 
 
 def autenticar(usuario: str, clave: str) -> dict | None:

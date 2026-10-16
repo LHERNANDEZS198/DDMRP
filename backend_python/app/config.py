@@ -13,15 +13,18 @@ class Settings(BaseSettings):
     siesa_host: str = ""
     siesa_port: int = 1433
     siesa_db: str = ""
+    siesa_cia: int = 1          # f120_id_cia (ver ChaTest: cia 1)
     siesa_user: str = ""
     siesa_password: str = ""
 
     auth_mysql_host: str = ""
     auth_mysql_port: int = 3306
-    auth_mysql_db: str = "reloj"
+    auth_mysql_db: str = "BDRELOJ"
     auth_mysql_user: str = ""
     auth_mysql_password: str = ""
-    auth_user_query: str = ""
+    auth_user_query: str = ("SELECT CODIGO AS id, NOMBRE AS nombre, CLAVE AS password_hash "
+                            "FROM USUARIOS WHERE CODIGO = :usuario")
+    admin_bootstrap: str = ""   # CODIGOs (coma) que entran como admin de la app, para el primer arranque
 
     jwt_secret: str = "dev"
     jwt_expire_minutes: int = 480

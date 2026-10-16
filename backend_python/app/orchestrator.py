@@ -32,8 +32,8 @@ def ejecutar_motor(fecha: date | None = None) -> dict:
         raise
 
 
-def pipeline_nocturno():
+def pipeline_nocturno(dias_ventas: int = 7):
     log.info("Pipeline nocturno: ETL")
-    correr_etl()
+    correr_etl(dias_ventas)
     log.info("Pipeline nocturno: motor")
     return ejecutar_motor()

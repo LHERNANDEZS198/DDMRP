@@ -24,6 +24,8 @@ def usuario_actual(token: str = Depends(oauth2)) -> dict:
 
 
 def asignaciones(usuario_id: str) -> list[dict]:
+    if usuario_id in {x.strip() for x in settings.admin_bootstrap.split(",") if x.strip()}:
+        return [{"bodega_id": "*", "categoria": "*", "nivel": "aprobacion", "es_admin": True}]
     with pg.connect() as c:
         r = c.execute(text("SELECT bodega_id, categoria, nivel, es_admin FROM ddmrp.rbac_asignacion "
                            "WHERE usuario_id = :u"), {"u": usuario_id})
