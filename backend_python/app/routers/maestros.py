@@ -304,7 +304,8 @@ def _preparar(d: dict, filas: list[dict], omitir: bool = False, malas_out: list 
                 if "empresa" in d["llave"]:
                     emp = _valor_llave("empresa", f.get("empresa")) or hit[1] or ""
                     if not emp:
-                        raise ValueError("no se pudo deducir la empresa de la tienda: agrega la columna empresa")
+                        raise ValueError("no se pudo deducir la empresa de la tienda " + repr(hit[0]) + ": esta base aun no conoce las tiendas. "
+                                     "Agrega la columna empresa (05 Funat, 21 Store) al archivo, o carga primero la bitacora con esa columna")
                     llave["empresa"] = emp
             for k in otras:
                 llave[k] = _valor_llave(k, f.get(k))
@@ -469,7 +470,8 @@ def bajar_excel(nombre: str, user=Depends(requiere("ver_maestros", "cargar_maest
     d = _def(nombre)
     bod = d.get("bodega")
     llave_xl = [k for k in d["llave"] if not (bod and k in ("empresa", bod))]
-    cols_t = [k for k in d["llave"] if not (bod and k == "empresa")] if bod else d["llave"]
+    con_emp = bool(bod) and "empresa" in d["llave"]      # la empresa viaja en el archivo: asi se puede subir a otra base sin tiendas cargadas
+    cols_t = [k for k in d["llave"] if k != "empresa"] if bod else d["llave"]
     sel = ", ".join(f"t.{c}" for c in cols_t + list(d["editable"]))
     join, w, p = "", "TRUE", {}
     solo_tienda = bool(bod) and not llave_xl and not d.get("producto")
@@ -477,15 +479,16 @@ def bajar_excel(nombre: str, user=Depends(requiere("ver_maestros", "cargar_maest
         join = f"LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = t.{d['producto']}" if d.get("producto") else ""
         join += f" LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = t.{bod}"
         w, p = filtro_sql_permisos(user, f"t.{bod}", "mi.categoria" if d.get("producto") else "'*'")
-        sel = f"t.{bod}, mb.descripcion AS bodega_nombre" + "".join(f", t.{c}" for c in cols_t if c != bod) + "".join(f", t.{c}" for c in d["editable"])
-        cab = [bod, "bodega_nombre"] + [c for c in cols_t if c != bod] + list(d["editable"])
+        sel = (f"t.{bod}, mb.descripcion AS bodega_nombre" + (", t.empresa" if con_emp else "") + "".join(f", t.{c}" for c in cols_t if c != bod)
+               + "".join(f", t.{c}" for c in d["editable"]))
+        cab = [bod, "bodega_nombre"] + (["empresa"] if con_emp else []) + [c for c in cols_t if c != bod] + list(d["editable"])
     else:
         cab = cols_t + list(d["editable"])
     with pg.connect() as c:
         if solo_tienda:   # plantilla con todas las tiendas del maestro de bodegas
             w2, p2 = filtro_sql_permisos(user, "mb.bodega_id", "'*'")
             ed = "".join(f", t.{c}" for c in d["editable"])
-            filas = c.execute(text(f"SELECT mb.bodega_id, mb.descripcion{ed} FROM ddmrp.maestro_bodega mb "
+            filas = c.execute(text(f"SELECT mb.bodega_id, mb.descripcion{', mb.empresa' if con_emp else ''}{ed} FROM ddmrp.maestro_bodega mb "
                                    f"LEFT JOIN {d['tabla']} t ON t.{bod} = mb.bodega_id WHERE {w2} ORDER BY mb.bodega_id"), p2).all()
         else:
             filas = c.execute(text(f"SELECT {sel} FROM {d['tabla']} t {join} WHERE {w} ORDER BY "
@@ -499,7 +502,8 @@ def bajar_excel(nombre: str, user=Depends(requiere("ver_maestros", "cargar_maest
     lineas = [d["label"], "", "Fila 1 = encabezados (no los cambies). Desde la fila 2, los datos."]
     if bod:
         lineas += ["Tienda: usa el codigo de Siesa (bodega_id, ej. SV021) o, si prefieres, solo el nombre (bodega_nombre). La empresa se deduce sola.",
-                   "La columna bodega_nombre es informativa."]
+                   "La columna bodega_nombre es informativa.",
+                   "Empresa (05 Funat, 21 Store): si la columna viene llena se usa tal cual; si no, se deduce de la tienda (requiere tener las tiendas cargadas)."]
     elif "empresa" in d["llave"]:
         lineas.append("Empresa (05 Funat, 21 Store): opcional; si la dejas vacia aplica a todas.")
     otras = [k for k in d["llave"] if k not in ("empresa",) and k != bod]
