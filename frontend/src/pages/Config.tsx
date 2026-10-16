@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AgGridReact } from 'ag-grid-react'
 import { CellValueChangedEvent, ColDef, GridApi } from 'ag-grid-community'
+import { Box, Button, Chip, MenuItem, Paper, Stack, TextField, Typography } from '@mui/material'
+import Download from '@mui/icons-material/Download'
+import Upload from '@mui/icons-material/Upload'
+import ContentPaste from '@mui/icons-material/ContentPaste'
+import DeleteOutline from '@mui/icons-material/DeleteOutline'
+import CloudSync from '@mui/icons-material/CloudSync'
 import { api, bajar, subir } from '../api'
+import Aviso from '../Aviso'
 
 type Def = { clave: string; label: string; llave: string[]; editable: string[]; tipos: Record<string, string>; sin_reemplazo: boolean }
 
@@ -101,35 +108,39 @@ export default function Config() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 8 }}>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <select value={sel} onChange={e => setSel(e.target.value)}>
-          {defs.map(d => <option key={d.clave} value={d.clave}>{d.label}</option>)}
-        </select>
-        <button onClick={traerTiendas} title="Lee de Siesa las tiendas (codigo y nombre)">Traer tiendas de Siesa</button>
-        <button onClick={descargar}>Descargar Excel</button>
-        <span style={{ borderLeft: '1px solid #ccc', paddingLeft: 8 }}>Cargar:</span>
-        <select value={modo} onChange={e => setModo(e.target.value as any)} title="Como se aplica el archivo">
-          <option value="actualizar">Crear nuevos y actualizar existentes</option>
-          {!def?.sin_reemplazo && <option value="reemplazar">Reemplazar todo el maestro</option>}
-        </select>
-        <button onClick={() => fileRef.current?.click()}>Subir Excel / CSV</button>
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 1.5, minHeight: 500 }}>
+      <Paper variant="outlined" sx={{ p: 1.5, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
+        <TextField select size="small" label="Maestro" value={sel} onChange={e => setSel(e.target.value)} sx={{ minWidth: 260 }}>
+          {defs.map(d => <MenuItem key={d.clave} value={d.clave}>{d.label}</MenuItem>)}
+        </TextField>
+        <Button variant="outlined" startIcon={<Download />} onClick={descargar}>Descargar Excel</Button>
+        <Box sx={{ borderLeft: '1px solid #ccc', height: 28, mx: .5 }} />
+        <TextField select size="small" label="Al cargar" value={modo} onChange={e => setModo(e.target.value as any)} sx={{ minWidth: 270 }}>
+          <MenuItem value="actualizar">Crear nuevos y actualizar existentes</MenuItem>
+          {!def?.sin_reemplazo && <MenuItem value="reemplazar">Reemplazar todo el maestro</MenuItem>}
+        </TextField>
+        <Button variant="contained" startIcon={<Upload />} onClick={() => fileRef.current?.click()}>Subir Excel / CSV</Button>
         <input ref={fileRef} type="file" accept=".xlsx,.csv,.txt" hidden onChange={e => subirArchivo(e.target.files?.[0])} />
-        <button onClick={() => setPegar(!pegar)}>Pegar desde Excel</button>
-        {def && !def.sin_reemplazo && <button onClick={eliminar}>Eliminar seleccionadas</button>}
-        <small>{msg}</small>
-      </div>
-      {def && <small>“Descargar Excel” te da la plantilla con los datos actuales. La tienda se identifica por codigo (ej. SV021) o por nombre,
-        y la empresa se deduce sola. Las referencias van como texto de 6 digitos. Columnas a cargar: <b>{def.editable.join(' · ') || '(solo existencia de la fila)'}</b></small>}
+        <Button startIcon={<ContentPaste />} onClick={() => setPegar(!pegar)}>Pegar desde Excel</Button>
+        {def && !def.sin_reemplazo && <Button color="error" startIcon={<DeleteOutline />} onClick={eliminar}>Eliminar seleccionadas</Button>}
+        <Box sx={{ flex: 1 }} />
+        <Button size="small" startIcon={<CloudSync />} onClick={traerTiendas} title="Lee de Siesa las tiendas (código y nombre)">Traer tiendas de Siesa</Button>
+      </Paper>
+      {def && (
+        <Typography variant="body2" color="text.secondary">
+          “Descargar Excel” te da la plantilla con los datos actuales. La tienda se identifica por código de Siesa (ej. SV021) y la empresa se deduce sola.
+          Las referencias van como texto de 6 dígitos. Columnas a cargar:{' '}
+          {def.editable.length ? def.editable.map(c => <Chip key={c} size="small" label={c} sx={{ mr: .5 }} />) : '(solo existencia de la fila)'}
+        </Typography>)}
       {pegar && def && (
-        <div>
-          <textarea style={{ width: '100%', height: 120 }} value={txt} onChange={e => setTxt(e.target.value)}
-            placeholder="Pega aqui con la fila de encabezados" />
-          <button onClick={enviar}>Cargar</button>
-        </div>)}
-      <div className="ag-theme-quartz" style={{ flex: 1 }}>
+        <Stack spacing={1}>
+          <TextField multiline minRows={4} fullWidth value={txt} onChange={e => setTxt(e.target.value)} placeholder="Pega aquí con la fila de encabezados" />
+          <Box><Button variant="contained" onClick={enviar}>Cargar</Button></Box>
+        </Stack>)}
+      <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 300 }}>
         <AgGridReact rowData={rows} columnDefs={cols} onCellValueChanged={onChange} rowBuffer={20} rowSelection="multiple"
           onGridReady={e => setGrid(e.api)} defaultColDef={{ resizable: true, sortable: true }} />
-      </div>
-    </div>)
+      </Box>
+      <Aviso msg={msg} onClose={() => setMsg('')} />
+    </Box>)
 }

@@ -1,0 +1,8 @@
+.ag-theme-quartz {
+  --ag-header-background-color: #eef2e3;
+  --ag-header-foreground-color: #3f5121;
+  --ag-selected-row-background-color: rgba(110,138,55,.15);
+  --ag-range-selection-border-color: #6e8a37;
+  --ag-active-color: #6e8a37;
+  --ag-font-family: inherit;
+}

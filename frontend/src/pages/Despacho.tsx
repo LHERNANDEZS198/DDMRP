@@ -1,13 +1,17 @@
 import { useEffect, useState } from 'react'
 import { AgGridReact } from 'ag-grid-react'
 import { ColDef, GridApi } from 'ag-grid-community'
+import { Box, Button, Checkbox, Chip, FormControlLabel, MenuItem, Paper, Stack, TextField, Typography } from '@mui/material'
+import Check from '@mui/icons-material/Check'
+import Download from '@mui/icons-material/Download'
 import { api, descargar } from '../api'
+import Aviso from '../Aviso'
 
 const cols: ColDef[] = [
   { checkboxSelection: true, headerCheckboxSelection: true, width: 50, pinned: 'left' },
   { field: 'bodega_id', headerName: 'Bodega', filter: true },
   { field: 'producto_id', headerName: 'Producto', filter: true },
-  { field: 'descripcion', flex: 1, filter: true },
+  { field: 'descripcion', flex: 1, minWidth: 220, filter: true },
   { field: 'zona', filter: true },
   { field: 'inventario', type: 'numericColumn' },
   { field: 'en_transito', headerName: 'Transito', type: 'numericColumn' },
@@ -63,33 +67,33 @@ export default function Despacho() {
     } catch (x: any) { setMsg('Error: ' + x.message) }
   }
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 8 }}>
-      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-        <b>Corrida:</b>
-        <select value={dia} onChange={e => elegirDia(e.target.value)}>
-          <option value="">Todas las tiendas</option>
-          {dias.map(d => <option key={d.dia} value={d.dia}>DIA {d.dia} ({d.bodegas.length} tiendas)</option>)}
-        </select>
-        {filtrar && tiendas.map(b => (
-          <span key={b} style={{ background: '#e8f0fe', borderRadius: 10, padding: '1px 8px' }}>
-            {b} <a href="#" style={{ textDecoration: 'none' }} title="Quitar de esta corrida" onClick={e => { e.preventDefault(); quitar(b) }}>×</a>
-          </span>))}
-        <select value={nueva} onChange={e => poner(e.target.value)}>
-          <option value="">+ agregar tienda…</option>
-          {todas.filter(b => !tiendas.includes(b)).map(b => <option key={b} value={b}>{b}</option>)}
-        </select>
-        {filtrar && <button onClick={() => { setDia(''); setFiltrar(false); setTiendas([]) }}>Ver todas</button>}
-      </div>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <button onClick={aprobar}>Aprobar seleccionados</button>
-        <input style={{ width: 300 }} placeholder={`Nota (por defecto: ABASTECIMIENTO DEL <dia> DE <MES>${dia ? ` DÍA ${dia}` : ''})`} value={notas} onChange={e => setNotas(e.target.value)} />
-        <label>Consecutivo inicial <input type="number" style={{ width: 70 }} min={1} value={consec} onChange={e => setConsec(Number(e.target.value))} /></label>
-        <label><input type="checkbox" checked={marcar} onChange={e => setMarcar(e.target.checked)} /> marcar como enviadas</label>
-        <button onClick={plano}>Generar archivo plano Siesa</button>
-        <button disabled title="Fase 3">Enviar a Siesa (web service)</button> <small>{msg}</small></div>
-      <div className="ag-theme-quartz" style={{ flex: 1 }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 1.5, minHeight: 500 }}>
+      <Paper variant="outlined" sx={{ p: 1.5, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
+        <Typography sx={{ fontWeight: 700 }}>Corrida</Typography>
+        <TextField select size="small" value={dia} onChange={e => elegirDia(e.target.value)} sx={{ minWidth: 220 }} slotProps={{ select: { displayEmpty: true } }}>
+          <MenuItem value="">Todas las tiendas</MenuItem>
+          {dias.map(d => <MenuItem key={d.dia} value={String(d.dia)}>DIA {d.dia} ({d.bodegas.length} tiendas)</MenuItem>)}
+        </TextField>
+        {filtrar && tiendas.map(b => <Chip key={b} label={b} size="small" color="primary" variant="outlined" onDelete={() => quitar(b)} />)}
+        <TextField select size="small" value={nueva} onChange={e => poner(e.target.value)} sx={{ minWidth: 170 }} label="+ agregar tienda">
+          {todas.filter(b => !tiendas.includes(b)).map(b => <MenuItem key={b} value={b}>{b}</MenuItem>)}
+        </TextField>
+        {filtrar && <Button size="small" onClick={() => { setDia(''); setFiltrar(false); setTiendas([]) }}>Ver todas</Button>}
+      </Paper>
+      <Paper variant="outlined" sx={{ p: 1.5, display: 'flex', flexWrap: 'wrap', gap: 1.5, alignItems: 'center' }}>
+        <Button variant="contained" startIcon={<Check />} onClick={aprobar}>Aprobar seleccionados</Button>
+        <TextField size="small" sx={{ width: 320 }} label="Nota del documento" value={notas} onChange={e => setNotas(e.target.value)}
+          placeholder={`ABASTECIMIENTO DEL <dia> DE <MES>${dia ? ` DÍA ${dia}` : ''}`} />
+        <TextField size="small" type="number" label="Consecutivo inicial" sx={{ width: 150 }} value={consec}
+          slotProps={{ htmlInput: { min: 1 } }} onChange={e => setConsec(Number(e.target.value))} />
+        <FormControlLabel control={<Checkbox size="small" checked={marcar} onChange={e => setMarcar(e.target.checked)} />} label="Marcar como enviadas" />
+        <Button variant="outlined" startIcon={<Download />} onClick={plano}>Generar archivo plano Siesa</Button>
+        <Button disabled title="Fase 3">Enviar a Siesa (web service)</Button>
+      </Paper>
+      <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 300 }}>
         <AgGridReact rowData={rows} columnDefs={cols} rowSelection="multiple" rowBuffer={20}
           onGridReady={e => setGrid(e.api)} defaultColDef={{ resizable: true, sortable: true }} />
-      </div>
-    </div>)
+      </Box>
+      <Aviso msg={msg} onClose={() => setMsg('')} />
+    </Box>)
 }

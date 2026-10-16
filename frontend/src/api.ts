@@ -1,6 +1,8 @@
 let token = localStorage.getItem('token') || ''
 export const setToken = (t: string) => { token = t; localStorage.setItem('token', t) }
 export const hasToken = () => !!token
+export const getUser = () => localStorage.getItem('user') || ''
+export const logout = () => { localStorage.removeItem('token'); localStorage.removeItem('user'); location.reload() }
 
 /** Mensaje de error de una respuesta: lee el cuerpo UNA sola vez y saca `detail` si es JSON de FastAPI. */
 async function errorDe(r: Response): Promise<string> {
@@ -26,7 +28,7 @@ export async function login(usuario: string, clave: string) {
   })
   if (r.status === 401) throw new Error('Credenciales invalidas')
   if (!r.ok) throw new Error(await errorDe(r))
-  setToken((await r.json()).access_token)
+  setToken((await r.json()).access_token); localStorage.setItem('user', usuario)
 }
 
 /** POST que devuelve un archivo: lo descarga en el navegador. Devuelve el nombre y los avisos del servidor. */
