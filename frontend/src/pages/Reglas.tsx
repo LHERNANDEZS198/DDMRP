@@ -14,7 +14,7 @@ const grupos: [string, string[]][] = [
   ['Qué entra al flujo neto y a lo sugerido', ['incluir_transito', 'restar_demanda_calificada', 'sumar_vectorizacion']],
   ['Inventario del CEDI (cuando no alcanza)', ['cedi_regla_reparto']],
   ['Envío a las tiendas (Matriz de despacho)', ['valor_minimo_envio']],
-  ['Datos de Siesa', ['etl_traer_ventas', 'inv_tiendas_resta_comprometido']],
+  ['Datos de Siesa', ['etl_traer_ventas', 'inv_tiendas_resta_comprometido', 'inv_tiendas_resta_sin_acumular']],
   ['Parámetros del modelo (hoja Modelo)', ['meses_historia', 'meses_adu', 'mult_cota_max_promo', 'mult_cota_min_promo', 'adu_bajo_min', 'adu_bajo_max']],
   ['Historial (vistas de cambios y tendencia)', ['retener_dias']],
 ]
@@ -76,7 +76,7 @@ function Diagnostico() {
         </Alert>
         <Alert severity="info" sx={{ py: 0 }}>
           Inventario que tiene el sistema: <b>{inv ? Number(inv.disponible).toLocaleString('es-CO') : 'sin fila (cuenta como 0)'}</b>{inv ? ` (corte ${inv.fecha_corte})` : ''}
-          {' · '}{res.local.resta_comprometido ? 'se calcula como existencia − comprometida' : 'se calcula como la existencia (sin restar lo comprometido)'}
+          {' · '}{(res.local.resta_comprometido ? 'se calcula como existencia − comprometida' : 'se calcula como la existencia (sin restar lo comprometido)') + (res.local.resta_sin_acumular ? ' − ventas sin acumular' : '')}
           {res.local.costo?.length ? ` · costo promedio guardado: $${Math.round(res.local.costo[0]).toLocaleString('es-CO')}` : ' · sin costo guardado'}
         </Alert>
         {res.aviso && <Alert severity="warning" sx={{ py: 0 }}>{res.aviso}</Alert>}

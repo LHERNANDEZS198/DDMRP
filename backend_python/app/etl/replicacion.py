@@ -30,7 +30,8 @@ MESES_VENTANA = 7  # por defecto; se lee de ddmrp.parametro 'meses_historia' (2 
 
 SQL_INVENTARIO = """
 SELECT RTRIM(i.f120_referencia), RTRIM(b.f150_id), CAST(GETDATE() AS date),
-       CONVERT(float, SUM(e.f400_cant_existencia_1 - :resta * e.f400_cant_comprometida_1))
+       CONVERT(float, SUM(e.f400_cant_existencia_1 - :resta * e.f400_cant_comprometida_1
+                       - :resta_sa * ISNULL(e.f400_cant_salida_sin_conf_1, 0)))
 FROM t400_cm_existencia e
 JOIN t150_mc_bodegas b ON b.f150_rowid = e.f400_rowid_bodega
 JOIN t121_mc_items_extensiones x ON x.f121_rowid = e.f400_rowid_item_ext
@@ -175,6 +176,7 @@ def diagnostico_inventario(bodega: str, producto: str) -> dict:
                                               for r in c.execute(text("SELECT producto_id, bodega_id, fecha_corte, disponible FROM ddmrp.inventario_actual WHERE bodega_id = :b AND producto_id = :p"), {"b": bodega, "p": producto}).mappings()]
         out["local"]["costo"] = [float(r[0]) for r in c.execute(text("SELECT costo FROM ddmrp.costo_item WHERE producto_id = :p"), {"p": producto}).all()]
         out["local"]["resta_comprometido"] = bool((c.execute(text("SELECT valor FROM ddmrp.parametro WHERE clave='inv_tiendas_resta_comprometido'")).scalar() or 0))
+        out["local"]["resta_sin_acumular"] = bool((c.execute(text("SELECT valor FROM ddmrp.parametro WHERE clave='inv_tiendas_resta_sin_acumular'")).scalar() or 0))
     if not settings.siesa_host:
         out["aviso"] = "Siesa no esta configurado"; return out
     sql = ("SELECT RTRIM(b.f150_id) AS bodega, RTRIM(i.f120_referencia) AS referencia, e.* FROM t400_cm_existencia e "
@@ -322,7 +324,7 @@ def _cedi_de_siesa(cur) -> dict:
     """Inventario disponible del CEDI (bodega SIESA_CEDI_BODEGA, empresa 05). Se lee todo antes de escribir."""
     bod = settings.siesa_cedi_bodega
     eng = siesa_engine(settings.siesa_db)
-    filas = list(_stream(eng, SQL_INVENTARIO, {"cia": settings.siesa_cia, "bodegas": [bod], "resta": 1}, expanding="bodegas"))   # el CEDI siempre descuenta lo comprometido
+    filas = list(_stream(eng, SQL_INVENTARIO, {"cia": settings.siesa_cia, "bodegas": [bod], "resta": 1, "resta_sa": 0}, expanding="bodegas"))   # el CEDI siempre descuenta lo comprometido; las ventas sin acumular no aplican
     costos = _costos(cur, eng, [bod], pisar=True)
     cur.execute("TRUNCATE ddmrp.inventario_cedi")
     datos = {}
@@ -448,6 +450,7 @@ def _correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
             cur.execute("TRUNCATE ddmrp.transitos")
             traer_ventas = (_param(cur, "etl_traer_ventas") or 0) >= 1
             resta_comp = (_param(cur, "inv_tiendas_resta_comprometido") or 0) >= 1
+            resta_sa = (_param(cur, "inv_tiendas_resta_sin_acumular") or 0) >= 1   # ventas del POS aun sin acumular (salida sin confirmar)
             if not traer_ventas:
                 log.info("ETL: las ventas por mes no se traen aqui (parametro etl_traer_ventas = 0); usa el boton 'Traer ventas'")
             for empresa, db in (("05", settings.siesa_db), ("21", settings.siesa_db_s)):
@@ -455,7 +458,7 @@ def _correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
                 if not db or not bodegas:
                     continue
                 eng, prm = siesa_engine(db), {"cia": settings.siesa_cia, "bodegas": bodegas}
-                prm_inv = {**prm, "resta": 1 if resta_comp else 0}
+                prm_inv = {**prm, "resta": 1 if resta_comp else 0, "resta_sa": 1 if resta_sa else 0}
                 log.info("ETL empresa %s (%s): %s bodegas", empresa, db, len(bodegas))
                 progreso.avance(f"Leyendo inventario de Siesa ({db}, {len(bodegas)} bodegas)…")
                 res[f"inventario_{empresa}"] = _volcar(

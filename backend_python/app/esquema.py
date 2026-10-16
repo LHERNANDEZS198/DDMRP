@@ -31,6 +31,7 @@ SENTENCIAS = [
     "CREATE TABLE IF NOT EXISTS ddmrp.reparto_dia (dia INT PRIMARY KEY)",   # vacio = el CEDI se reparte entre todas las tiendas
     "INSERT INTO ddmrp.parametro VALUES ('valor_minimo_envio', 350000, 'Valor minimo (a costo promedio) del despacho a una tienda: por debajo no se deja enviar. 0 = sin minimo') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('inv_tiendas_resta_comprometido', 0, 'Inventario de las tiendas: 0 = existencia (como el reporte de Siesa), 1 = existencia menos cantidad comprometida') ON CONFLICT DO NOTHING",
+    "INSERT INTO ddmrp.parametro VALUES ('inv_tiendas_resta_sin_acumular', 1, 'Inventario de las tiendas: 1 = resta las ventas del POS aun sin acumular (salida sin confirmar), como el disponible de Siesa; 0 = no') ON CONFLICT DO NOTHING",
     "CREATE TABLE IF NOT EXISTS ddmrp.laboratorio (codigo TEXT PRIMARY KEY, nombre TEXT)",
     "ALTER TABLE ddmrp.maestro_bodega ADD COLUMN IF NOT EXISTS descripcion TEXT",
     # cotas como fraccion (0.125 = 12,5%): 4 decimales en vez de 2
