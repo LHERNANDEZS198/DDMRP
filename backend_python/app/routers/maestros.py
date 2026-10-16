@@ -44,6 +44,9 @@ MAESTROS = {
         label="Unidad de despacho por referencia", tabla="ddmrp.abast_unidad_despacho",
         llave=["empresa", "producto_id"], editable={"unidad_despacho": "num"},
         bodega=None, producto="producto_id", global_=True),
+    "reserva-cedi": dict(
+        label="Reserva del CEDI: % del inventario que se guarda por item (no se despacha)", tabla="ddmrp.reserva_cedi",
+        llave=["producto_id"], editable={"porcentaje": "num"}, bodega=None, producto="producto_id", global_=True, fraccion=True),
     "promocion": dict(
         label="Promociones (indicativo 0/1/2)", tabla="ddmrp.promocion",
         llave=["empresa", "producto_id"], editable={"indicativo": "int"},
@@ -321,6 +324,8 @@ def _preparar(d: dict, filas: list[dict], omitir: bool = False, malas_out: list 
                     fila_base[c] = 0
                     continue
                 fila_base[c] = _valor_num(f.get(c), t) if t in ("num", "int") else (str(f[c]).strip() if f.get(c) not in (None, "") else None)
+                if d.get("fraccion") and fila_base[c] is not None and not 0 <= fila_base[c] <= 1:
+                    raise ValueError(f"{f.get(c)!r} no es un porcentaje valido: escribe 20% (o 0.2)")
             if "empresa" in d["llave"] and not fila_base.get("empresa"):
                 if not empresas:
                     raise ValueError("falta la columna empresa (y aun no hay bodegas cargadas para deducirla)")

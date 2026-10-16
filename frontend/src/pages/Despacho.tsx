@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { AgGridReact } from 'ag-grid-react'
-import { ColDef, GridApi } from 'ag-grid-community'
-import { Box, Button, Checkbox, Chip, FormControlLabel, MenuItem, Paper, Stack, TextField, Typography } from '@mui/material'
+import { ColDef, GridApi, ICellRendererParams } from 'ag-grid-community'
+import { Alert, Box, Button, Checkbox, Chip, FormControlLabel, IconButton, MenuItem, Paper, Stack, TextField, Tooltip, Typography } from '@mui/material'
+import Insights from '@mui/icons-material/Insights'
 import Check from '@mui/icons-material/Check'
 import Download from '@mui/icons-material/Download'
 import Undo from '@mui/icons-material/Undo'
@@ -10,8 +11,13 @@ import Aviso from '../Aviso'
 import { ayudar } from '../ayuda'
 import { useYo } from '../Yo'
 
+const verEnControl = (p: ICellRendererParams) => (
+  <Tooltip title="Ver esta tienda y este item en Control DDMRP (foto actual), en una pestaña nueva">
+    <IconButton size="small" component="a" target="_blank" rel="noopener" href={`/control?tienda=${encodeURIComponent(p.data.bodega_id)}&item=${encodeURIComponent(p.data.producto_id)}`}>
+      <Insights fontSize="small" /></IconButton></Tooltip>)
 const cols: ColDef[] = [
   { checkboxSelection: true, headerCheckboxSelection: true, width: 50, pinned: 'left' },
+  { headerName: 'Control', width: 80, cellRenderer: verEnControl, sortable: false, pinned: 'left' },
   { field: 'bodega_id', headerName: 'Bodega', filter: true },
   { field: 'producto_id', headerName: 'Producto', filter: true },
   { field: 'descripcion', flex: 1, minWidth: 220, filter: true },
@@ -22,7 +28,10 @@ const cols: ColDef[] = [
   { field: 'tog_aj', headerName: 'TOG aj.', type: 'numericColumn' },
   { field: 'unidad_despacho', headerName: 'Und. desp.', type: 'numericColumn' },
   { field: 'vectorizacion', headerName: 'Derrame', type: 'numericColumn' },
-  { field: 'cantidad_sugerida', headerName: 'Sugerido', type: 'numericColumn' },
+  { field: 'cantidad_necesaria', headerName: 'Necesario', type: 'numericColumn' },
+  { field: 'stock_cedi', headerName: 'Stock CEDI', type: 'numericColumn', valueFormatter: p => p.value == null ? '' : Math.round(p.value).toLocaleString() },
+  { field: 'cantidad_sugerida', headerName: 'Asignado', type: 'numericColumn',
+    cellStyle: p => p.data?.limitado ? { color: '#c62828', fontWeight: 700 } : null },
   { field: 'cantidad_aprobada', headerName: 'A enviar', editable: (p: any) => !!p.context?.aprobar, type: 'numericColumn',
     valueGetter: p => p.data.cantidad_aprobada ?? p.data.cantidad_sugerida,
     valueSetter: p => { p.data.cantidad_aprobada = Number(p.newValue); return true } },
@@ -36,6 +45,8 @@ export default function Despacho() {
   const [notas, setNotas] = useState('')
   const [consec, setConsec] = useState(1)
   const [marcar, setMarcar] = useState(false)
+  const [cedi, setCedi] = useState<any>(null)
+  useEffect(() => { api('/despacho/cedi').then(setCedi).catch(() => {}) }, [])
   const [ver, setVer] = useState<'pendiente' | 'aprobada' | 'enviada'>('pendiente')
   // Corrida del dia: DIA de abastecimiento + tiendas elegidas (se pueden poner o quitar antes de generar)
   const [dias, setDias] = useState<{ dia: number; bodegas: string[] }[]>([])
@@ -95,6 +106,13 @@ export default function Despacho() {
         </TextField>
         {filtrar && <Button size="small" onClick={() => { setDia(''); setFiltrar(false); setTiendas([]) }}>Ver todas</Button>}
       </Paper>
+      {cedi && (
+        <Alert severity={cedi.activo ? 'info' : 'warning'} sx={{ py: 0 }}>
+          {cedi.regla === 0 ? 'El reparto del inventario del CEDI está apagado: se sugiere todo lo que pide el buffer.'
+            : cedi.productos === 0 ? `Sin inventario del CEDI (${cedi.bodega}): corre el ETL para traerlo. Mientras tanto no se limita lo sugerido.`
+            : `CEDI ${cedi.bodega}: ${cedi.con_stock.toLocaleString()} items con stock (corte ${cedi.corte}) · si no alcanza: ${cedi.regla_nombre.toLowerCase()}`
+              + (cedi.items_con_reserva ? ` · ${cedi.items_con_reserva} items con reserva` : '')}
+        </Alert>)}
       <Paper variant="outlined" sx={{ p: 1.5, display: 'flex', flexWrap: 'wrap', gap: 1.5, alignItems: 'center' }}>
         <TextField select size="small" label="Ver" value={ver} onChange={e => setVer(e.target.value as any)} sx={{ minWidth: 130 }}>
           <MenuItem value="pendiente">Pendientes</MenuItem><MenuItem value="aprobada">Aprobadas</MenuItem><MenuItem value="enviada">Enviadas</MenuItem>

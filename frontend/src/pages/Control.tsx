@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { AgGridReact } from 'ag-grid-react'
 import { ColDef, ICellRendererParams } from 'ag-grid-community'
 import { Autocomplete, Box, Button, Card, CardActionArea, Chip, MenuItem, Paper, Tab, Tabs, TextField, Tooltip, Typography } from '@mui/material'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useSearchParams } from 'react-router-dom'
 import { BufferTrend, ZonaShare, Punto } from '../TrendCharts'
 import { api } from '../api'
 import { AYUDA, ayudar } from '../ayuda'
@@ -100,9 +100,12 @@ export default function Control() {
   const [mov, setMov] = useState('')
   const [periodo, setPeriodo] = useState<{ desde: string; hasta: string } | null>(null)
   const [matriz, setMatriz] = useState<{ de: string; a: string; n: number }[]>([])
-  const [f, setF] = useState<F>(VACIO)
-  const [qTxt, setQTxt] = useState('')
-  const [nivel, setNivel] = useState<Nivel>('empresa')
+  // ?tienda=SV011&item=058076 (viene del boton de la matriz de despacho): abre filtrado en el detalle de esa tienda e item
+  const [sp] = useSearchParams()
+  const tiendaUrl = sp.get('tienda') ?? '', itemUrl = sp.get('item') ?? ''
+  const [f, setF] = useState<F>(() => ({ ...VACIO, bodegas: tiendaUrl ? [tiendaUrl] : [], q: itemUrl }))
+  const [qTxt, setQTxt] = useState(itemUrl)
+  const [nivel, setNivel] = useState<Nivel>(tiendaUrl || itemUrl ? 'detalle' : 'empresa')
   const [opc, setOpc] = useState<any>({ tiendas: [], laboratorios: [], dias: [], empresas: [], criterios: [], ejecucion: null })
   const [kpi, setKpi] = useState<any>(null)
   const [grupos, setGrupos] = useState<any[]>([])

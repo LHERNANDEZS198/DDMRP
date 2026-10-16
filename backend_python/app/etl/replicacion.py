@@ -239,6 +239,20 @@ def sincronizar_items_ahora() -> dict:
         raw.close()
 
 
+def _cedi_de_siesa(cur) -> dict:
+    """Inventario disponible del CEDI (bodega SIESA_CEDI_BODEGA, empresa 05). Se lee todo antes de escribir."""
+    bod = settings.siesa_cedi_bodega
+    filas = list(_stream(siesa_engine(settings.siesa_db), SQL_INVENTARIO, {"cia": settings.siesa_cia, "bodegas": [bod]}, expanding="bodegas"))
+    cur.execute("TRUNCATE ddmrp.inventario_cedi")
+    datos = {}
+    for prod, _b, fecha, disp in filas:
+        d = datos.setdefault(prod, [fecha, 0.0])
+        d[1] += float(disp or 0)
+    for prod, (fecha, disp) in datos.items():
+        cur.execute("INSERT INTO ddmrp.inventario_cedi (producto_id, disponible, fecha_corte) VALUES (%s, %s, %s)", (prod, max(disp, 0.0), fecha))
+    return {"bodega": bod, "productos": len(datos), "con_stock": sum(1 for d in datos.values() if d[1] > 0)}
+
+
 def _param(cur, clave: str):
     cur.execute("SELECT valor FROM ddmrp.parametro WHERE clave = %s", (clave,))
     f = cur.fetchone()
@@ -353,6 +367,14 @@ def _correr_etl() -> dict:
                         raise
                     log.warning("Items / centro de operacion de %s no se actualizaron: %s", db, e)
 
+            if settings.siesa_db and settings.siesa_cedi_bodega:
+                progreso.avance(f"Leyendo el inventario del CEDI ({settings.siesa_cedi_bodega})…")
+                try:
+                    res["cedi"] = _cedi_de_siesa(cur)
+                except Exception as e:   # un fallo de Siesa no debe tumbar el ETL: el CEDI queda con el corte anterior
+                    if isinstance(e, psycopg.Error):
+                        raise
+                    log.warning("Inventario del CEDI no leido: %s", e); res["cedi_error"] = str(e)[:200]
         raw.commit()
     except Exception:
         raw.rollback()

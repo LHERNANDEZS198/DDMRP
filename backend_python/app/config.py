@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     siesa_port: int = 1433
     siesa_db: str = ""        # empresa '05' (Funat)
     siesa_db_s: str = ""      # empresa '21' (Store); vacio = no se consulta
+    siesa_cedi_bodega: str = "PT001"   # bodega del CEDI (de donde sale lo que se despacha a las tiendas), empresa 05
     siesa_cia: int = 1        # f120_id_cia
     siesa_grupo_bodegas_tienda: str = "025"   # grupo de bodegas (t152) que son tiendas
     # Items que se importan: los que tengan alguno de estos criterios ("plan:criterio", coma). 001 = CATEGORIA: 0001 productos Funat,
