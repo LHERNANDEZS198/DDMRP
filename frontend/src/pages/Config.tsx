@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AgGridReact } from 'ag-grid-react'
 import { CellValueChangedEvent, ColDef, GridApi } from 'ag-grid-community'
-import { Box, Button, Chip, MenuItem, Paper, Stack, TextField, Typography } from '@mui/material'
+import { Box, Button, Checkbox, Chip, FormControlLabel, MenuItem, Paper, Stack, TextField, Typography } from '@mui/material'
 import Download from '@mui/icons-material/Download'
 import Upload from '@mui/icons-material/Upload'
 import ContentPaste from '@mui/icons-material/ContentPaste'
@@ -26,7 +26,8 @@ function parsear(txt: string): Record<string, string>[] {
 
 const resumen = (r: any) =>
   `${r.modo === 'reemplazar' ? 'Reemplazado' : 'Cargado'}: ${r.unicas} filas · ${r.creadas} nuevas · ${r.actualizadas} actualizadas` +
-  (r.ignoradas ? ` · ${r.ignoradas} ignoradas (no existen)` : '')
+  (r.ignoradas ? ` · ${r.ignoradas} ignoradas (no existen)` : '') +
+  (r.omitidas ? ` · ${r.omitidas} filas omitidas por datos inválidos (ej. ${r.ejemplos_omitidas?.[0] ?? ''})` : '')
 
 export default function Config() {
   const [defs, setDefs] = useState<Def[]>([])
@@ -36,6 +37,7 @@ export default function Config() {
   const [pegar, setPegar] = useState(false)
   const [txt, setTxt] = useState('')
   const [modo, setModo] = useState<'actualizar' | 'reemplazar'>('actualizar')
+  const [omitir, setOmitir] = useState(false)
   const [grid, setGrid] = useState<GridApi | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const def = defs.find(d => d.clave === sel)
@@ -79,7 +81,7 @@ export default function Config() {
   const subirArchivo = async (f: File | undefined) => {
     if (!f) return
     if (!confirmarModo()) { if (fileRef.current) fileRef.current.value = ''; return }
-    try { setMsg('Cargando...'); setMsg(resumen(await subir(`/maestros/${sel}/excel?modo=${modo}`, f))); cargar() }
+    try { setMsg('Cargando...'); setMsg(resumen(await subir(`/maestros/${sel}/excel?modo=${modo}&omitir_invalidas=${omitir}`, f))); cargar() }
     catch (x: any) { setMsg('Error: ' + x.message) }
     if (fileRef.current) fileRef.current.value = ''
   }
@@ -88,7 +90,7 @@ export default function Config() {
     if (!filas.length) { setMsg('Pega encabezados y al menos una fila'); return }
     if (!confirmarModo()) return
     try {
-      const r = await api('/maestros/' + sel + '/carga', { method: 'POST', body: JSON.stringify({ filas, modo }) })
+      const r = await api('/maestros/' + sel + '/carga', { method: 'POST', body: JSON.stringify({ filas, modo, omitir_invalidas: omitir }) })
       setMsg(resumen(r)); setPegar(false); setTxt(''); cargar()
     } catch (x: any) { setMsg('Error: ' + x.message) }
   }
@@ -119,6 +121,8 @@ export default function Config() {
           <MenuItem value="actualizar">Crear nuevos y actualizar existentes</MenuItem>
           {!def?.sin_reemplazo && <MenuItem value="reemplazar">Reemplazar todo el maestro</MenuItem>}
         </TextField>
+        <FormControlLabel control={<Checkbox size="small" checked={omitir} onChange={e => setOmitir(e.target.checked)} />}
+          label="Omitir filas con datos inválidos" title="Carga las filas buenas y te dice cuántas omitió (en vez de rechazar todo el archivo)" />
         <Button variant="contained" startIcon={<Upload />} onClick={() => fileRef.current?.click()}>Subir Excel / CSV</Button>
         <input ref={fileRef} type="file" accept=".xlsx,.csv,.txt" hidden onChange={e => subirArchivo(e.target.files?.[0])} />
         <Button startIcon={<ContentPaste />} onClick={() => setPegar(!pegar)}>Pegar desde Excel</Button>

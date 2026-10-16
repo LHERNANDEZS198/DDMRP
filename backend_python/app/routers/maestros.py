@@ -171,7 +171,7 @@ def editar(nombre: str, cambios: list[Cambio], user=Depends(usuario_actual)):
 # ---------------------------------------------------------------------------------------------------------
 # Carga masiva (pegar / Excel / CSV) y descarga a Excel
 # ---------------------------------------------------------------------------------------------------------
-MAX_FILAS = 1_000_000
+MAX_FILAS = 400_000
 
 
 def _valor_llave(col: str, v) -> str:
@@ -236,7 +236,7 @@ def _mapa_bodegas():
             sorted({r[1] for r in rows}))
 
 
-def _preparar(d: dict, filas: list[dict]) -> tuple[list[str], list[dict]]:
+def _preparar(d: dict, filas: list[dict], omitir: bool = False, malas_out: list | None = None) -> tuple[list[str], list[dict]]:
     """Valida y normaliza. La tienda se identifica por codigo (SV021) o por nombre y la empresa se deduce de la tienda.
     Devuelve (columnas editables presentes, filas listas)."""
     presentes = set().union(*[f.keys() for f in filas]) if filas else set()
@@ -296,7 +296,10 @@ def _preparar(d: dict, filas: list[dict]) -> tuple[list[str], list[dict]]:
                 out.append(fila_base)
         except (ValueError, TypeError) as e:
             malas.append(f"fila {n}: {e}")
-    if malas:
+    if malas and omitir:
+        if malas_out is not None:
+            malas_out.extend(malas)
+    elif malas:
         raise HTTPException(400, f"{len(malas)} fila(s) invalidas, p.ej.: " + "; ".join(malas[:5]))
     if len(out) > MAX_FILAS:
         raise HTTPException(400, f"Maximo {MAX_FILAS:,} filas por carga")
@@ -324,20 +327,21 @@ def _autorizar_lote(user, d: dict, filas: list[dict], conn, reemplazo: bool):
         raise HTTPException(403, "Solo administradores")
 
 
-def _importar(nombre: str, d: dict, filas: list[dict], modo: str, user) -> dict:
+def _importar(nombre: str, d: dict, filas: list[dict], modo: str, user, omitir: bool = False) -> dict:
     try:
-        return _importar_(nombre, d, filas, modo, user)
+        return _importar_(nombre, d, filas, modo, user, omitir)
     except DBAPIError as e:  # p.ej. NOT NULL o valor fuera de rango: es error del archivo, no del servidor
         raise HTTPException(400, "El archivo tiene datos que la base rechaza: " + str(e.orig).splitlines()[0][:300])
 
 
-def _importar_(nombre: str, d: dict, filas: list[dict], modo: str, user) -> dict:
+def _importar_(nombre: str, d: dict, filas: list[dict], modo: str, user, omitir: bool = False) -> dict:
     if modo not in ("actualizar", "reemplazar"):
         raise HTTPException(400, "modo debe ser 'actualizar' o 'reemplazar'")
     reemplazo = modo == "reemplazar"
     if reemplazo and d.get("sin_reemplazo"):
         raise HTTPException(400, "Este maestro no admite reemplazo total: usa 'actualizar'")
-    cols, filas = _preparar(d, filas)
+    malas: list[str] = []
+    cols, filas = _preparar(d, filas, omitir, malas)
     if not filas:
         raise HTTPException(400, "El archivo no trae filas")
     llave, tabla = d["llave"], d["tabla"]
@@ -379,31 +383,33 @@ def _importar_(nombre: str, d: dict, filas: list[dict], modo: str, user) -> dict
                        "VALUES (:t, '*', :m, NULL, :n, :u)"),
                   {"t": nombre, "m": "carga_" + modo, "n": f"{len(filas)} filas ({creadas} nuevas)", "u": user["nombre"]})
     return {"ok": True, "modo": modo, "filas": len(filas), "unicas": n_unicas, "creadas": creadas,
-            "actualizadas": 0 if reemplazo else existentes, "ignoradas": ignoradas}
+            "actualizadas": 0 if reemplazo else existentes, "ignoradas": ignoradas,
+            "omitidas": len(malas), "ejemplos_omitidas": malas[:5]}
 
 
 class Carga(BaseModel):
     filas: list[dict[str, float | int | str | None]]
     modo: str = "actualizar"
+    omitir_invalidas: bool = False
 
 
 @router.post("/{nombre}/carga")
 def cargar(nombre: str, body: Carga, user=Depends(usuario_actual)):
     """Alta/actualizacion masiva (pegar desde Excel). Cada fila trae las columnas llave y las editables."""
     d = _def(nombre)
-    return _importar(nombre, d, [{str(k).strip().lower(): v for k, v in f.items()} for f in body.filas], body.modo, user)
+    return _importar(nombre, d, [{str(k).strip().lower(): v for k, v in f.items()} for f in body.filas], body.modo, user, body.omitir_invalidas)
 
 
 @router.post("/{nombre}/excel")
 async def subir_excel(nombre: str, archivo: UploadFile = File(...), modo: str = Query("actualizar"),
-                      user=Depends(usuario_actual)):
+                      omitir_invalidas: bool = Query(False), user=Depends(usuario_actual)):
     """Carga un .xlsx / .csv. modo=actualizar: crea las filas nuevas y actualiza las existentes (solo las columnas
     que vengan en el archivo). modo=reemplazar: borra el maestro y deja exactamente lo del archivo."""
     d = _def(nombre)
     datos = await archivo.read()
     if len(datos) > 60_000_000:
         raise HTTPException(400, "Archivo demasiado grande")
-    return _importar(nombre, d, _leer_archivo(archivo.filename or "", datos), modo, user)
+    return _importar(nombre, d, _leer_archivo(archivo.filename or "", datos), modo, user, omitir_invalidas)
 
 
 @router.get("/{nombre}/excel")
