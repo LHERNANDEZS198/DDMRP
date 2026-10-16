@@ -39,17 +39,24 @@ WHERE i.f120_id_cia = :cia AND b.f150_id IN :bodegas
 GROUP BY i.f120_referencia, b.f150_id"""
 
 def _sql_costo() -> str:
-    """Costo promedio unitario por referencia (la columna es configurable: SIESA_COSTO_COLUMNA)."""
-    col = settings.siesa_costo_columna.strip().lower()
-    if not re.fullmatch(r"f400_[a-z0-9_]+", col):
-        raise ValueError(f"SIESA_COSTO_COLUMNA invalida: {col!r}")
+    """Costo promedio unitario por referencia. Por defecto POR INSTALACION: tabla y columna configurables (SIESA_COSTO_TABLA /
+    SIESA_COSTO_COLUMNA), unida por item y por la instalacion de la bodega (t400.f400_id_instalacion). Sin tabla, lee t400."""
+    col = settings.siesa_costo_columna.strip().lower(); tabla = settings.siesa_costo_tabla.strip().lower()
+    m = re.fullmatch(r"(f\d+)_[a-z0-9_]+", col)
+    if not m or (tabla and not re.fullmatch(r"t\d+_[a-z0-9_]+", tabla)):
+        raise ValueError(f"SIESA_COSTO_COLUMNA / SIESA_COSTO_TABLA invalida: {tabla!r} {col!r}")
+    pref = m.group(1)
+    union = (f"JOIN {tabla} c ON c.{pref}_id_cia = e.f400_id_cia AND c.{pref}_rowid_item_ext = e.f400_rowid_item_ext "
+             f"AND c.{pref}_id_instalacion = e.f400_id_instalacion") if tabla else ""
+    origen = "c" if tabla else "e"
     return f"""
-SELECT RTRIM(i.f120_referencia), CONVERT(float, MAX(e.{col}))
+SELECT RTRIM(i.f120_referencia), CONVERT(float, MAX({origen}.{col}))
 FROM t400_cm_existencia e
 JOIN t150_mc_bodegas b ON b.f150_rowid = e.f400_rowid_bodega
 JOIN t121_mc_items_extensiones x ON x.f121_rowid = e.f400_rowid_item_ext
 JOIN t120_mc_items i ON i.f120_rowid = x.f121_rowid_item
-WHERE i.f120_id_cia = :cia AND b.f150_id IN :bodegas AND e.{col} > 0
+{union}
+WHERE i.f120_id_cia = :cia AND b.f150_id IN :bodegas AND {origen}.{col} > 0
 GROUP BY i.f120_referencia"""
 
 
@@ -150,8 +157,8 @@ def _costos(cur, eng, bodegas: list[str], pisar: bool) -> int | str:
     except Exception as e:
         if isinstance(e, psycopg.Error):
             raise
-        log.warning("Costos no leidos (revisa SIESA_COSTO_COLUMNA=%s): %s", settings.siesa_costo_columna, e)
-        return "no se pudo leer la columna " + settings.siesa_costo_columna + ": " + str(e)[:150]
+        log.warning("Costos no leidos (revisa SIESA_COSTO_TABLA/COLUMNA=%s.%s): %s", settings.siesa_costo_tabla, settings.siesa_costo_columna, e)
+        return "no se pudo leer " + settings.siesa_costo_tabla + "." + settings.siesa_costo_columna + ": " + str(e)[:150]
     accion = "DO UPDATE SET costo = EXCLUDED.costo, fecha_corte = current_date" if pisar else "DO NOTHING"
     cur.executemany(f"INSERT INTO ddmrp.costo_item (producto_id, costo) VALUES (%s, %s) ON CONFLICT (producto_id) {accion}",
                     [(p, c) for p, c in filas if c and c > 0])
@@ -212,9 +219,14 @@ def _otras_tablas_costo(destino: dict | None, db: str, bodega: str, producto: st
                 if not clave or rowid is None:
                     hallado.append({"tabla": t, "columnas_costo": cs, "filas": []}); continue
                 filas = []
-                for r in cn.execute(text(f"SELECT TOP 5 * FROM {t} WHERE {clave} = :r"), {"r": rowid}).mappings():
-                    filas.append({k: (float(v) if hasattr(v, "as_tuple") else v if isinstance(v, (int, float, str)) else str(v))
-                                  for k, v in r.items() if v not in (None, "", 0, 0.0) and ("costo" in k or "instal" in k or "bodega" in k or "cia" in k)})
+                for r in cn.execute(text(f"SELECT TOP 300 * FROM {t} WHERE {clave} = :r"), {"r": rowid}).mappings():
+                    f = {k: (float(v) if hasattr(v, "as_tuple") else v if isinstance(v, (int, float, str)) else str(v))
+                         for k, v in r.items() if v not in (None, "", 0, 0.0) and ("costo" in k or "instal" in k or "bodega" in k or "cia" in k)}
+                    # solo filas con algun costo numerico distinto de 0 (las demas no ayudan a ubicar el costo)
+                    if any("costo" in k and isinstance(v, float | int) and "fecha" not in k and "abc" not in k and "ind_" not in k and "id_" not in k for k, v in f.items()):
+                        filas.append(f)
+                    if len(filas) >= 6:
+                        break
                 hallado.append({"tabla": t, "columnas_costo": cs, "filas": filas})
             destino["otras_tablas_costo"] = hallado
             # el reporte "Existencia a la fecha por bodega" saca el costo (ins) de este SP: mostramos de donde lo lee
