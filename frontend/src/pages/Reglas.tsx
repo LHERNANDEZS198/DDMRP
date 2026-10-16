@@ -20,9 +20,9 @@ const grupos: [string, string[]][] = [
 ]
 
 /** A que tiendas se reparte el inventario del CEDI cuando no alcanza: todas, o solo las de los DIAs elegidos. */
-function RepartoDias({ editar, onCambio }: { editar: boolean; onCambio: (m: string) => void }) {
+function RepartoDias({ editar, onCambio, compacto, onElegidos }: { editar: boolean; onCambio: (m: string) => void; compacto?: boolean; onElegidos?: (e: number[]) => void }) {
   const [d, setD] = useState<{ elegidos: number[]; dias: { dia: number; tiendas: number }[] } | null>(null)
-  const cargar = () => api('/reglas/reparto-dias').then(setD).catch(() => {})
+  const cargar = () => api('/reglas/reparto-dias').then(x => { setD(x); onElegidos?.(x.elegidos) }).catch(() => {})
   useEffect(() => { cargar() }, [])
   const guardar = async (dias: number[]) => {
     try { const x = await api('/reglas/reparto-dias', { method: 'PUT', body: JSON.stringify({ dias }) }); onCambio(`Reparto del CEDI: guardado. ${x.aviso}`); cargar() }
@@ -33,12 +33,12 @@ function RepartoDias({ editar, onCambio }: { editar: boolean; onCambio: (m: stri
   const alternar = (dia: number) => guardar(d.elegidos.includes(dia) ? d.elegidos.filter(x => x !== dia) : [...d.elegidos, dia].sort((a, b) => a - b))
   return (
     <Box sx={{ display: 'grid', gap: 1 }}>
-      <Box><Typography sx={{ fontWeight: 600 }}>Entre qué tiendas se reparte el inventario del CEDI</Typography>
-        <Typography variant="caption" color="text.secondary">
+      <Box><Typography sx={{ fontWeight: 600 }}>{compacto ? '¿Entre qué tiendas se reparte el stock del CEDI en esta corrida?' : 'Entre qué tiendas se reparte el inventario del CEDI'}</Typography>
+        {!compacto && <Typography variant="caption" color="text.secondary">
           La necesidad de cada referencia se suma entre las tiendas que entran al reparto; si el CEDI no alcanza, se reparte entre ellas con la regla de arriba.
           <b> Todas</b>: compiten las tiendas de todos los DIAs (cada referencia se reparte entre todas, aunque hoy no se despache a algunas).
           <b> DIAs elegidos</b> (p. ej. DIA 1 + DIA 2): solo compiten las tiendas de esos DIAs; las demás quedan con lo que pide su buffer, sin gastar stock del CEDI.
-          Una tienda que esté en varios DIAs entra si alguno de ellos está elegido.</Typography></Box>
+          Una tienda que esté en varios DIAs entra si alguno de ellos está elegido.</Typography>}</Box>
       <Stack direction="row" sx={{ gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
         <Chip label="Todas las tiendas" color={todas ? 'primary' : 'default'} variant={todas ? 'filled' : 'outlined'} disabled={!editar} onClick={() => guardar([])} />
         {d.dias.map(x => <Chip key={x.dia} label={`DIA ${x.dia} (${x.tiendas} tiendas)`} disabled={!editar}
@@ -130,10 +130,15 @@ export default function Reglas() {
       <Dialog open={!!aviso} onClose={() => setAviso(null)} maxWidth="sm" fullWidth>
         <DialogTitle>{aviso?.d.corrio_hoy ? 'El motor ya corrió hoy' : (aviso?.que === 'pipeline' ? 'Correr ETL + motor' : 'Recalcular con el motor')}</DialogTitle>
         <DialogContent sx={{ display: 'grid', gap: 1.5 }}>
-          <Alert severity="info">
-            {aviso?.d.dias_reparto?.length
-              ? <>El stock del CEDI (PT001) se reparte <b>solo entre las tiendas de los DIAs {aviso.d.dias_reparto.join(' + ')}</b>: esas compiten por la escasez; las demás quedan con lo que pide su buffer.</>
-              : <>El stock del CEDI (PT001) se reparte entre <b>todas las tiendas</b> cuando no alcanza. Puedes limitarlo a ciertos DIAs en “Reparto del CEDI por día”.</>}
+          <Alert severity="info" sx={{ '& .MuiAlert-message': { width: '100%' } }}>
+            <RepartoDias editar={editar} compacto onCambio={m => { if (m.startsWith('Error')) setMsg(m) }}
+              onElegidos={e => setAviso(p => p ? { ...p, d: { ...p.d, dias_reparto: e } } : p)} />
+            <Typography variant="body2" sx={{ mt: 1 }}>
+              {aviso?.d.dias_reparto?.length
+                ? <>Solo compiten por la escasez las tiendas de los <b>DIAs {aviso.d.dias_reparto.join(' + ')}</b>; las demás quedan con lo que pide su buffer.</>
+                : <>Si el CEDI no alcanza, se reparte entre <b>todas las tiendas</b>.</>}
+              {!editar && ' (No tienes permiso para cambiarlo.)'}
+            </Typography>
           </Alert>
           {aviso?.d.corrio_hoy && <Typography>
             Ya hay {aviso?.d.corridas} corrida(s) de hoy (la última a las {aviso?.d.ultima ? new Date(aviso.d.ultima).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }) : ''}).
