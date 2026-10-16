@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { AgGridReact } from 'ag-grid-react'
+import Tabla from '../Tabla'
 import { ColDef, GridApi, ICellRendererParams } from 'ag-grid-community'
 import { Alert, Box, Button, Checkbox, Chip, FormControlLabel, IconButton, MenuItem, Paper, Stack, TextField, Tooltip, Typography } from '@mui/material'
 import Insights from '@mui/icons-material/Insights'
@@ -40,6 +40,7 @@ const cols: ColDef[] = [
 export default function Despacho() {
   const { puede } = useYo(); const pAprobar = puede('aprobar_despacho'); const pPlano = puede('descargar_planos')
   const [rows, setRows] = useState<any[]>([])
+  const [cargando, setCargando] = useState(true)
   const [grid, setGrid] = useState<GridApi | null>(null)
   const [msg, setMsg] = useState('')
   const [notas, setNotas] = useState('')
@@ -69,8 +70,9 @@ export default function Despacho() {
     const n = ++peticion.current
     return api('/despacho/matriz?estado=' + ver + (filtrar ? '&bodegas=' + encodeURIComponent(tiendas.join(',') || '-') : ''))
       .then(r => { if (n === peticion.current) setRows(r) })
+      .finally(() => { if (n === peticion.current) setCargando(false) })
   }
-  useEffect(() => { setRows([]); cargar() }, [filtrar, tiendas.join(','), ver])
+  useEffect(() => { setRows([]); setCargando(true); cargar() }, [filtrar, tiendas.join(','), ver])
   const aprobar = async () => {
     const sel = grid?.getSelectedRows() ?? []
     if (!sel.length) { setMsg('Selecciona filas'); return }
@@ -136,7 +138,7 @@ export default function Despacho() {
         <Button disabled title="Fase 3">Enviar a Siesa (web service)</Button></>}
       </Paper>
       <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 300 }}>
-        <AgGridReact rowData={rows} columnDefs={ayudar(cols)} tooltipShowDelay={300} rowSelection="multiple" rowBuffer={20}
+        <Tabla cargando={cargando} textoCargando="Cargando la matriz…" vacio="No hay filas con este filtro" rowData={rows} columnDefs={ayudar(cols)} tooltipShowDelay={300} rowSelection="multiple" rowBuffer={20}
           context={{ aprobar: pAprobar }} onGridReady={e => setGrid(e.api)} defaultColDef={{ resizable: true, sortable: true }} />
       </Box>
       <Aviso msg={msg} onClose={() => setMsg('')} />

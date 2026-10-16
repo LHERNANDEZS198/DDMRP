@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AgGridReact } from 'ag-grid-react'
+import Tabla from '../Tabla'
 import { ColDef, ICellRendererParams } from 'ag-grid-community'
 import { Autocomplete, Box, Button, Card, CardActionArea, Chip, MenuItem, Paper, Tab, Tabs, TextField, Tooltip, Typography } from '@mui/material'
 import { useLocation, useSearchParams } from 'react-router-dom'
@@ -335,8 +335,8 @@ export default function Control() {
 
       {!tendModo && <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 320 }}>
         {nivel === 'detalle'
-          ? <AgGridReact key={'det' + cambiosModo} rowData={det.filas} columnDefs={ayudar(cambiosModo ? colsDetCambios : colsDet)} tooltipShowDelay={300} rowBuffer={20} loading={cargando} defaultColDef={{ resizable: true, sortable: true }} />
-          : <AgGridReact key={nivel + cambiosModo} rowData={grupos} columnDefs={ayudar(cambiosModo ? colsCambios : colsGrupo)} tooltipShowDelay={300} rowBuffer={20} loading={cargando} defaultColDef={{ resizable: true, sortable: true }}
+          ? <Tabla textoCargando="Calculando…" vacio="Sin resultados con estos filtros" key={'det' + cambiosModo} rowData={det.filas} columnDefs={ayudar(cambiosModo ? colsDetCambios : colsDet)} tooltipShowDelay={300} rowBuffer={20} cargando={cargando} defaultColDef={{ resizable: true, sortable: true }} />
+          : <Tabla textoCargando="Calculando…" vacio="Sin resultados con estos filtros" key={nivel + cambiosModo} rowData={grupos} columnDefs={ayudar(cambiosModo ? colsCambios : colsGrupo)} tooltipShowDelay={300} rowBuffer={20} cargando={cargando} defaultColDef={{ resizable: true, sortable: true }}
               onRowClicked={e => e.data && entrar(String(e.data.clave))} rowStyle={{ cursor: 'pointer' }} rowHeight={40} />}
       </Box>}
     </Box>)

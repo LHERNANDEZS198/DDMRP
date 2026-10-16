@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AgGridReact } from 'ag-grid-react'
+import Tabla from '../Tabla'
 import { ColDef } from 'ag-grid-community'
 import { Alert, Autocomplete, Box, Button, Chip, FormControlLabel, MenuItem, Paper, Stack, Switch, TextField, Typography } from '@mui/material'
 import Download from '@mui/icons-material/Download'
@@ -35,6 +35,7 @@ export default function Auditoria() {
   const [opc, setOpc] = useState<Opc>({ tiendas: [], laboratorios: [], ejecucion: null })
   const [f, setF] = useState({ bodegas: [] as string[], labs: [] as string[], q: '', zonas: [] as string[], solo: true, limite: 10000 })
   const [d, setD] = useState<{ total: number; filas: any[]; tope_excel: number; ejecucion: any } | null>(null)
+  const [cargando, setCargando] = useState(true)
   const [msg, setMsg] = useState(''); const [bajando, setBajando] = useState(false)
   useEffect(() => { api('/control/filtros').then(setOpc).catch(() => {}) }, [])
   const qs = useMemo(() => {
@@ -47,8 +48,10 @@ export default function Auditoria() {
     return p
   }, [f])
   useEffect(() => {
-    const h = setTimeout(() => api('/auditoria/vista?' + qs.toString()).then(setD).catch(e => setMsg('Error: ' + e.message)), 300)
-    return () => clearTimeout(h)
+    setCargando(true)
+    let vivo = true
+    const h = setTimeout(() => api('/auditoria/vista?' + qs.toString()).then(r => vivo && setD(r)).catch(e => vivo && setMsg('Error: ' + e.message)).finally(() => vivo && setCargando(false)), 300)
+    return () => { vivo = false; clearTimeout(h) }
   }, [qs])
   const descargar = async () => {
     setBajando(true); setMsg('Armando el Excel con las fórmulas… puede tardar un minuto si son muchas filas')
@@ -91,7 +94,7 @@ export default function Auditoria() {
           {sobra && <Alert severity="warning" sx={{ py: 0 }}>El Excel incluirá solo las primeras {f.limite.toLocaleString('es-CO')}: filtra más o sube el máximo.</Alert>}
         </Stack>)}
       <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 300 }}>
-        <AgGridReact rowData={d?.filas ?? []} columnDefs={ayudar(cols)} tooltipShowDelay={300} defaultColDef={{ resizable: true, sortable: true }} />
+        <Tabla cargando={cargando} textoCargando="Calculando la auditoría…" vacio="Ningún ítem cumple los filtros" rowData={d?.filas ?? []} columnDefs={ayudar(cols)} tooltipShowDelay={300} defaultColDef={{ resizable: true, sortable: true }} />
       </Box>
       <Aviso msg={msg} onClose={() => setMsg('')} />
     </Box>)

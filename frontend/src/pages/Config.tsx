@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AgGridReact } from 'ag-grid-react'
+import Tabla from '../Tabla'
 import { CellValueChangedEvent, ColDef, GridApi } from 'ag-grid-community'
 import { Box, Button, Checkbox, Chip, FormControlLabel, MenuItem, Paper, Stack, TextField, Typography } from '@mui/material'
 import Download from '@mui/icons-material/Download'
@@ -35,6 +35,7 @@ export default function Config() {
   const [defs, setDefs] = useState<Def[]>([])
   const [sel, setSel] = useState('bitacora')
   const [rows, setRows] = useState<any[]>([])
+  const [cargando, setCargando] = useState(true)
   const [msg, setMsg] = useState('')
   const [pegar, setPegar] = useState(false)
   const [txt, setTxt] = useState('')
@@ -45,7 +46,7 @@ export default function Config() {
   const def = defs.find(d => d.clave === sel)
 
   useEffect(() => { api('/maestros').then(setDefs) }, [])
-  const cargar = () => api('/maestros/' + sel).then(setRows).catch(e => setMsg('Error: ' + e.message))
+  const cargar = () => { setCargando(true); return api('/maestros/' + sel).then(setRows).catch(e => setMsg('Error: ' + e.message)).finally(() => setCargando(false)) }
   useEffect(() => { setRows([]); setMsg(''); setModo('actualizar'); cargar() }, [sel])
 
   const cols: ColDef[] = useMemo(() => {
@@ -173,7 +174,7 @@ export default function Config() {
           <Box><Button variant="contained" onClick={enviar}>Cargar</Button></Box>
         </Stack>)}
       <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 300 }}>
-        <AgGridReact rowData={rows} columnDefs={cols} onCellValueChanged={onChange} rowBuffer={20} rowSelection="multiple"
+        <Tabla cargando={cargando} vacio="Este maestro está vacío: carga datos con Excel, pegando o trayendo de Siesa" rowData={rows} columnDefs={cols} onCellValueChanged={onChange} rowBuffer={20} rowSelection="multiple"
           onGridReady={e => setGrid(e.api)} defaultColDef={{ resizable: true, sortable: true }} />
       </Box>
       <Aviso msg={msg} onClose={() => setMsg('')} />

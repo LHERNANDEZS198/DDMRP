@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AgGridReact } from 'ag-grid-react'
+import Tabla from '../Tabla'
 import { ColDef } from 'ag-grid-community'
 import { Box, Card, CardActionArea, Typography } from '@mui/material'
 import { api } from '../api'
@@ -21,7 +21,8 @@ const color: Record<string, string> = { ROJA: '#c62828', AMARILLA: '#f9a825', VE
 export default function Dashboard() {
   const [res, setRes] = useState<{ zona: string; n: number }[]>([])
   const [rows, setRows] = useState<any[]>([])
-  useEffect(() => { api('/alertas/resumen').then(setRes).catch(() => {}); api('/alertas/zona-roja').then(setRows).catch(() => {}) }, [])
+  const [cargando, setCargando] = useState(true)
+  useEffect(() => { api('/alertas/resumen').then(setRes).catch(() => {}); api('/alertas/zona-roja').then(setRows).catch(() => {}).finally(() => setCargando(false)) }, [])
   const total = res.reduce((a, r) => a + r.n, 0) || 1
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 2 }}>
@@ -37,7 +38,7 @@ export default function Dashboard() {
       </Box>
       <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Productos en zona roja</Typography>
       <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 300 }}>
-        <AgGridReact rowData={rows} columnDefs={cols} rowBuffer={20} animateRows={false} defaultColDef={{ resizable: true, sortable: true }} />
+        <Tabla cargando={cargando} vacio="Sin productos en zona roja" rowData={rows} columnDefs={cols} rowBuffer={20} animateRows={false} defaultColDef={{ resizable: true, sortable: true }} />
       </Box>
     </Box>)
 }
