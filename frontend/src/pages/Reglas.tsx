@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Box, Button, Card, CardContent, CardHeader, MenuItem, Stack, TextField, Typography } from '@mui/material'
+import { Alert, Box, Button, Card, CardContent, CardHeader, Dialog, DialogActions, DialogContent, DialogTitle, MenuItem, Stack, TextField, Typography } from '@mui/material'
 import Calculate from '@mui/icons-material/Calculate'
 import PlayCircle from '@mui/icons-material/PlayCircle'
 import { api, conProgreso, seguirTarea } from '../api'
@@ -27,6 +27,12 @@ export default function Reglas() {
     try { const x = await api('/reglas/' + r.clave, { method: 'PUT', body: JSON.stringify({ valor }) }); setMsg(`${r.titulo}: guardado. ${x.aviso}`); cargar() }
     catch (e: any) { setMsg('Error: ' + e.message) }
   }
+  // Antes de correr el motor, si ya corrió hoy, avisa qué se pierde de vista y pide confirmar
+  const [aviso, setAviso] = useState<{ que: 'motor' | 'pipeline'; d: any } | null>(null)
+  const preguntar = async (que: 'motor' | 'pipeline') => {
+    try { const d = await api('/admin/motor-hoy'); if (d.corrio_hoy) { setAviso({ que, d }); return } } catch { /* si falla la consulta, no bloquea */ }
+    que === 'motor' ? recalcular() : pipeline()
+  }
   const recalcular = async () => {
     setMsg('Recalculando con el motor Rust…')
     try { const x = await conProgreso(setMsg, () => api('/admin/correr-motor', { method: 'POST' })); setMsg(`Listo: ${x.filas} combinaciones calculadas`) } catch (e: any) { setMsg('Error: ' + e.message) }
@@ -42,10 +48,33 @@ export default function Reglas() {
   }
   return (
     <Box sx={{ maxWidth: 860, mx: 'auto', display: 'grid', gap: 2 }}>
+      <Dialog open={!!aviso} onClose={() => setAviso(null)} maxWidth="sm" fullWidth>
+        <DialogTitle>El motor ya corrió hoy</DialogTitle>
+        <DialogContent sx={{ display: 'grid', gap: 1.5 }}>
+          <Typography>
+            Ya hay {aviso?.d.corridas} corrida(s) de hoy (la última a las {aviso?.d.ultima ? new Date(aviso.d.ultima).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }) : ''}).
+            Si corres de nuevo:
+          </Typography>
+          <Box component="ul" sx={{ m: 0, pl: 3, display: 'grid', gap: 0.5 }}>
+            <li>La matriz de despacho y el plano pasan a usar <b>solo la corrida nueva</b>.</li>
+            <li>Todo vuelve a <b>Pendiente</b>: lo aprobado y las cantidades que hayas editado de la corrida anterior ya no se ven ni se exportan.</li>
+            <li>El reparto del inventario del CEDI se recalcula con el stock fresco de PT001, así que las cantidades pueden cambiar.</li>
+            {aviso?.que === 'pipeline' && <li>También se vuelve a leer todo Siesa (inventario, tránsitos, items): tarda varios minutos.</li>}
+          </Box>
+          {(aviso?.d.aprobadas > 0 || aviso?.d.enviadas > 0) && (
+            <Alert severity="warning">
+              En la corrida actual hay <b>{aviso?.d.aprobadas}</b> fila(s) aprobada(s) y <b>{aviso?.d.enviadas}</b> enviada(s). Si aún no generaste el plano, genéralo antes de recalcular.
+            </Alert>)}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setAviso(null)} autoFocus>Cancelar</Button>
+          <Button color="warning" variant="contained" onClick={() => { const q = aviso!.que; setAviso(null); q === 'motor' ? recalcular() : pipeline() }}>Correr de todos modos</Button>
+        </DialogActions>
+      </Dialog>
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ alignItems: { sm: 'center' } }}>
         <Typography variant="h6" sx={{ flex: 1, fontWeight: 700 }}>Reglas de pedido</Typography>
-        {motor && <Button variant="outlined" startIcon={<Calculate />} onClick={recalcular}>Recalcular ahora (solo motor)</Button>}
-        {motor && <Button variant="contained" startIcon={<PlayCircle />} onClick={pipeline}>Correr ETL + motor completo</Button>}
+        {motor && <Button variant="outlined" startIcon={<Calculate />} onClick={() => preguntar('motor')}>Recalcular ahora (solo motor)</Button>}
+        {motor && <Button variant="contained" startIcon={<PlayCircle />} onClick={() => preguntar('pipeline')}>Correr ETL + motor completo</Button>}
       </Stack>
       <Typography variant="body2" color="text.secondary">
         Los cambios se aplican en la siguiente corrida del motor (cada noche, o con “Recalcular ahora”). Flujo neto = inventario + tránsito − demanda calificada.
