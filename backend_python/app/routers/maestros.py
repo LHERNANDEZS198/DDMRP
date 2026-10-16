@@ -60,8 +60,8 @@ MAESTROS = {
         label="DIA de abastecimiento por tienda", tabla="ddmrp.bodega_dia",
         llave=["bodega_id", "dia"], editable={}, bodega="bodega_id", producto=None),
     "items": dict(
-        label="Items: descripcion, laboratorio (categoria) y linea", tabla="ddmrp.maestro_item",
-        llave=["producto_id"], editable={"descripcion": "txt", "categoria": "txt", "linea": "txt"},
+        label="Items: descripcion y laboratorio (los criterios vienen de Siesa)", tabla="ddmrp.maestro_item",
+        llave=["producto_id"], editable={"descripcion": "txt", "categoria": "txt"},
         bodega=None, producto=None, global_=True, defecto={"descripcion": "producto_id"}),
     "centro-operacion": dict(
         label="Centro de operacion por bodega (archivo plano)", tabla="ddmrp.bodega_centro_operacion",
@@ -137,7 +137,21 @@ def leer(nombre: str, bodega_id: str | None = None, producto_id: str | None = No
         w += f" AND t.{d['producto']} = :pr"; p["pr"] = producto_id
     sql = f"SELECT {sel} FROM {d['tabla']} t {join} WHERE {w} ORDER BY {', '.join('t.' + c for c in d['llave'])} LIMIT :lim"
     with pg.connect() as c:
-        return [dict(r) for r in c.execute(text(sql), {**p, "lim": limit}).mappings()]
+        filas = [dict(r) for r in c.execute(text(sql), {**p, "lim": limit}).mappings()]
+        if nombre == "items" and filas:
+            # una columna por plan de criterios (CATEGORIA, LINEA, ...) con el nombre del criterio como valor
+            planes = c.execute(text("SELECT ic.plan_id, coalesce(pl.nombre, ic.plan_id) FROM (SELECT DISTINCT plan_id FROM ddmrp.item_criterio) ic "
+                                    "LEFT JOIN ddmrp.criterio_plan pl ON pl.plan_id = ic.plan_id ORDER BY ic.plan_id")).all()
+            nom = {pid: n.strip().upper() for pid, n in planes}
+            vals = {}
+            for pr, pid, cid, cn in c.execute(text("SELECT ic.producto_id, ic.plan_id, ic.criterio_id, cr.nombre FROM ddmrp.item_criterio ic "
+                                                    "LEFT JOIN ddmrp.criterio cr ON cr.plan_id = ic.plan_id AND cr.criterio_id = ic.criterio_id")):
+                vals.setdefault(pr, {})[pid] = (cn or cid).strip()
+            for f in filas:
+                v = vals.get(f["producto_id"], {})
+                for pid, n in nom.items():
+                    f[n] = v.get(pid)
+        return filas
 
 
 class Cambio(BaseModel):

@@ -59,7 +59,12 @@ export default function Config() {
     const ed = def.editable.map(k => def.tipos[k] === 'txt'
       ? { field: k, editable: pCarga, filter: true }
       : { field: k, editable: pCarga, type: 'numericColumn', filter: 'agNumberColumnFilter' })
-    return [...llave, ...desc, ...ed]
+    // items: una columna por plan de criterios (el nombre del plan es el encabezado, el criterio es el valor)
+    const conocidas = new Set([...def.llave, ...def.editable, 'descripcion', 'bodega_nombre'])
+    const extra: ColDef[] = def.clave === 'items' && rows[0]
+      ? Object.keys(rows[0]).filter(k => !conocidas.has(k)).map(k => ({ field: k, headerName: k, filter: true, width: 190 })) : []
+    const ed2 = def.clave === 'items' ? ed.map(c => c.field === 'categoria' ? { ...c, headerName: 'Laboratorio (código)', width: 150 } : c.field === 'descripcion' ? { ...c, width: 300 } : c) : ed
+    return [...llave, ...desc, ...ed2, ...extra]
   }, [def, rows, pCarga])
 
   const onChange = async (e: CellValueChangedEvent) => {
