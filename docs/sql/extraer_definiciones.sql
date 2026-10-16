@@ -31,12 +31,14 @@ WHERE t.TABLE_NAME LIKE 'Abastecimiento[_]%'
 ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION;
 
 SELECT OBJECT_NAME(i.object_id) AS tabla, i.name AS indice, i.is_primary_key AS pk, i.is_unique AS unico,
-       STRING_AGG(c.name, ', ') WITHIN GROUP (ORDER BY ic.key_ordinal) AS columnas
+       STUFF((SELECT ', ' + c.name
+              FROM sys.index_columns ic
+              JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+              WHERE ic.object_id = i.object_id AND ic.index_id = i.index_id AND ic.is_included_column = 0
+              ORDER BY ic.key_ordinal
+              FOR XML PATH('')), 1, 2, '') AS columnas
 FROM sys.indexes i
-JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id AND ic.is_included_column = 0
-JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
-WHERE OBJECT_NAME(i.object_id) LIKE 'Abastecimiento[_]%'
-GROUP BY i.object_id, i.name, i.is_primary_key, i.is_unique;
+WHERE i.name IS NOT NULL AND OBJECT_NAME(i.object_id) LIKE 'Abastecimiento[_]%';
 
 -- 5) Volumen: filas por tabla y 5 filas de muestra
 SELECT t.name AS tabla, SUM(p.rows) AS filas
