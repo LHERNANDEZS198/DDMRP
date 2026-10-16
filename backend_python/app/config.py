@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     siesa_user: str = ""
     siesa_password: str = ""
 
+    # Segunda conexion MSSQL (instancia FUNATLAB): fuente adicional de datos
+    lab_server: str = ""        # p.ej. FUNATLAB\\FUNATLAB  o  host,puerto
+    lab_db: str = ""
+    lab_user: str = ""
+    lab_password: str = ""
+
     auth_mysql_host: str = ""
     auth_mysql_port: int = 3306
     auth_mysql_db: str = "BDRELOJ"
@@ -45,6 +51,13 @@ class Settings(BaseSettings):
     def siesa_url(self) -> str:
         return (f"mssql+pyodbc://{self.siesa_user}:{self.siesa_password}@{self.siesa_host}:{self.siesa_port}/"
                 f"{self.siesa_db}?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes")
+
+    @property
+    def lab_odbc(self) -> str:
+        from urllib.parse import quote_plus
+        db = f"DATABASE={self.lab_db};" if self.lab_db else ""
+        return quote_plus(f"DRIVER={{ODBC Driver 18 for SQL Server}};SERVER={self.lab_server};{db}"
+                          f"UID={self.lab_user};PWD={self.lab_password};Encrypt=optional;TrustServerCertificate=yes;")
 
     @property
     def mysql_url(self) -> str:
