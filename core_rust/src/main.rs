@@ -50,7 +50,8 @@ SELECT b.empresa, k.bodega_id, k.producto_id,
   (EXISTS (SELECT 1 FROM ddmrp.item_condenado cd WHERE cd.producto_id = k.producto_id AND cd.bodega_id IN (k.bodega_id, '*')))::int::int2 AS condenado,
   COALESCE(i.disponible, 0)::float8        AS inventario,
   COALESCE(t.cant, 0)::float8              AS en_transito,
-  COALESCE(d.cantidad, 0)::float8          AS demanda_calificada
+  COALESCE(d.cantidad, 0)::float8          AS demanda_calificada,
+  COALESCE(oi.regla, ol.regla, 0)::int2    AS regla_objetivo
 FROM llaves k
 JOIN ddmrp.abast_bitacora b ON b.bodega_id = k.bodega_id
 LEFT JOIN v ON v.bodega_id = k.bodega_id AND v.producto_id = k.producto_id
@@ -63,6 +64,9 @@ LEFT JOIN ddmrp.inventario_actual i ON i.bodega_id = k.bodega_id AND i.producto_
 LEFT JOIN (SELECT producto_id, bodega_id, SUM(cantidad) AS cant FROM ddmrp.transitos GROUP BY 1, 2) t
        ON t.bodega_id = k.bodega_id AND t.producto_id = k.producto_id
 LEFT JOIN ddmrp.demanda_calificada d ON d.bodega_id = k.bodega_id AND d.producto_id = k.producto_id
+LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = k.producto_id
+LEFT JOIN ddmrp.reposicion_item oi ON oi.producto_id = k.producto_id
+LEFT JOIN ddmrp.reposicion_laboratorio ol ON ol.laboratorio = mi.categoria
 "#;
 
 fn arg(name: &str) -> Option<String> {
@@ -155,6 +159,7 @@ fn main() -> Result<()> {
             inventario: f(r, "inventario"),
             en_transito: f(r, "en_transito"),
             demanda_calificada: f(r, "demanda_calificada"),
+            regla_objetivo: r.get::<_, i16>("regla_objetivo") as u8,
         })
         .collect();
     if items.is_empty() {
@@ -173,18 +178,18 @@ fn main() -> Result<()> {
     let mut w = client.copy_in(
         "COPY ddmrp.sugerencias_envio (ejecucion_id, fecha_calculo, empresa, bodega_id, producto_id, adu, iv, forecast, \
          lead_time, frecuencia, unidad_despacho, zrb, zrs, za, zv, tor, toy, tog, toy_aj, tog_aj, inventario, en_transito, \
-         demanda_calificada, flujo_neto, pct_buffer, zona, vectorizacion, cantidad_sugerida, condenado) FROM STDIN WITH (FORMAT csv)",
+         demanda_calificada, flujo_neto, pct_buffer, zona, vectorizacion, cantidad_sugerida, condenado, regla_objetivo) FROM STDIN WITH (FORMAT csv)",
     )?;
     for (i, r) in res.iter().enumerate() {
         let z = &r.zonas;
         writeln!(
             w,
-            "{},{},{},{},{},{:.2},{:.4},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.3},{:.3},{:.3},{:.3},{:.2},{},{:.2},{:.3},{}",
+            "{},{},{},{},{},{:.2},{:.4},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.3},{:.3},{:.3},{:.3},{:.2},{},{:.2},{:.3},{},{}",
             ejecucion_id, fecha, q(&r.empresa), q(&r.bodega_id), q(&r.producto_id),
             num(r.adu), num(r.iv), num(r.forecast), r.lead_time, r.frecuencia, r.unidad_despacho,
             z.zrb, z.zrs, z.za, z.zv, z.tor, z.toy, z.tog, r.toy_aj, r.tog_aj,
             r.inventario, r.en_transito, r.demanda_calificada, r.flujo_neto, num(r.pct_buffer),
-            r.zona.as_db(), r.vectorizacion, r.cantidad_sugerida, condenado[i]
+            r.zona.as_db(), r.vectorizacion, r.cantidad_sugerida, condenado[i], items[i].regla_objetivo
         )?;
     }
     w.finish()?;

@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Tabla from '../Tabla'
 import { CellValueChangedEvent, ColDef, GridApi } from 'ag-grid-community'
-import { Box, Button, Checkbox, Chip, FormControlLabel, MenuItem, Paper, Stack, TextField, Typography } from '@mui/material'
+import { Alert, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, MenuItem, Paper, Stack, TextField, Typography } from '@mui/material'
+import AddCircleOutline from '@mui/icons-material/AddCircleOutline'
 import Download from '@mui/icons-material/Download'
 import Upload from '@mui/icons-material/Upload'
 import ContentPaste from '@mui/icons-material/ContentPaste'
 import DeleteOutline from '@mui/icons-material/DeleteOutline'
 import CloudSync from '@mui/icons-material/CloudSync'
-import { api, bajar, subir, conProgreso } from '../api'
+import { api, apiLista, bajar, subir, conProgreso } from '../api'
 import Aviso from '../Aviso'
 import { useYo } from '../Yo'
 
-type Def = { todas?: boolean; clave: string; label: string; llave: string[]; editable: string[]; tipos: Record<string, string>; sin_reemplazo: boolean }
+type Filtros = { tienda: boolean; item: boolean; lab: boolean; texto: boolean }
+type Def = { ayuda: string; filtros: Filtros; todas?: boolean; clave: string; label: string; llave: string[]; editable: string[]; tipos: Record<string, string>; sin_reemplazo: boolean }
 
 // Pega filas desde Excel (con encabezados). Separador: tab, ; o coma.
 function parsear(txt: string): Record<string, string>[] {
@@ -36,6 +38,16 @@ export default function Config() {
   const [sel, setSel] = useState('bitacora')
   const [rows, setRows] = useState<any[]>([])
   const [cargando, setCargando] = useState(true)
+  const [total, setTotal] = useState(0)
+  // filtros de la pantalla; sirven igual para la descarga a Excel. Van atados al maestro con que se escribieron
+  const VACIO = { tienda: '', texto: '', lab: '' }
+  const [fRaw, setFRaw] = useState({ sel: 'bitacora', ...VACIO })
+  const f = fRaw.sel === sel ? fRaw : { sel, ...VACIO }
+  const setF = (c: Partial<typeof VACIO>) => setFRaw({ ...f, ...c, sel })
+  const hayFiltro = !!(f.tienda || f.texto || f.lab)
+  const consulta = () => { const p = new URLSearchParams(); if (f.tienda.trim()) p.set('bodega_id', f.tienda.trim().replace(/\s+/g, '')); if (f.texto.trim()) p.set('q', f.texto.trim()); if (f.lab.trim()) p.set('lab', f.lab.trim()); const s = p.toString(); return s ? '?' + s : '' }
+  const [agregar, setAgregar] = useState(false)
+  const [nueva, setNueva] = useState<Record<string, string>>({})
   const [msg, setMsg] = useState('')
   const [pegar, setPegar] = useState(false)
   const [txt, setTxt] = useState('')
@@ -46,8 +58,15 @@ export default function Config() {
   const def = defs.find(d => d.clave === sel)
 
   useEffect(() => { api('/maestros').then(setDefs) }, [])
-  const cargar = () => { setCargando(true); return api('/maestros/' + sel).then(setRows).catch(e => setMsg('Error: ' + e.message)).finally(() => setCargando(false)) }
-  useEffect(() => { setRows([]); setMsg(''); setModo('actualizar'); cargar() }, [sel])
+  // solo vale la respuesta de la ultima peticion (el usuario sigue escribiendo o cambia de maestro mientras llegan las anteriores)
+  const peticion = useRef(0)
+  const cargar = () => {
+    const n = ++peticion.current; setCargando(true)
+    return apiLista('/maestros/' + sel + consulta()).then(r => { if (n === peticion.current) { setRows(r.datos); setTotal(r.total) } })
+      .catch(e => { if (n === peticion.current) setMsg('Error: ' + e.message) }).finally(() => { if (n === peticion.current) setCargando(false) })
+  }
+  useEffect(() => { setRows([]); setMsg(''); setModo('actualizar') }, [sel])
+  useEffect(() => { const t = setTimeout(cargar, f.texto || f.tienda || f.lab ? 350 : 0); return () => clearTimeout(t) }, [sel, f.tienda, f.texto, f.lab])
 
   const cols: ColDef[] = useMemo(() => {
     if (!def) return []
@@ -83,7 +102,7 @@ export default function Config() {
     window.confirm(`REEMPLAZAR borra todo “${def?.label}” y deja exactamente lo que cargues. ¿Continuar?`)
 
   const descargar = async () => {
-    try { setMsg(`Preparando ${sel}.xlsx… los maestros grandes tardan un poco`); await bajar(`/maestros/${sel}/excel`, `${sel}.xlsx`); setMsg('Descargado ' + sel + '.xlsx') }
+    try { setMsg(`Preparando ${sel}.xlsx… los maestros grandes tardan un poco`); await bajar(`/maestros/${sel}/excel${consulta()}`, `${sel}.xlsx`); setMsg('Descargado ' + sel + '.xlsx' + (hayFiltro ? ' (solo lo filtrado)' : '')) }
     catch (x: any) { setMsg('Error: ' + x.message) }
   }
   const subirArchivo = async (f: File | undefined) => {
@@ -127,6 +146,14 @@ export default function Config() {
       if (sel === 'ventas-mensual') cargar()
     } catch (x: any) { setMsg('Error: ' + x.message) }
   }
+  const guardarNueva = async () => {
+    if (!def) return
+    const fila = Object.fromEntries(Object.entries(nueva).filter(([, v]) => v.trim() !== ''))
+    try {
+      const r = await api('/maestros/' + sel + '/carga', { method: 'POST', body: JSON.stringify({ filas: [fila], modo: 'actualizar' }) })
+      setMsg(r.creadas ? 'Fila agregada' : 'Esa llave ya existía: se actualizó'); setAgregar(false); setNueva({}); cargar()
+    } catch (x: any) { setMsg('Error: ' + x.message) }
+  }
   const eliminar = async () => {
     const s = grid?.getSelectedRows() ?? []
     if (!def || !s.length) { setMsg('Selecciona filas para eliminar'); return }
@@ -145,7 +172,7 @@ export default function Config() {
         <TextField select size="small" label="Maestro" value={sel} onChange={e => setSel(e.target.value)} sx={{ minWidth: 260 }}>
           {defs.map(d => <MenuItem key={d.clave} value={d.clave}>{d.label}</MenuItem>)}
         </TextField>
-        <Button variant="outlined" startIcon={<Download />} onClick={descargar}>Descargar Excel</Button>
+        <Button variant="outlined" startIcon={<Download />} onClick={descargar}>{hayFiltro ? 'Descargar Excel (filtrado)' : 'Descargar Excel'}</Button>
         <Box sx={{ borderLeft: '1px solid #ccc', height: 28, mx: .5 }} />
         {pCarga && <><TextField select size="small" label="Al cargar" value={modo} onChange={e => setModo(e.target.value as any)} sx={{ minWidth: 270 }}>
           <MenuItem value="actualizar">Crear nuevos y actualizar existentes</MenuItem>
@@ -156,6 +183,7 @@ export default function Config() {
         <Button variant="contained" startIcon={<Upload />} onClick={() => fileRef.current?.click()}>Subir Excel / CSV</Button>
         <input ref={fileRef} type="file" accept=".xlsx,.csv,.txt" hidden onChange={e => subirArchivo(e.target.files?.[0])} />
         <Button startIcon={<ContentPaste />} onClick={() => setPegar(!pegar)}>Pegar desde Excel</Button>
+        <Button startIcon={<AddCircleOutline />} onClick={() => { setNueva({}); setAgregar(true) }}>Agregar fila</Button>
         {def && !def.sin_reemplazo && <Button color="error" startIcon={<DeleteOutline />} onClick={eliminar}>Eliminar seleccionadas</Button>}</>}
         <Box sx={{ flex: 1 }} />
         {pSync && <Button size="small" startIcon={<CloudSync />} onClick={traerItems} title="Descripción, laboratorio y todos los criterios de items desde Siesa">Traer items de Siesa</Button>}
@@ -168,6 +196,18 @@ export default function Config() {
           Las referencias van como texto de 6 dígitos.{def.todas ? ' Para condenar el item en todas las tiendas deja la tienda vacía o escribe *.' : ''} Columnas a cargar:{' '}
           {def.editable.length ? def.editable.map(c => <Chip key={c} size="small" label={c} sx={{ mr: .5 }} />) : '(solo existencia de la fila)'}
         </Typography>)}
+      {def?.ayuda && <Alert severity="info" icon={false} sx={{ py: 0.5 }}><b>Qué hace este maestro:</b> {def.ayuda}</Alert>}
+      {def && (
+        <Paper variant="outlined" sx={{ p: 1, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
+          <Typography variant="body2" sx={{ fontWeight: 600 }}>Filtrar</Typography>
+          {def.filtros.tienda && <TextField size="small" label="Tienda(s)" placeholder="SV021, GN408" value={f.tienda} onChange={e => setF({ tienda: e.target.value })} sx={{ width: 190 }} />}
+          <TextField size="small" label={def.filtros.item ? 'Item o descripción' : 'Buscar'} value={f.texto} onChange={e => setF({ texto: e.target.value })} sx={{ width: 220 }} />
+          {def.filtros.lab && <TextField size="small" label="Laboratorio (código)" value={f.lab} onChange={e => setF({ lab: e.target.value })} sx={{ width: 170 }} />}
+          {hayFiltro && <Button size="small" onClick={() => setF(VACIO)}>Quitar filtros</Button>}
+          <Box sx={{ flex: 1 }} />
+          <Chip size="small" label={total > rows.length ? `Mostrando ${rows.length.toLocaleString('es-CO')} de ${total.toLocaleString('es-CO')} filas` : `${rows.length.toLocaleString('es-CO')} ${rows.length === 1 ? 'fila' : 'filas'}`} color={total > rows.length ? 'warning' : 'default'} />
+        </Paper>)}
+      {total > rows.length && <Alert severity="warning" sx={{ py: 0 }}>Este maestro tiene {total.toLocaleString('es-CO')} filas y la pantalla solo muestra las primeras {rows.length.toLocaleString('es-CO')}: filtra por tienda o item para verlas y editarlas. “Descargar Excel” baja todo lo filtrado, sin ese tope.</Alert>}
       {pegar && def && (
         <Stack spacing={1}>
           <TextField multiline minRows={4} fullWidth value={txt} onChange={e => setTxt(e.target.value)} placeholder="Pega aquí con la fila de encabezados" />
@@ -177,6 +217,16 @@ export default function Config() {
         <Tabla cargando={cargando} vacio="Este maestro está vacío: carga datos con Excel, pegando o trayendo de Siesa" rowData={rows} columnDefs={cols} onCellValueChanged={onChange} rowBuffer={20} rowSelection="multiple"
           onGridReady={e => setGrid(e.api)} defaultColDef={{ resizable: true, sortable: true }} />
       </Box>
+      <Dialog open={agregar} onClose={() => setAgregar(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Agregar fila · {def?.label}</DialogTitle>
+        <DialogContent sx={{ display: 'grid', gap: 1.5, pt: '8px !important' }}>
+          {def && [...def.llave, ...def.editable].map(k => (
+            <TextField key={k} size="small" label={k + (def.llave.includes(k) ? (k === 'empresa' ? ' (vacío = se deduce)' : k === 'bodega_id' && def.todas ? ' (vacío o * = todas)' : '') : '')}
+              value={nueva[k] ?? ''} onChange={e => setNueva({ ...nueva, [k]: e.target.value })} />))}
+          <Typography variant="caption" color="text.secondary">Si la llave ya existe, se actualizan los valores. Las referencias van de 6 dígitos (ej. 019901).</Typography>
+        </DialogContent>
+        <DialogActions><Button onClick={() => setAgregar(false)}>Cancelar</Button><Button variant="contained" onClick={guardarNueva}>Guardar</Button></DialogActions>
+      </Dialog>
       <Aviso msg={msg} onClose={() => setMsg('')} />
     </Box>)
 }

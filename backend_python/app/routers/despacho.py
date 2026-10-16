@@ -37,8 +37,10 @@ def matriz(bodega_id: str | None = None, bodegas: str | None = None, solo_pendie
         f += f" AND s.estado='{estado.upper()}'"
     sql = f"""SELECT s.ejecucion_id, s.empresa, s.producto_id, mi.descripcion, mi.categoria, s.bodega_id, s.zona::text zona,
                      s.inventario, s.en_transito, s.flujo_neto, s.tor, s.toy_aj, s.tog_aj, s.unidad_despacho,
-                     s.vectorizacion, s.cantidad_sugerida::float8 cantidad_sugerida, s.cantidad_aprobada, s.estado::text estado, s.cantidad_necesaria::float8 cantidad_necesaria, s.stock_cedi::float8 stock_cedi
+                     s.vectorizacion, s.cantidad_sugerida::float8 cantidad_sugerida, s.cantidad_aprobada, s.estado::text estado, s.cantidad_necesaria::float8 cantidad_necesaria, s.stock_cedi::float8 stock_cedi,
+                     ci.costo::float8 AS costo, s.regla_objetivo
               FROM ddmrp.sugerencias_envio s LEFT JOIN ddmrp.maestro_item mi USING (producto_id)
+                   LEFT JOIN ddmrp.costo_item ci ON ci.producto_id = s.producto_id
               WHERE {f} ORDER BY s.bodega_id, s.pct_buffer"""
     with pg.connect() as c:
         filas = [dict(r) for r in c.execute(text(sql), p).mappings()]
@@ -57,7 +59,10 @@ def cedi(user=Depends(requiere("ver_despacho"))):
         regla = reparto.regla_actual(c)
         ult = c.execute(text(f"SELECT count(*) FILTER (WHERE cantidad_necesaria > cantidad_sugerida) FROM ddmrp.sugerencias_envio WHERE ejecucion_id = {ULTIMA}")).scalar()
         res = c.execute(text("SELECT count(*) FROM ddmrp.reserva_cedi WHERE porcentaje > 0")).scalar()
-    return {"bodega": settings.siesa_cedi_bodega, "productos": n, "con_stock": con, "corte": corte, "regla": regla,
+        minimo = float(c.execute(text("SELECT valor FROM ddmrp.parametro WHERE clave = 'valor_minimo_envio'")).scalar() or 0)
+        con_costos = c.execute(text("SELECT count(*) FROM ddmrp.costo_item")).scalar()
+        dias_reparto = reparto.dias_alcance(c)
+    return {"minimo_envio": minimo, "con_costos": con_costos, "dias_reparto": dias_reparto, "bodega": settings.siesa_cedi_bodega, "productos": n, "con_stock": con, "corte": corte, "regla": regla,
             "regla_nombre": reparto.REGLAS.get(regla, "?"), "items_con_reserva": res, "limitadas": ult, "activo": regla != 0 and n > 0}
 
 
@@ -109,6 +114,49 @@ def desaprobar(items: list[Clave], user=Depends(requiere("aprobar_despacho"))):
     return {"ok": True, "devueltas": n, "omitidas": len(items) - n}
 
 
+def tiendas_bajo_minimo(c, eid: int, bodegas: list[str] | None = None) -> tuple[dict[str, float], float, bool]:
+    """Tiendas cuyo despacho APROBADO vale menos que el minimo (regla valor_minimo_envio), a costo promedio.
+    Devuelve ({tienda: valor}, minimo, hay_costos). Sin costos cargados o con minimo 0 la regla no se aplica."""
+    minimo = float(c.execute(text("SELECT valor FROM ddmrp.parametro WHERE clave = 'valor_minimo_envio'")).scalar() or 0)
+    hay = bool(c.execute(text("SELECT EXISTS (SELECT 1 FROM ddmrp.costo_item)")).scalar())
+    if minimo <= 0 or not hay:
+        return {}, minimo, hay
+    rows = c.execute(text("""SELECT s.bodega_id, COALESCE(SUM(COALESCE(s.cantidad_aprobada, s.cantidad_sugerida) * COALESCE(ci.costo, 0)), 0)::float8
+                             FROM ddmrp.sugerencias_envio s LEFT JOIN ddmrp.costo_item ci ON ci.producto_id = s.producto_id
+                             WHERE s.ejecucion_id = :e AND s.estado = 'APROBADA' AND COALESCE(s.cantidad_aprobada, s.cantidad_sugerida) >= 0.5
+                               AND (CAST(:bs AS text[]) IS NULL OR s.bodega_id = ANY(CAST(:bs AS text[])))
+                             GROUP BY s.bodega_id"""), {"e": eid, "bs": bodegas or None}).all()
+    return {b: v for b, v in rows if v < minimo}, minimo, True
+
+
+class MarcarReq(BaseModel):
+    ejecucion_id: int | None = None
+    bodegas: list[str] | None = None     # solo estas tiendas; None = todas las que tengan aprobadas
+
+
+@router.post("/marcar-enviadas")
+def marcar_enviadas(req: MarcarReq, user=Depends(requiere("aprobar_despacho", "descargar_planos"))):
+    """APROBADAS -> ENVIADAS sin bajar el plano (p.ej. el plano ya se subio a Siesa). Una tienda cuyo despacho vale menos que el
+    minimo no se deja enviar: queda aprobada y se informa."""
+    with pg.begin() as c:
+        eid = req.ejecucion_id or c.execute(text(f"SELECT {ULTIMA}")).scalar()
+        tiendas = [r[0] for r in c.execute(text("""SELECT DISTINCT bodega_id FROM ddmrp.sugerencias_envio WHERE ejecucion_id = :e AND estado = 'APROBADA'
+                                                   AND (CAST(:bs AS text[]) IS NULL OR bodega_id = ANY(CAST(:bs AS text[])))"""),
+                                      {"e": eid, "bs": req.bodegas or None}).all()]
+        if not tiendas:
+            raise HTTPException(404, "No hay sugerencias aprobadas para marcar como enviadas")
+        for b in tiendas:
+            exigir(user, b, None, "aprobacion")
+        bajo, minimo, _ = tiendas_bajo_minimo(c, eid, req.bodegas)
+        ok = [b for b in tiendas if b not in bajo]
+        n = c.execute(text("""UPDATE ddmrp.sugerencias_envio SET estado = 'ENVIADA'::ddmrp.estado_sugerencia
+                              WHERE ejecucion_id = :e AND estado = 'APROBADA' AND bodega_id = ANY(:b)"""), {"e": eid, "b": ok}).rowcount if ok else 0
+    bitacora.evento("aprobacion", bitacora.usuario_de(user), f"Marcó como enviadas {n} filas de {len(ok)} tiendas" + (f"; {len(bajo)} tiendas bajo el mínimo no se enviaron" if bajo else ""),
+                    {"enviadas": n, "tiendas": len(ok), "bajo_minimo": len(bajo), "ejecucion_id": eid})
+    return {"ok": True, "enviadas": n, "tiendas": len(ok), "minimo": minimo,
+            "bloqueadas": [{"bodega_id": b, "valor": round(v)} for b, v in sorted(bajo.items())]}
+
+
 class PlanoReq(BaseModel):
     ejecucion_id: int | None = None      # por defecto, la ultima ejecucion ok
     fecha: date | None = None            # fecha del documento (por defecto hoy)
@@ -134,6 +182,12 @@ def exportar_plano(req: PlanoReq, user=Depends(requiere("descargar_planos"))):
                          {"e": eid, "bs": req.bodegas or None}).all()
         if not rows:
             raise HTTPException(404, "No hay sugerencias aprobadas para exportar")
+        bajo, minimo, _ = tiendas_bajo_minimo(c, eid, req.bodegas)
+        if bajo:   # no se dejan enviar: quedan aprobadas y no entran al plano
+            rows = [r for r in rows if r[0] not in bajo]
+            if not rows:
+                raise HTTPException(409, f"Ninguna tienda llega al valor mínimo de envío (${minimo:,.0f}): " +
+                                    ", ".join(f"{b} ${v:,.0f}" for b, v in sorted(bajo.items())[:8]))
         for b in sorted({r[0] for r in rows}):
             exigir(user, b, None, "aprobacion")
         derivados = sorted({r[0] for r in rows if not r[3]})
@@ -151,6 +205,8 @@ def exportar_plano(req: PlanoReq, user=Depends(requiere("descargar_planos"))):
                     {"ejecucion_id": eid, "lineas": len(lineas), "tiendas": len({r[0] for r in rows}), "consec_inicial": req.consec_inicial,
                      "marcar_enviadas": req.marcar_enviadas, "dia": req.dia})
     headers = {"Content-Disposition": f'attachment; filename="Abastecimiento_{fecha:%Y%m%d}.xlsx"'}
+    if bajo:
+        headers["X-Bodegas-Bajo-Minimo"] = ",".join(f"{b}:{round(v)}" for b, v in sorted(bajo.items()))
     if derivados:  # bodegas sin centro de operacion cargado: se uso la regla observada en el ejemplo
         headers["X-Bodegas-CO-Derivado"] = ",".join(derivados)
     return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers=headers)

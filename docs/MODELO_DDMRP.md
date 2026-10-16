@@ -36,7 +36,7 @@ Valores por defecto:
 - Flujo neto = inventario + transito - demanda calificada (`incluir_transito`, `restar_demanda_calificada`).
 - Zona: `<= TOR` roja · `<= TOY aj` amarilla · `<= TOG aj` verde · mayor, exceso. Sin buffer (TOG aj = 0): sin alerta.
 - Se pide (`regla_disparo`): 1 = flujo neto `<= TOY aj` · 2 = `<= TOR` · 3 = `< TOG aj`.
-- Cantidad = objetivo - flujo neto (`regla_objetivo`: 1 = TOG aj, 2 = TOY aj), al multiplo de la unidad de despacho
+- Cantidad = objetivo - flujo neto (`regla_objetivo`: 1 = TOG aj, 2 = TOY aj, 3 = TOY aj + la mitad de la zona verde ajustada; un laboratorio o un item puede tener la suya en los maestros `reposicion-laboratorio` / `reposicion-item`: item > laboratorio > regla general), al multiplo de la unidad de despacho
   (`regla_redondeo`: 1 arriba, 2 cercano, 3 abajo). `cantidad_minima` descarta sugeridos pequenos.
 - La vectorizacion (derrame) se suma tal cual (`sumar_vectorizacion`).
 - El mes en curso entra completo en el promedio aunque este incompleto (como en el Excel): al inicio de mes el ADU sale subestimado.

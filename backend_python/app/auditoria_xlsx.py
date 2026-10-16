@@ -22,7 +22,7 @@ PARAMS = [
     ("adu_bajo_min", "ADU bajo: desde (ZRB = 0 si el ADU está entre desde y hasta)", 1),
     ("adu_bajo_max", "ADU bajo: hasta", 4),
     ("regla_disparo", "Se pide cuando: 1 flujo neto ≤ TOY aj · 2 ≤ TOR · 3 < TOG aj", 1),
-    ("regla_objetivo", "Se repone hasta: 1 TOG aj · 2 TOY aj", 1),
+    ("regla_objetivo", "Se repone hasta (regla general): 1 TOG aj · 2 TOY aj · 3 TOY aj + mitad de la zona verde", 1),
     ("regla_redondeo", "Múltiplo de despacho: 1 arriba · 2 cercano · 3 abajo", 1),
     ("sumar_vectorizacion", "Sumar la vectorización (1 sí, 0 no)", 1),
     ("incluir_transito", "Incluir el tránsito en el flujo neto (1 sí, 0 no)", 1),
@@ -77,6 +77,7 @@ def construir(filas: list[dict], meses: list[str], params: dict, factores: list[
     col("tr", "En tránsito", "Traslados abiertos hacia la tienda", "e", 10, "#,##0.##")
     col("dc", "Demanda calificada", "Pedidos ya comprometidos (se resta del flujo neto)", "e", 10, "#,##0.##")
     col("cond", "Condenado (NxP)", "1 = no se despacha nada", "e", 10)
+    col("robj", "Regla hasta dónde (item/lab.)", "0 = usa la regla general; 1, 2 o 3 = la regla propia del item o de su laboratorio al correr el motor", "e", 11)
     # --- bloque pronostico (BI..CB del Excel)
     col("bi", "Promedio ventas", "Promedio de los meses de la ventana (BI)", "f", 10, "0.00")
     col("bl", "Desv. est.", "Desviación estándar muestral de la ventana (BL)", "f", 10, "0.00")
@@ -105,7 +106,7 @@ def construir(filas: list[dict], meses: list[str], params: dict, factores: list[
     col("nfp", "Flujo neto", "Inventario + tránsito − demanda calificada (según Parametros)", "f", 10, "#,##0.##")
     col("zona", "Zona", "ROJA ≤ TOR · AMARILLA ≤ TOY aj · VERDE ≤ TOG aj · si no, EXCESO", "f", 10)
     col("pide", "¿Pide?", "1 si cumple la regla de disparo", "f", 7)
-    col("falta", "Falta", "Objetivo − flujo neto", "f", 9, "#,##0.##")
+    col("falta", "Falta", "Objetivo − flujo neto. Objetivo según la regla: 1 TOG aj · 2 TOY aj · 3 TOY aj + mitad de la zona verde (arriba)", "f", 9, "#,##0.##")
     col("ude", "Unidad efectiva", "Unidad de despacho (mínimo 1)", "f", 8)
     col("base", "Pedido al múltiplo", "Falta redondeada al múltiplo de despacho", "f", 10)
     col("basem", "Pedido tras mínimo", "Se descarta si es menor a la cantidad mínima", "f", 10)
@@ -162,7 +163,8 @@ def construir(filas: list[dict], meses: list[str], params: dict, factores: list[
                            f"IF({C('nfp', r)}<={C('toyaj', r)},\"AMARILLA\",IF({C('nfp', r)}<={C('togaj', r)},\"VERDE\",\"EXCESO\"))))"),
         "pide": lambda r: (f"=IF(AND({C('togaj', r)}>0,IF({p['regla_disparo']}=2,{C('nfp', r)}<={C('tor', r)},"
                            f"IF({p['regla_disparo']}=3,{C('nfp', r)}<{C('togaj', r)},{C('nfp', r)}<={C('toyaj', r)}))),1,0)"),
-        "falta": lambda r: f"=IF({C('pide', r)}=1,IF({p['regla_objetivo']}=2,{C('toyaj', r)},{C('togaj', r)})-{C('nfp', r)},0)",
+        "falta": lambda r: (f"=IF({C('pide', r)}=1,CHOOSE(IF({C('robj', r)}>0,{C('robj', r)},{p['regla_objetivo']}),{C('togaj', r)},{C('toyaj', r)},"
+                            f"ROUNDUP({C('toyaj', r)}+MAX({C('togaj', r)}-{C('toyaj', r)},0)/2,0))-{C('nfp', r)},0)"),
         "ude": lambda r: f"=MAX({C('ud', r)},1)",
         "base": lambda r: (f"=IF({C('falta', r)}>0,{C('ude', r)}*IF({p['regla_redondeo']}=2,ROUND({C('falta', r)}/{C('ude', r)},0),"
                            f"IF({p['regla_redondeo']}=3,ROUNDDOWN({C('falta', r)}/{C('ude', r)},0),ROUNDUP({C('falta', r)}/{C('ude', r)},0))),0)"),
@@ -200,7 +202,7 @@ def construir(filas: list[dict], meses: list[str], params: dict, factores: list[
     ventas_keys = [f"v{i}" for i in range(n)]
     entradas_map = {"emp": "empresa", "bod": "bodega_id", "ref": "producto_id", "desc": "descripcion", "lab": "laboratorio",
                     "pron": "pronostico", "lt": "lead_time", "frec": "frecuencia", "ud": "unidad_despacho", "cmax": "cota_max", "cmin": "cota_min",
-                    "promo": "promo", "vect": "vectorizacion", "inv": "inventario", "tr": "en_transito", "dc": "demanda_calificada", "cond": "condenado",
+                    "promo": "promo", "vect": "vectorizacion", "inv": "inventario", "tr": "en_transito", "dc": "demanda_calificada", "cond": "condenado", "robj": "regla_objetivo",
                     "m_adu": "adu", "m_toyaj": "toy_aj", "m_togaj": "tog_aj", "m_zona": "zona", "m_nec": "necesidad", "m_cedi": "stock_cedi",
                     "m_asig": "cantidad_sugerida", "m_est": "estado", "m_apr": "cantidad_aprobada"}
     fuentes = {kc: [] for kc in idx}

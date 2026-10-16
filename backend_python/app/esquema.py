@@ -23,6 +23,14 @@ SENTENCIAS = [
     "INSERT INTO ddmrp.parametro VALUES ('cedi_regla_reparto', 1, 'Si el inventario del CEDI no alcanza: 0 no limita, 1 proporcional a la rotacion (ADU), 4 proporcional a la necesidad, 2 parejo, 3 prioridad al mas critico') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('etl_traer_ventas', 0, 'El ETL tambien trae las ventas por mes de Siesa (1 = si, 0 = solo con el boton)') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('retener_dias', 180, 'Dias de historia diaria del buffer que se conservan') ON CONFLICT DO NOTHING",
+    "ALTER TABLE ddmrp.sugerencias_envio ADD COLUMN IF NOT EXISTS regla_objetivo SMALLINT",
+    "CREATE TABLE IF NOT EXISTS ddmrp.costo_item (producto_id TEXT PRIMARY KEY, costo NUMERIC(16,4) NOT NULL, fecha_corte DATE NOT NULL DEFAULT current_date)",
+    # hasta donde se repone por item o por laboratorio (1 TOG aj, 2 TOY aj, 3 TOY aj + mitad de la zona verde); el item gana sobre el laboratorio
+    "CREATE TABLE IF NOT EXISTS ddmrp.reposicion_item (producto_id TEXT PRIMARY KEY, regla SMALLINT NOT NULL CHECK (regla IN (1,2,3)))",
+    "CREATE TABLE IF NOT EXISTS ddmrp.reposicion_laboratorio (laboratorio TEXT PRIMARY KEY, regla SMALLINT NOT NULL CHECK (regla IN (1,2,3)))",
+    "CREATE TABLE IF NOT EXISTS ddmrp.reparto_dia (dia INT PRIMARY KEY)",   # vacio = el CEDI se reparte entre todas las tiendas
+    "INSERT INTO ddmrp.parametro VALUES ('valor_minimo_envio', 350000, 'Valor minimo (a costo promedio) del despacho a una tienda: por debajo no se deja enviar. 0 = sin minimo') ON CONFLICT DO NOTHING",
+    "INSERT INTO ddmrp.parametro VALUES ('inv_tiendas_resta_comprometido', 0, 'Inventario de las tiendas: 0 = existencia (como el reporte de Siesa), 1 = existencia menos cantidad comprometida') ON CONFLICT DO NOTHING",
     "CREATE TABLE IF NOT EXISTS ddmrp.laboratorio (codigo TEXT PRIMARY KEY, nombre TEXT)",
     "ALTER TABLE ddmrp.maestro_bodega ADD COLUMN IF NOT EXISTS descripcion TEXT",
     # cotas como fraccion (0.125 = 12,5%): 4 decimales en vez de 2

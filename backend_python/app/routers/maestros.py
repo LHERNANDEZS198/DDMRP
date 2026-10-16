@@ -70,6 +70,12 @@ MAESTROS = {
     "centro-operacion": dict(
         label="Centro de operacion por bodega (archivo plano)", tabla="ddmrp.bodega_centro_operacion",
         llave=["bodega_id"], editable={"id_co": "txt"}, bodega="bodega_id", producto=None),
+    "reposicion-laboratorio": dict(
+        label="Hasta donde se repone, por laboratorio (1 TOG aj · 2 TOY aj · 3 TOY aj + mitad de la zona verde)", tabla="ddmrp.reposicion_laboratorio",
+        llave=["laboratorio"], editable={"regla": "int"}, bodega=None, producto=None, global_=True),
+    "reposicion-item": dict(
+        label="Hasta donde se repone, por item (1 TOG aj · 2 TOY aj · 3 TOY aj + mitad de la zona verde)", tabla="ddmrp.reposicion_item",
+        llave=["producto_id"], editable={"regla": "int"}, bodega=None, producto="producto_id", global_=True),
     "demanda-calificada": dict(
         label="Demanda calificada (pedidos abiertos / picos)", tabla="ddmrp.demanda_calificada",
         llave=["bodega_id", "producto_id"], editable={"cantidad": "num"},
@@ -78,6 +84,35 @@ MAESTROS = {
         label="Ventas por mes (unidades)", tabla="ddmrp.ventas_mensual",
         llave=["mes", "bodega_id", "producto_id"], editable={"cantidad": "num"},
         bodega="bodega_id", producto="producto_id"),
+}
+
+
+AYUDA = {
+    "bitacora": "Lead time (días que tarda el producto en llegar a la tienda) y frecuencia (cada cuántos días se abastece) de cada tienda. "
+                "El lead time × la venta diaria da la zona amarilla y la frecuencia × la venta diaria da la verde; además el lead time define el factor de la zona roja (maestro Factores). "
+                "Una tienda que no esté aquí no entra al cálculo del motor.",
+    "control-referencias": "Cota máxima y mínima por tienda y referencia, como fracción o % (20% = 0.2). Ajustan los topes: TOY ajustado = TOG × cota máx + TOR + ZA, "
+                           "TOG ajustado = TOY ajustado + ZV + TOG × cota mín. Con cotas en 0 los topes ajustados quedan iguales a los calculados. No se usan cuando la venta diaria es baja (ADU entre 1 y 4) y no hay promoción.",
+    "vectorizacion": "Unidades extra (derrame) que se suman a lo sugerido de esa tienda y referencia, p. ej. producto nuevo o campaña. Solo cuenta si la regla 'Sumar vectorización' está en Sí. "
+                     "Escribir NxP condena el item en esa tienda (pasa al maestro Condenados).",
+    "condenados": "Items que NO se despachan: el buffer se calcula y se ve, pero la cantidad sugerida queda en 0. Tienda * = el item queda condenado en todas las tiendas.",
+    "pronostico": "Pronóstico estático (unidades/mes) que cargan los analistas por tienda y referencia. Se compara con la venta de la ventana y se ajusta a entre 30 y 60 días de inventario; "
+                  "ese valor entra, junto con las ventas recientes, al cálculo de la venta diaria (ADU). Sin pronóstico, solo cuentan las ventas.",
+    "unidad-despacho": "Múltiplo en que se despacha cada referencia (caja o display). Lo sugerido se redondea a este múltiplo (según la regla de redondeo) y también es el mínimo de la zona verde.",
+    "reserva-cedi": "Porcentaje del inventario del CEDI que se guarda por item: no se reparte a las tiendas. Solo importa cuando el CEDI no alcanza para todas.",
+    "promocion": "Indicativo de promoción por referencia. 0 = sin promoción. 1 = promoción fuerte: las cotas se agrandan (máxima × 1,2 y mínima × 1,1, parámetros del modelo), así el buffer crece y se sugiere más. "
+                 "2 = promoción moderada: se aplican las cotas normales aunque la venta diaria sea baja (la mínima × 1,1 solo en tiendas GN). No aplica a tiendas TC y DM.",
+    "factores": "Tablas de tramos del modelo. LT: factor de la zona roja base según el lead time. VAR: factor de la zona roja de seguridad según la variabilidad de la demanda. Cambian los buffers de todos los productos.",
+    "parametros": "Parámetros del modelo: multiplicadores de cota en promoción y rango de venta diaria baja (ADU). Solo se editan los que ya existen. Las reglas de pedido están en la pantalla Reglas de pedido.",
+    "dias-bodega": "DÍA(S) de abastecimiento de cada tienda. Sirve para armar la corrida del día en la Matriz de despacho y, si lo eliges en Reglas de pedido, para repartir el inventario del CEDI solo entre las tiendas de esos días.",
+    "items": "Descripción y laboratorio de cada item; los demás criterios vienen de Siesa con 'Traer items'. El laboratorio define los permisos por categoría y los filtros del Control.",
+    "centro-operacion": "Centro de operación de cada tienda para el archivo plano de Siesa. Si falta, se deduce con la regla observada en el ejemplo.",
+    "demanda-calificada": "Pedidos abiertos o picos conocidos por tienda y referencia. Se restan del flujo neto cuando la regla 'Restar demanda calificada' está en Sí.",
+    "ventas-mensual": "Unidades vendidas por mes, tienda y referencia: base de la venta diaria (ADU) y de la variabilidad. Se traen de Siesa con 'Traer ventas por mes' o se cargan por Excel.",
+    "reposicion-laboratorio": "Hasta dónde se repone cuando se pide, para todos los items de un laboratorio (código del laboratorio): 1 = TOG ajustado (tope verde), 2 = TOY ajustado (tope amarillo), "
+                              "3 = tope amarillo + la mitad de la zona verde ajustada. Sobrescribe la regla general de Reglas de pedido; la del item gana sobre la del laboratorio. Aplica en la siguiente corrida del motor.",
+    "reposicion-item": "Hasta dónde se repone cuando se pide, para un item en todas las tiendas: 1 = TOG ajustado (tope verde), 2 = TOY ajustado (tope amarillo), 3 = tope amarillo + la mitad de la zona verde ajustada. "
+                       "Es la prioridad más alta: gana sobre la del laboratorio y sobre la regla general. Aplica en la siguiente corrida del motor.",
 }
 
 
@@ -115,13 +150,42 @@ def _autorizar(user, d: dict, llave: dict, conn):
 @router.get("")
 def listar_maestros(user=Depends(requiere("ver_maestros", "cargar_maestros"))):
     return [{"clave": k, "label": v["label"], "llave": v["llave"], "editable": list(v["editable"]),
-             "tipos": v["editable"], "sin_reemplazo": bool(v.get("sin_reemplazo")), "todas": bool(v.get("todas"))}
+             "tipos": v["editable"], "sin_reemplazo": bool(v.get("sin_reemplazo")), "todas": bool(v.get("todas")),
+             "ayuda": AYUDA.get(k, ""),
+             "filtros": {"tienda": bool(v.get("bodega")), "item": bool(v.get("producto")) or k == "items",
+                         "lab": bool(v.get("producto")) or k in ("items", "reposicion-laboratorio"), "texto": True}}
             for k, v in MAESTROS.items()]
 
 
+def _filtros_maestro(nombre: str, d: dict, bodega_id: str | None, q: str | None, lab: str | None) -> tuple[str, dict]:
+    """Filtros de pantalla y de descarga. Supone el alias t (tabla) y mi (maestro_item) cuando el maestro tiene producto."""
+    w, p = "", {}
+    bod, prod = d.get("bodega"), d.get("producto")
+    if bod and bodega_id:
+        w += f" AND t.{bod} = ANY(:fb)"; p["fb"] = [x.strip() for x in bodega_id.split(",") if x.strip()]
+    if q and q.strip():
+        p["q"] = f"%{q.strip()}%"
+        if prod:
+            w += f" AND (t.{prod} ILIKE :q OR mi.descripcion ILIKE :q)"
+        elif nombre == "items":
+            w += " AND (t.producto_id ILIKE :q OR t.descripcion ILIKE :q)"
+        else:
+            clave = next((k for k in d["llave"] if k != "empresa"), d["llave"][0])
+            w += f" AND CAST(t.{clave} AS text) ILIKE :q"
+    if lab and lab.strip():
+        p["lab"] = lab.strip()
+        if prod:
+            w += " AND mi.categoria = :lab"
+        elif nombre == "items":
+            w += " AND t.categoria = :lab"
+        elif nombre == "reposicion-laboratorio":
+            w += " AND t.laboratorio = :lab"
+    return w, p
+
+
 @router.get("/{nombre}")
-def leer(nombre: str, bodega_id: str | None = None, producto_id: str | None = None, limit: int = 20000,
-         user=Depends(requiere("ver_maestros", "cargar_maestros"))):
+def leer(nombre: str, response: Response, bodega_id: str | None = None, producto_id: str | None = None, q: str | None = None,
+         lab: str | None = None, limit: int = 20000, user=Depends(requiere("ver_maestros", "cargar_maestros"))):
     d = _def(nombre)
     cols = d["llave"] + [c for c in d["editable"] if c not in d["llave"]]
     sel = ", ".join(f"t.{c}" for c in cols)
@@ -132,16 +196,19 @@ def leer(nombre: str, bodega_id: str | None = None, producto_id: str | None = No
         sel += ", mi.descripcion" if d.get("producto") else ""
         join += f" LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = t.{d['bodega']}"
         sel += ", mb.descripcion AS bodega_nombre"
-        if bodega_id:
-            w += f" AND t.{d['bodega']} = :b"; p["b"] = bodega_id
     elif d.get("producto"):
         join = f"LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = t.{d['producto']}"
         sel += ", mi.descripcion"
     if producto_id and d.get("producto"):
         w += f" AND t.{d['producto']} = :pr"; p["pr"] = producto_id
+    wf, pf = _filtros_maestro(nombre, d, bodega_id, q, lab)
+    w, p = w + wf, {**p, **pf}
     sql = f"SELECT {sel} FROM {d['tabla']} t {join} WHERE {w} ORDER BY {', '.join('t.' + c for c in d['llave'])} LIMIT :lim"
     with pg.connect() as c:
         filas = [dict(r) for r in c.execute(text(sql), {**p, "lim": limit}).mappings()]
+        # total real (con los mismos filtros): la pantalla avisa si solo muestra una parte
+        total = len(filas) if len(filas) < limit else c.execute(text(f"SELECT count(*) FROM {d['tabla']} t {join} WHERE {w}"), p).scalar()
+        response.headers["X-Total-Rows"] = str(total)
         if nombre == "items" and filas:
             # una columna por plan de criterios (CATEGORIA, LINEA, ...) con el nombre del criterio como valor
             planes = c.execute(text("SELECT ic.plan_id, coalesce(pl.nombre, ic.plan_id) FROM (SELECT DISTINCT plan_id FROM ddmrp.item_criterio) ic "
@@ -463,7 +530,8 @@ async def subir_excel(nombre: str, archivo: UploadFile = File(...), modo: str = 
 
 
 @router.get("/{nombre}/excel")
-def bajar_excel(nombre: str, user=Depends(requiere("ver_maestros", "cargar_maestros"))):
+def bajar_excel(nombre: str, bodega_id: str | None = None, q: str | None = None, lab: str | None = None,
+                user=Depends(requiere("ver_maestros", "cargar_maestros"))):
     """Descarga lo que el usuario puede ver, con los mismos encabezados que acepta la carga (sirve de plantilla).
     Maestros por tienda: la tienda va con su codigo y su nombre (la empresa se deduce) y, si el maestro es solo por
     tienda (bitacora, centro de operacion), vienen todas las tiendas aunque aun no tengan datos."""
@@ -475,6 +543,9 @@ def bajar_excel(nombre: str, user=Depends(requiere("ver_maestros", "cargar_maest
     sel = ", ".join(f"t.{c}" for c in cols_t + list(d["editable"]))
     join, w, p = "", "TRUE", {}
     solo_tienda = bool(bod) and not llave_xl and not d.get("producto")
+    wf, pf = _filtros_maestro(nombre, d, bodega_id, q, lab)   # los mismos filtros de la pantalla: se baja lo que se ve (sin tope de 20.000)
+    if d.get("producto"):
+        join = f"LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = t.{d['producto']}"
     if bod:
         join = f"LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = t.{d['producto']}" if d.get("producto") else ""
         join += f" LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = t.{bod}"
@@ -488,9 +559,14 @@ def bajar_excel(nombre: str, user=Depends(requiere("ver_maestros", "cargar_maest
         if solo_tienda:   # plantilla con todas las tiendas del maestro de bodegas
             w2, p2 = filtro_sql_permisos(user, "mb.bodega_id", "'*'")
             ed = "".join(f", t.{c}" for c in d["editable"])
+            if bodega_id:
+                w2 += " AND mb.bodega_id = ANY(:fb)"; p2["fb"] = [x.strip() for x in bodega_id.split(",") if x.strip()]
+            if q and q.strip():
+                w2 += " AND (mb.bodega_id ILIKE :q OR mb.descripcion ILIKE :q)"; p2["q"] = f"%{q.strip()}%"
             filas = c.execute(text(f"SELECT mb.bodega_id, mb.descripcion{', mb.empresa' if con_emp else ''}{ed} FROM ddmrp.maestro_bodega mb "
                                    f"LEFT JOIN {d['tabla']} t ON t.{bod} = mb.bodega_id WHERE {w2} ORDER BY mb.bodega_id"), p2).all()
         else:
+            w, p = w + wf, {**p, **pf}
             filas = c.execute(text(f"SELECT {sel} FROM {d['tabla']} t {join} WHERE {w} ORDER BY "
                                    + ", ".join("t." + k for k in d["llave"]) + " LIMIT 1000000"), p).all()
     wb = Workbook(write_only=True)

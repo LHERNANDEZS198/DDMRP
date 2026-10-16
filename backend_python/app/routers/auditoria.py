@@ -57,7 +57,7 @@ def excel(bodegas: str | None = None, labs: str | None = None, q: str | None = N
                    COALESCE(pn.pronostico, 0)::float8 AS pronostico, s.lead_time::float8 lead_time, s.frecuencia::float8 frecuencia,
                    s.unidad_despacho::float8 unidad_despacho, COALESCE(cr.cota_maxima, 0)::float8 cota_max, COALESCE(cr.cota_minima, 0)::float8 cota_min,
                    COALESCE(pr.indicativo, 0)::int promo, s.vectorizacion::float8 vectorizacion, s.inventario::float8 inventario,
-                   s.en_transito::float8 en_transito, s.demanda_calificada::float8 demanda_calificada, s.condenado::int condenado,
+                   s.en_transito::float8 en_transito, s.demanda_calificada::float8 demanda_calificada, s.condenado::int condenado, COALESCE(s.regla_objetivo, 0)::int regla_objetivo,
                    s.adu::float8 adu, s.toy_aj::float8 toy_aj, s.tog_aj::float8 tog_aj, s.zona::text zona,
                    COALESCE(s.cantidad_necesaria, s.cantidad_sugerida)::float8 necesidad, s.stock_cedi::float8 stock_cedi,
                    s.cantidad_sugerida::float8 cantidad_sugerida, s.estado::text estado, s.cantidad_aprobada::float8 cantidad_aprobada

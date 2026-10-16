@@ -16,8 +16,9 @@ REGLAS = [
                    {"valor": 2, "label": "Flujo neto <= TOR (solo zona roja)"},
                    {"valor": 3, "label": "Flujo neto < TOG ajustado (cualquier faltante)"}]),
     dict(clave="regla_objetivo", titulo="Hasta donde se repone",
-         ayuda="Nivel al que se lleva el flujo neto al pedir.",
-         opciones=[{"valor": 1, "label": "TOG ajustado (tope verde)"}, {"valor": 2, "label": "TOY ajustado"}]),
+         ayuda="Nivel al que se lleva el flujo neto al pedir. Es la regla general: un laboratorio o un item puede tener la suya en el maestro 'Hasta donde se repone por laboratorio o item' (la del item gana sobre la del laboratorio, y esta sobre la general).",
+         opciones=[{"valor": 1, "label": "TOG ajustado (tope verde)"}, {"valor": 2, "label": "TOY ajustado (tope amarillo)"},
+                   {"valor": 3, "label": "Amarillo + mitad de la zona verde (TOY aj + (TOG aj − TOY aj) / 2)"}]),
     dict(clave="regla_redondeo", titulo="Redondeo a la unidad de despacho",
          ayuda="La cantidad faltante se lleva a un multiplo de la unidad de despacho.",
          opciones=[{"valor": 1, "label": "Hacia arriba"}, {"valor": 2, "label": "Al multiplo mas cercano"},
@@ -39,6 +40,12 @@ REGLAS = [
                    {"valor": 2, "label": "Repartir parejo (igual a cada tienda hasta cubrir su necesidad)"},
                    {"valor": 3, "label": "Dar prioridad a la tienda mas critica (menor % de buffer)"},
                    {"valor": 0, "label": "No limitar (ignora el inventario del CEDI)"}]),
+    dict(clave="valor_minimo_envio", titulo="Valor mínimo del despacho a una tienda ($)",
+         ayuda="Valor de lo que se envía a una tienda, a costo promedio. Si está por debajo, la Matriz de despacho no deja enviarla (ni exportar su plano). 0 = sin mínimo. Si aún no hay costos cargados no se aplica.",
+         opciones=None, min=0, max=1e12),
+    dict(clave="inv_tiendas_resta_comprometido", titulo="Inventario de las tiendas: restar lo comprometido",
+         ayuda="No: el inventario es la existencia, como en el reporte 'Existencia a la fecha por bodega' de Siesa. Sí: existencia menos la cantidad comprometida. (El CEDI siempre descuenta lo comprometido.) Se aplica en el siguiente ETL.",
+         opciones=[{"valor": 0, "label": "No: existencia (como Siesa)"}, {"valor": 1, "label": "Sí: existencia − comprometido"}]),
     dict(clave="etl_traer_ventas", titulo="El ETL trae las ventas por mes de Siesa",
          ayuda="Si: cada corrida del ETL (y la nocturna) trae las ventas. No: solo con el boton 'Traer ventas por mes' de Maestros.", opciones=SI_NO),
     dict(clave="retener_dias", titulo="Dias de historial que se conservan", ayuda="Para la vista de cambios en un periodo: se guarda la ultima corrida de cada dia. 7 a 730.", opciones=None, min=7, max=730, entero=True),
@@ -55,6 +62,39 @@ def listar(user=Depends(usuario_actual)):
     with pg.connect() as c:
         vals = dict(c.execute(text("SELECT clave, valor::float8 FROM ddmrp.parametro")).all())
     return [{**r, "valor": vals.get(r["clave"])} for r in REGLAS]
+
+
+# ---- A que tiendas se reparte el inventario del CEDI cuando no alcanza ----
+@router.get("/reparto-dias")
+def reparto_dias(user=Depends(usuario_actual)):
+    """DIAs elegidos (vacio = todas las tiendas) y los DIAs que existen con cuantas tiendas tiene cada uno."""
+    with pg.connect() as c:
+        elegidos = [r[0] for r in c.execute(text("SELECT dia FROM ddmrp.reparto_dia ORDER BY dia")).all()]
+        dias = [{"dia": d, "tiendas": n} for d, n in c.execute(text("SELECT dia, count(*) FROM ddmrp.bodega_dia GROUP BY dia ORDER BY dia")).all()]
+    return {"elegidos": elegidos, "dias": dias}
+
+
+class Dias(BaseModel):
+    dias: list[int]
+
+
+@router.put("/reparto-dias")
+def cambiar_reparto_dias(body: Dias, user=Depends(requiere("editar_reglas"))):
+    if not _puede_global(user):
+        raise HTTPException(403, "Requiere permiso de edicion sobre todas las bodegas")
+    with pg.begin() as c:
+        ant = [r[0] for r in c.execute(text("SELECT dia FROM ddmrp.reparto_dia ORDER BY dia")).all()]
+        existentes = {r[0] for r in c.execute(text("SELECT DISTINCT dia FROM ddmrp.bodega_dia")).all()}
+        nuevos = sorted(set(body.dias))
+        if set(nuevos) - existentes:
+            raise HTTPException(400, f"DIA(s) sin tiendas: {sorted(set(nuevos) - existentes)}")
+        c.execute(text("DELETE FROM ddmrp.reparto_dia"))
+        for d in nuevos:
+            c.execute(text("INSERT INTO ddmrp.reparto_dia (dia) VALUES (:d)"), {"d": d})
+        c.execute(text("INSERT INTO ddmrp.config_audit (tabla, llave, campo, valor_anterior, valor_nuevo, usuario) "
+                       "VALUES ('reglas', 'reparto_dias', 'valor', :a, :n, :u)"),
+                  {"a": ",".join(map(str, ant)) or "todas", "n": ",".join(map(str, nuevos)) or "todas", "u": user["nombre"]})
+    return {"ok": True, "aviso": "Se aplica en la proxima corrida del motor (o con 'Recalcular ahora')."}
 
 
 class Cambio(BaseModel):
@@ -82,3 +122,4 @@ def cambiar(clave: str, body: Cambio, user=Depends(requiere("editar_reglas"))):
                        "VALUES ('reglas', :c, 'valor', :a, :n, :u)"),
                   {"c": clave, "a": ant, "n": str(body.valor), "u": user["nombre"]})
     return {"ok": True, "aviso": "Se aplica en la proxima corrida del motor (o con 'Recalcular ahora')."}
+

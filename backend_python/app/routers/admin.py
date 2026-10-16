@@ -1,6 +1,6 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from ..orchestrator import pipeline_nocturno, ejecutar_motor
-from ..etl.replicacion import correr_etl, sincronizar_bodegas_ahora, sincronizar_items_ahora, sincronizar_ventas
+from ..etl.replicacion import correr_etl, sincronizar_bodegas_ahora, sincronizar_items_ahora, sincronizar_ventas, diagnostico_inventario
 from ..security import usuario_actual
 from .. import progreso
 from ..security import requiere
@@ -66,7 +66,9 @@ def motor_hoy(user=Depends(requiere("correr_motor"))):
         est = {}
         if hoy[1]:
             est = dict(c.execute(text("SELECT estado::text, count(*) FROM ddmrp.sugerencias_envio WHERE ejecucion_id = :e GROUP BY 1"), {"e": hoy[1]}).all())
-    return {"corrio_hoy": hoy[0] > 0, "corridas": hoy[0], "ultima": hoy[2], "aprobadas": est.get("APROBADA", 0), "enviadas": est.get("ENVIADA", 0)}
+        from ..reparto import dias_alcance
+        dias_reparto = dias_alcance(c)
+    return {"dias_reparto": dias_reparto, "corrio_hoy": hoy[0] > 0, "corridas": hoy[0], "ultima": hoy[2], "aprobadas": est.get("APROBADA", 0), "enviadas": est.get("ENVIADA", 0)}
 
 
 @router.get("/salud")
@@ -97,3 +99,11 @@ def salud(user=Depends(usuario_actual)):
 def avance(user=Depends(usuario_actual)):
     """Que esta haciendo la tarea larga en curso (la pantalla lo consulta cada par de segundos)."""
     return progreso.estado()
+
+
+@router.get("/diagnostico-inventario")
+def diag_inventario(bodega: str, producto: str, user=Depends(requiere("sincronizar_siesa", "correr_motor"))):
+    """Compara lo que dice Siesa (t400, todas las columnas con dato: existencia, comprometida, costos) con lo que tiene el sistema
+    para una tienda y una referencia. Sirve para saber por que un inventario no cuadra."""
+    producto = producto.strip().zfill(6) if producto.strip().isdigit() else producto.strip()
+    return diagnostico_inventario(bodega.strip().upper(), producto)

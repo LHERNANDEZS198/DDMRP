@@ -1,15 +1,21 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Tabla from '../Tabla'
 import { ColDef, GridApi, ICellRendererParams } from 'ag-grid-community'
-import { Alert, Box, Button, Checkbox, Chip, FormControlLabel, IconButton, MenuItem, Paper, Stack, TextField, Tooltip, Typography } from '@mui/material'
+import { Alert, Box, Button, Checkbox, Chip, Collapse, FormControlLabel, IconButton, MenuItem, Paper, Stack, Table, TableBody, TableCell, TableHead, TableRow, TextField, Tooltip, Typography } from '@mui/material'
 import Insights from '@mui/icons-material/Insights'
 import Check from '@mui/icons-material/Check'
 import Download from '@mui/icons-material/Download'
 import Undo from '@mui/icons-material/Undo'
+import LocalShipping from '@mui/icons-material/LocalShipping'
+import ExpandMore from '@mui/icons-material/ExpandMore'
 import { api, descargar } from '../api'
 import Aviso from '../Aviso'
 import { ayudar } from '../ayuda'
 import { useYo } from '../Yo'
+
+const cop = (v: number) => '$' + Math.round(v).toLocaleString('es-CO')
+const unidades = (r: any) => Number(r.cantidad_aprobada ?? r.cantidad_sugerida) || 0
+const valorDe = (r: any) => unidades(r) * (r.costo ?? 0)
 
 const verEnControl = (p: ICellRendererParams) => (
   <Tooltip title="Ver esta tienda y este item en Control DDMRP (foto actual), en una pestaña nueva">
@@ -35,6 +41,9 @@ const cols: ColDef[] = [
   { field: 'cantidad_aprobada', headerName: 'A enviar', editable: (p: any) => !!p.context?.aprobar, type: 'numericColumn',
     valueGetter: p => p.data.cantidad_aprobada ?? p.data.cantidad_sugerida,
     valueSetter: p => { p.data.cantidad_aprobada = Number(p.newValue); return true } },
+  { field: 'costo', headerName: 'Costo prom.', type: 'numericColumn', width: 115, valueFormatter: p => p.value == null ? 'sin costo' : cop(p.value),
+    cellStyle: p => p.value == null ? { color: '#c62828' } : null },
+  { colId: 'valor', headerName: 'Valor a enviar', type: 'numericColumn', width: 130, valueGetter: p => valorDe(p.data), valueFormatter: p => cop(p.value ?? 0) },
 ]
 
 export default function Despacho() {
@@ -47,6 +56,10 @@ export default function Despacho() {
   const [consec, setConsec] = useState(1)
   const [marcar, setMarcar] = useState(false)
   const [cedi, setCedi] = useState<any>(null)
+  // filtros de la lista (en pantalla): texto, laboratorio, zona, solo lo limitado por el CEDI
+  const [fTexto, setFTexto] = useState(''); const [fLab, setFLab] = useState(''); const [fZona, setFZona] = useState(''); const [fLim, setFLim] = useState(false)
+  const [porTienda, setPorTienda] = useState(false)
+  const [ediciones, setEdiciones] = useState(0)   // al cambiar "A enviar" a mano se recalculan los totales
   useEffect(() => { api('/despacho/cedi').then(setCedi).catch(() => {}) }, [])
   const [ver, setVer] = useState<'pendiente' | 'aprobada' | 'enviada'>('pendiente')
   // Corrida del dia: DIA de abastecimiento + tiendas elegidas (se pueden poner o quitar antes de generar)
@@ -73,6 +86,25 @@ export default function Despacho() {
       .finally(() => { if (n === peticion.current) setCargando(false) })
   }
   useEffect(() => { setRows([]); setCargando(true); cargar() }, [filtrar, tiendas.join(','), ver])
+  const labs = useMemo(() => [...new Set(rows.map(r => r.categoria).filter(Boolean))].sort() as string[], [rows])
+  const vista = useMemo(() => {
+    const t = fTexto.trim().toLowerCase()
+    return rows.filter(r => (!t || `${r.producto_id} ${r.descripcion ?? ''} ${r.bodega_id}`.toLowerCase().includes(t)) && (!fLab || r.categoria === fLab)
+      && (!fZona || r.zona === fZona) && (!fLim || r.limitado))
+  }, [rows, fTexto, fLab, fZona, fLim])
+  const hayFiltro = !!(fTexto || fLab || fZona || fLim)
+  // totales de lo que se ve: unidades y costo, en total y por tienda
+  const tot = useMemo(() => {
+    const por = new Map<string, { filas: number; uds: number; valor: number; sinCosto: number }>()
+    for (const r of vista) {
+      const x = por.get(r.bodega_id) ?? { filas: 0, uds: 0, valor: 0, sinCosto: 0 }
+      x.filas++; x.uds += unidades(r); x.valor += valorDe(r); if (r.costo == null) x.sinCosto++
+      por.set(r.bodega_id, x)
+    }
+    const lista = [...por.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+    return { lista, uds: lista.reduce((s, [, x]) => s + x.uds, 0), valor: lista.reduce((s, [, x]) => s + x.valor, 0), sinCosto: lista.reduce((s, [, x]) => s + x.sinCosto, 0) }
+  }, [vista, ediciones])
+  const minimo: number = cedi?.minimo_envio ?? 0; const regla = minimo > 0 && (cedi?.con_costos ?? 0) > 0
   const aprobar = async () => {
     const sel = grid?.getSelectedRows() ?? []
     if (!sel.length) { setMsg('Selecciona filas'); return }
@@ -97,8 +129,21 @@ export default function Despacho() {
       setMsg('Generando el archivo plano de Siesa…')
       const r = await descargar('/despacho/exportar-plano', { notas: notas || null, consec_inicial: consec, marcar_enviadas: marcar,
         bodegas: filtrar ? tiendas : null, dia: dia ? Number(dia) : null })
-      setMsg(`Descargado ${r.nombre}` + (r.derivado ? ` · centro de operacion deducido para: ${r.derivado}` : ''))
+      setMsg(`Descargado ${r.nombre}` + (r.derivado ? ` · centro de operacion deducido para: ${r.derivado}` : '')
+        + (r.bajoMinimo ? ` · NO se incluyeron por estar bajo el mínimo de ${cop(minimo)}: ${r.bajoMinimo.split(',').map((x: string) => { const [b, v] = x.split(':'); return `${b} (${cop(Number(v))})` }).join(', ')}` : ''))
       if (marcar) cargar()
+    } catch (x: any) { setMsg('Error: ' + x.message) }
+  }
+  const enviar = async () => {
+    const sel = grid?.getSelectedRows() ?? []
+    const bodegas = sel.length ? [...new Set<string>(sel.map((x: any) => x.bodega_id))] : (filtrar ? tiendas : null)
+    const n = bodegas ? bodegas.length : tot.lista.length
+    if (!window.confirm(`Marcar como ENVIADAS las aprobadas de ${bodegas ? n : 'todas las'} tienda(s)?` + (regla ? ` Las que valgan menos de ${cop(minimo)} no se envían.` : ''))) return
+    try {
+      const r = await api('/despacho/marcar-enviadas', { method: 'POST', body: JSON.stringify({ bodegas }) })
+      setMsg(`Marcadas como enviadas: ${r.enviadas} filas de ${r.tiendas} tienda(s)`
+        + (r.bloqueadas?.length ? ` · NO se enviaron por estar bajo el mínimo de ${cop(r.minimo)}: ${r.bloqueadas.map((b: any) => `${b.bodega_id} (${cop(b.valor)})`).join(', ')}` : ''))
+      grid?.deselectAll(); cargar()
     } catch (x: any) { setMsg('Error: ' + x.message) }
   }
   return (
@@ -123,12 +168,16 @@ export default function Despacho() {
               + (cedi.limitadas ? ` · ${cedi.limitadas.toLocaleString()} combinaciones con menos de lo necesario` : '')
               + (cedi.items_con_reserva ? ` · ${cedi.items_con_reserva} items con reserva` : '')}
         </Alert>)}
+      {cedi && cedi.dias_reparto?.length > 0 && <Alert severity="info" sx={{ py: 0 }}>El inventario del CEDI se repartió solo entre las tiendas de los DIAs {cedi.dias_reparto.join(' + ')}; las demás tiendas muestran lo que pide su buffer sin limitar.</Alert>}
+      {cedi && cedi.con_costos === 0 && <Alert severity="warning" sx={{ py: 0 }}>Aún no hay costos de Siesa: corre el ETL (o el pipeline) para traerlos. Mientras tanto el valor del despacho queda en $0 y no se aplica el mínimo por tienda.</Alert>}
       <Paper variant="outlined" sx={{ p: 1.5, display: 'flex', flexWrap: 'wrap', gap: 1.5, alignItems: 'center' }}>
         <TextField select size="small" label="Ver" value={ver} onChange={e => setVer(e.target.value as any)} sx={{ minWidth: 130 }}>
           <MenuItem value="pendiente">Pendientes</MenuItem><MenuItem value="aprobada">Aprobadas</MenuItem><MenuItem value="enviada">Enviadas</MenuItem>
         </TextField>
         {pAprobar && ver === 'pendiente' && <Button variant="contained" startIcon={<Check />} onClick={aprobar}>Aprobar seleccionados</Button>}
         {pAprobar && ver === 'aprobada' && <Button variant="outlined" color="warning" startIcon={<Undo />} onClick={devolver}>Devolver a pendiente</Button>}
+        {(pAprobar || pPlano) && ver === 'aprobada' && <Tooltip title="Pasa las aprobadas (las seleccionadas, o las de las tiendas de la corrida) a ENVIADAS sin bajar el plano. Las tiendas bajo el valor mínimo no se envían.">
+          <Button variant="contained" color="success" startIcon={<LocalShipping />} onClick={enviar}>Marcar como enviadas</Button></Tooltip>}
         {pPlano && <><TextField size="small" sx={{ width: 320 }} label="Nota del documento" value={notas} onChange={e => setNotas(e.target.value)}
           placeholder={`ABASTECIMIENTO DEL <dia> DE <MES>${dia ? ` DÍA ${dia}` : ''}`} />
         <TextField size="small" type="number" label="Consecutivo inicial" sx={{ width: 150 }} value={consec}
@@ -137,9 +186,43 @@ export default function Despacho() {
         <Button variant="outlined" startIcon={<Download />} onClick={plano}>Generar archivo plano Siesa</Button>
         <Button disabled title="Fase 3">Enviar a Siesa (web service)</Button></>}
       </Paper>
+      <Paper variant="outlined" sx={{ p: 1, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
+        <TextField size="small" label="Buscar item, descripción o tienda" value={fTexto} onChange={e => setFTexto(e.target.value)} sx={{ width: 260 }} />
+        <TextField select size="small" label="Laboratorio" value={fLab} onChange={e => setFLab(e.target.value)} sx={{ minWidth: 160 }}>
+          <MenuItem value="">Todos</MenuItem>{labs.map(l => <MenuItem key={l} value={l}>{l}</MenuItem>)}</TextField>
+        <TextField select size="small" label="Zona" value={fZona} onChange={e => setFZona(e.target.value)} sx={{ minWidth: 130 }}>
+          <MenuItem value="">Todas</MenuItem>{['ROJA', 'AMARILLA', 'VERDE', 'EXCESO'].map(z => <MenuItem key={z} value={z}>{z}</MenuItem>)}</TextField>
+        <FormControlLabel control={<Checkbox size="small" checked={fLim} onChange={e => setFLim(e.target.checked)} />} label="Solo limitadas por el CEDI" />
+        {hayFiltro && <Button size="small" onClick={() => { setFTexto(''); setFLab(''); setFZona(''); setFLim(false) }}>Quitar filtros</Button>}
+        <Box sx={{ flex: 1 }} />
+        <Chip label={`${vista.length.toLocaleString()}${hayFiltro ? ` de ${rows.length.toLocaleString()}` : ''} filas`} size="small" />
+        <Chip label={`${Math.round(tot.uds).toLocaleString('es-CO')} uds a enviar`} size="small" color="primary" />
+        <Chip label={`Costo total ${cop(tot.valor)}`} size="small" color="primary" />
+        <Chip label={`${tot.lista.length} tiendas`} size="small" />
+        {tot.sinCosto > 0 && <Chip label={`${tot.sinCosto} filas sin costo`} size="small" color="warning" />}
+        <Button size="small" endIcon={<ExpandMore sx={{ transform: porTienda ? 'rotate(180deg)' : 'none' }} />} onClick={() => setPorTienda(!porTienda)}>Por tienda</Button>
+      </Paper>
+      <Collapse in={porTienda} unmountOnExit>
+        <Paper variant="outlined" sx={{ maxHeight: 260, overflow: 'auto' }}>
+          <Table size="small" stickyHeader>
+            <TableHead><TableRow><TableCell>Tienda</TableCell><TableCell align="right">Filas</TableCell><TableCell align="right">Unidades</TableCell>
+              <TableCell align="right">Costo</TableCell><TableCell>{regla ? `Mínimo ${cop(minimo)}` : 'Mínimo'}</TableCell></TableRow></TableHead>
+            <TableBody>
+              {tot.lista.map(([b, x]) => { const bajo = regla && x.valor < minimo
+                return (<TableRow key={b} hover>
+                  <TableCell>{b}</TableCell><TableCell align="right">{x.filas}</TableCell>
+                  <TableCell align="right">{Math.round(x.uds).toLocaleString('es-CO')}</TableCell>
+                  <TableCell align="right" sx={{ color: bajo ? 'error.main' : undefined, fontWeight: bajo ? 700 : 400 }}>{cop(x.valor)}</TableCell>
+                  <TableCell>{!regla ? '' : bajo ? <Chip size="small" color="error" label={`Falta ${cop(minimo - x.valor)} · no se puede enviar`} /> : <Chip size="small" color="success" variant="outlined" label="Cumple" />}</TableCell>
+                </TableRow>) })}
+              {!tot.lista.length && <TableRow><TableCell colSpan={5} align="center" sx={{ color: 'text.secondary' }}>Sin filas</TableCell></TableRow>}
+            </TableBody>
+          </Table>
+        </Paper>
+      </Collapse>
       <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 300 }}>
-        <Tabla cargando={cargando} textoCargando="Cargando la matriz…" vacio="No hay filas con este filtro" rowData={rows} columnDefs={ayudar(cols)} tooltipShowDelay={300} rowSelection="multiple" rowBuffer={20}
-          context={{ aprobar: pAprobar }} onGridReady={e => setGrid(e.api)} defaultColDef={{ resizable: true, sortable: true }} />
+        <Tabla cargando={cargando} textoCargando="Cargando la matriz…" vacio="No hay filas con este filtro" rowData={vista} columnDefs={ayudar(cols)} tooltipShowDelay={300} rowSelection="multiple" rowBuffer={20}
+          context={{ aprobar: pAprobar }} onCellValueChanged={() => setEdiciones(n => n + 1)} onGridReady={e => setGrid(e.api)} defaultColDef={{ resizable: true, sortable: true }} />
       </Box>
       <Aviso msg={msg} onClose={() => setMsg('')} />
     </Box>)

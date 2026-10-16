@@ -20,6 +20,15 @@ export async function api<T = any>(path: string, init: RequestInit = {}): Promis
   return r.json()
 }
 
+/** GET de una lista que el servidor puede recortar: devuelve las filas y el total real (cabecera X-Total-Rows). */
+export async function apiLista<T = any>(path: string): Promise<{ datos: T[]; total: number }> {
+  const r = await fetch('/api' + path, { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } })
+  if (r.status === 401) { localStorage.removeItem('token'); location.reload() }
+  if (!r.ok) throw new Error(await errorDe(r))
+  const datos = await r.json()
+  return { datos, total: Number(r.headers.get('x-total-rows') ?? datos.length) }
+}
+
 export async function login(usuario: string, clave: string) {
   const r = await fetch('/api/auth/login', {
     method: 'POST',
@@ -43,7 +52,7 @@ export async function descargar(path: string, body: unknown) {
   const nombre = /filename="([^"]+)"/.exec(r.headers.get('content-disposition') ?? '')?.[1] ?? 'archivo.xlsx'
   const url = URL.createObjectURL(await r.blob())
   const a = document.createElement('a'); a.href = url; a.download = nombre; a.click(); URL.revokeObjectURL(url)
-  return { nombre, derivado: r.headers.get('x-bodegas-co-derivado') }
+  return { nombre, derivado: r.headers.get('x-bodegas-co-derivado'), bajoMinimo: r.headers.get('x-bodegas-bajo-minimo') }
 }
 
 function bajarBlob(blob: Blob, nombre: string) {

@@ -78,7 +78,7 @@ pub struct Parametros {
     pub adu_bajo_max: f64,
     // --- reglas de pedido (editables en la pantalla "Reglas") ---
     pub regla_disparo: u8,        // 1 = NFP <= TOY aj, 2 = NFP <= TOR, 3 = NFP < TOG aj
-    pub regla_objetivo: u8,       // 1 = TOG aj, 2 = TOY aj
+    pub regla_objetivo: u8,       // 1 = TOG aj, 2 = TOY aj, 3 = TOY aj + mitad de la zona verde ajustada
     pub regla_redondeo: u8,       // 1 = arriba, 2 = cercano, 3 = abajo (al multiplo de despacho)
     pub sumar_vectorizacion: bool,
     pub incluir_transito: bool,
@@ -120,6 +120,8 @@ pub struct Entrada {
     pub inventario: f64,
     pub en_transito: f64,
     pub demanda_calificada: f64,
+    /// 0 = usa la regla global; 1, 2 o 3 = regla propia de este item (o de su laboratorio)
+    pub regla_objetivo: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -174,6 +176,8 @@ pub struct Resultado {
     pub zona: Zona,
     pub vectorizacion: f64,
     pub cantidad_sugerida: f64,
+    /// regla de "hasta donde se repone" que se uso en esta fila (1, 2 o 3)
+    pub objetivo_usado: u8,
 }
 
 // ---------- calculo ----------
@@ -296,8 +300,10 @@ fn decidir(e: &Entrada, z: &Zonas, w: f64, y: f64, q: f64, toy_aj: f64, tog_aj: 
             3 => nfp < tog_aj,
             _ => nfp <= toy_aj,
         };
+    let regla_obj = if (1..=3).contains(&e.regla_objetivo) { e.regla_objetivo } else if (1..=3).contains(&p.regla_objetivo) { p.regla_objetivo } else { 1 };
+    // 3 = tope amarillo + la mitad de la zona verde ajustada (sin pasar el tope verde)
+    let objetivo = match regla_obj { 2 => toy_aj, 3 => roundup(toy_aj + (tog_aj - toy_aj).max(0.0) / 2.0), _ => tog_aj };
     let base = if pide {
-        let objetivo = if p.regla_objetivo == 2 { toy_aj } else { tog_aj };
         let falta = objetivo - nfp;
         if falta > 0.0 { a_multiplo(falta, e.unidad_despacho, p.regla_redondeo) } else { 0.0 }
     } else {
@@ -326,6 +332,7 @@ fn decidir(e: &Entrada, z: &Zonas, w: f64, y: f64, q: f64, toy_aj: f64, tog_aj: 
         zona,
         vectorizacion: e.vectorizacion,
         cantidad_sugerida: base + vect,
+        objetivo_usado: regla_obj,
     }
 }
 
@@ -370,6 +377,7 @@ mod tests {
             inventario: 0.0,
             en_transito: 0.0,
             demanda_calificada: 0.0,
+            regla_objetivo: 0,
         }
     }
 
@@ -504,6 +512,14 @@ mod tests {
         assert_eq!(calcular(&e, &f, &p2).cantidad_sugerida, 0.0);
         let mut p3 = Parametros::default(); p3.regla_objetivo = 2; // hasta TOY: falta 0
         assert_eq!(calcular(&e, &f, &p3).cantidad_sugerida, 0.0);
+        // 3 = TOY aj + mitad de la zona verde: TOY 3, TOG 4 -> objetivo ceil(3.5) = 4 ; con inventario 3 pide 1
+        let mut p4 = Parametros::default(); p4.regla_objetivo = 3;
+        let r4 = calcular(&e, &f, &p4);
+        assert_eq!((r4.cantidad_sugerida, r4.objetivo_usado), (1.0, 3));
+        // la regla propia del item gana sobre la global (global 1 = TOG, item 2 = TOY -> no pide)
+        let mut e5 = e.clone(); e5.regla_objetivo = 2;
+        let r5 = calcular(&e5, &f, &Parametros::default());
+        assert_eq!((r5.cantidad_sugerida, r5.objetivo_usado), (0.0, 2));
         // transito: con inventario 0 y transito 4 => NFP 4 (verde), sin contar transito => pide 4
         let mut e2 = base(); e2.inventario = 0.0; e2.en_transito = 4.0;
         assert_eq!(calcular(&e2, &f, &p).cantidad_sugerida, 0.0);

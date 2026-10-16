@@ -14,6 +14,7 @@ Patron: leer el origen en chunks, COPY a tabla temporal y volcar a destino en UN
 Postgres queda como estaba y el pipeline no corre el motor con datos viejos sin avisar.
 """
 import logging
+import re
 import psycopg
 from datetime import date
 from pathlib import Path
@@ -29,7 +30,7 @@ MESES_VENTANA = 7  # por defecto; se lee de ddmrp.parametro 'meses_historia' (2 
 
 SQL_INVENTARIO = """
 SELECT RTRIM(i.f120_referencia), RTRIM(b.f150_id), CAST(GETDATE() AS date),
-       CONVERT(float, SUM(e.f400_cant_existencia_1 - e.f400_cant_comprometida_1))
+       CONVERT(float, SUM(e.f400_cant_existencia_1 - :resta * e.f400_cant_comprometida_1))
 FROM t400_cm_existencia e
 JOIN t150_mc_bodegas b ON b.f150_rowid = e.f400_rowid_bodega
 JOIN t121_mc_items_extensiones x ON x.f121_rowid = e.f400_rowid_item_ext
@@ -37,7 +38,19 @@ JOIN t120_mc_items i ON i.f120_rowid = x.f121_rowid_item
 WHERE i.f120_id_cia = :cia AND b.f150_id IN :bodegas
 GROUP BY i.f120_referencia, b.f150_id"""
 
-SQL_CO = "SELECT RTRIM(f150_id), RTRIM(f150_id_co) FROM t150_mc_bodegas WHERE f150_id_cia = :cia AND f150_id IN :bodegas"
+def _sql_costo() -> str:
+    """Costo promedio unitario por referencia (la columna es configurable: SIESA_COSTO_COLUMNA)."""
+    col = settings.siesa_costo_columna.strip().lower()
+    if not re.fullmatch(r"f400_[a-z0-9_]+", col):
+        raise ValueError(f"SIESA_COSTO_COLUMNA invalida: {col!r}")
+    return f"""
+SELECT RTRIM(i.f120_referencia), CONVERT(float, MAX(e.{col}))
+FROM t400_cm_existencia e
+JOIN t150_mc_bodegas b ON b.f150_rowid = e.f400_rowid_bodega
+JOIN t121_mc_items_extensiones x ON x.f121_rowid = e.f400_rowid_item_ext
+JOIN t120_mc_items i ON i.f120_rowid = x.f121_rowid_item
+WHERE i.f120_id_cia = :cia AND b.f150_id IN :bodegas AND e.{col} > 0
+GROUP BY i.f120_referencia"""
 
 
 SQL_CO = "SELECT RTRIM(f150_id), RTRIM(f150_id_co) FROM t150_mc_bodegas WHERE f150_id_cia = :cia AND f150_id IN :bodegas"
@@ -127,6 +140,53 @@ def _volcar(cur, filas, destino: str, cols: list[str], reemplazar: bool = True) 
     cur.execute(f"DROP TABLE {stg}")
     log.info("  %s: %s filas leidas", destino, n)
     return n
+
+
+def _costos(cur, eng, bodegas: list[str], pisar: bool) -> int | str:
+    """Costo promedio por referencia de esas bodegas -> ddmrp.costo_item. `pisar`=True (CEDI) manda sobre lo que haya;
+    False (tiendas) solo llena lo que falte. Un fallo del origen (p.ej. la columna no existe) no tumba el ETL: devuelve el aviso."""
+    try:
+        filas = list(_stream(eng, _sql_costo(), {"cia": settings.siesa_cia, "bodegas": bodegas}, expanding="bodegas"))
+    except Exception as e:
+        if isinstance(e, psycopg.Error):
+            raise
+        log.warning("Costos no leidos (revisa SIESA_COSTO_COLUMNA=%s): %s", settings.siesa_costo_columna, e)
+        return "no se pudo leer la columna " + settings.siesa_costo_columna + ": " + str(e)[:150]
+    accion = "DO UPDATE SET costo = EXCLUDED.costo, fecha_corte = current_date" if pisar else "DO NOTHING"
+    cur.executemany(f"INSERT INTO ddmrp.costo_item (producto_id, costo) VALUES (%s, %s) ON CONFLICT (producto_id) {accion}",
+                    [(p, c) for p, c in filas if c and c > 0])
+    return len(filas)
+
+
+def diagnostico_inventario(bodega: str, producto: str) -> dict:
+    """Para entender por que un inventario no cuadra: la fila de Siesa (t400, todas las columnas con dato) en vivo, y lo que
+    tiene este sistema (bitacora, inventario del ETL, costo). Solo lectura."""
+    out: dict = {"bodega": bodega, "producto": producto, "siesa": [], "local": {}}
+    with pg.connect() as c:
+        out["local"]["en_bitacora"] = [dict(r) for r in c.execute(text("SELECT empresa, bodega_id FROM ddmrp.abast_bitacora WHERE bodega_id = :b"), {"b": bodega}).mappings()]
+        out["local"]["inventario_actual"] = [{k: (float(v) if hasattr(v, "as_tuple") else str(v) if k == "fecha_corte" else v) for k, v in r.items()}
+                                              for r in c.execute(text("SELECT producto_id, bodega_id, fecha_corte, disponible FROM ddmrp.inventario_actual WHERE bodega_id = :b AND producto_id = :p"), {"b": bodega, "p": producto}).mappings()]
+        out["local"]["costo"] = [float(r[0]) for r in c.execute(text("SELECT costo FROM ddmrp.costo_item WHERE producto_id = :p"), {"p": producto}).all()]
+        out["local"]["resta_comprometido"] = bool((c.execute(text("SELECT valor FROM ddmrp.parametro WHERE clave='inv_tiendas_resta_comprometido'")).scalar() or 0))
+    if not settings.siesa_host:
+        out["aviso"] = "Siesa no esta configurado"; return out
+    sql = ("SELECT RTRIM(b.f150_id) AS bodega, RTRIM(i.f120_referencia) AS referencia, e.* FROM t400_cm_existencia e "
+           "JOIN t150_mc_bodegas b ON b.f150_rowid = e.f400_rowid_bodega "
+           "JOIN t121_mc_items_extensiones x ON x.f121_rowid = e.f400_rowid_item_ext "
+           "JOIN t120_mc_items i ON i.f120_rowid = x.f121_rowid_item "
+           "WHERE i.f120_id_cia = :cia AND RTRIM(b.f150_id) = :b AND RTRIM(i.f120_referencia) = :p")
+    for empresa, db in (("05", settings.siesa_db), ("21", settings.siesa_db_s)):
+        if not db:
+            continue
+        try:
+            with siesa_engine(db).connect() as cn:
+                for r in cn.execute(text(sql), {"cia": settings.siesa_cia, "b": bodega, "p": producto}).mappings():
+                    out["siesa"].append({"empresa": empresa, "base": db, "columnas": {
+                        k: (float(v) if hasattr(v, "as_tuple") else v if isinstance(v, (int, float, str)) else str(v))
+                        for k, v in r.items() if v not in (None, "", 0, 0.0)}})
+        except Exception as e:
+            out["siesa"].append({"empresa": empresa, "base": db, "error": str(e)[:300]})
+    return out
 
 
 def sincronizar_bodegas(cur) -> int:
@@ -254,7 +314,9 @@ def _sincronizar_items_ahora() -> dict:
 def _cedi_de_siesa(cur) -> dict:
     """Inventario disponible del CEDI (bodega SIESA_CEDI_BODEGA, empresa 05). Se lee todo antes de escribir."""
     bod = settings.siesa_cedi_bodega
-    filas = list(_stream(siesa_engine(settings.siesa_db), SQL_INVENTARIO, {"cia": settings.siesa_cia, "bodegas": [bod]}, expanding="bodegas"))
+    eng = siesa_engine(settings.siesa_db)
+    filas = list(_stream(eng, SQL_INVENTARIO, {"cia": settings.siesa_cia, "bodegas": [bod], "resta": 1}, expanding="bodegas"))   # el CEDI siempre descuenta lo comprometido
+    costos = _costos(cur, eng, [bod], pisar=True)
     cur.execute("TRUNCATE ddmrp.inventario_cedi")
     datos = {}
     for prod, _b, fecha, disp in filas:
@@ -262,7 +324,7 @@ def _cedi_de_siesa(cur) -> dict:
         d[1] += float(disp or 0)
     for prod, (fecha, disp) in datos.items():
         cur.execute("INSERT INTO ddmrp.inventario_cedi (producto_id, disponible, fecha_corte) VALUES (%s, %s, %s)", (prod, max(disp, 0.0), fecha))
-    return {"bodega": bod, "productos": len(datos), "con_stock": sum(1 for d in datos.values() if d[1] > 0)}
+    return {"bodega": bod, "productos": len(datos), "con_stock": sum(1 for d in datos.values() if d[1] > 0), "costos": costos}
 
 
 def refrescar_cedi() -> dict:
@@ -378,6 +440,7 @@ def _correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
             cur.execute("TRUNCATE ddmrp.inventario_actual")
             cur.execute("TRUNCATE ddmrp.transitos")
             traer_ventas = (_param(cur, "etl_traer_ventas") or 0) >= 1
+            resta_comp = (_param(cur, "inv_tiendas_resta_comprometido") or 0) >= 1
             if not traer_ventas:
                 log.info("ETL: las ventas por mes no se traen aqui (parametro etl_traer_ventas = 0); usa el boton 'Traer ventas'")
             for empresa, db in (("05", settings.siesa_db), ("21", settings.siesa_db_s)):
@@ -385,11 +448,14 @@ def _correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
                 if not db or not bodegas:
                     continue
                 eng, prm = siesa_engine(db), {"cia": settings.siesa_cia, "bodegas": bodegas}
+                prm_inv = {**prm, "resta": 1 if resta_comp else 0}
                 log.info("ETL empresa %s (%s): %s bodegas", empresa, db, len(bodegas))
                 progreso.avance(f"Leyendo inventario de Siesa ({db}, {len(bodegas)} bodegas)…")
                 res[f"inventario_{empresa}"] = _volcar(
-                    cur, _stream(eng, SQL_INVENTARIO, prm, expanding="bodegas"), "ddmrp.inventario_actual",
+                    cur, _stream(eng, SQL_INVENTARIO, prm_inv, expanding="bodegas"), "ddmrp.inventario_actual",
                     ["producto_id", "bodega_id", "fecha_corte", "disponible"], reemplazar=False)
+                progreso.avance(f"Leyendo costos promedio de Siesa ({db})…")
+                res[f"costos_{empresa}"] = _costos(cur, eng, bodegas, pisar=False)   # respaldo: el costo del CEDI manda (se lee al final)
                 progreso.avance(f"Leyendo traslados en tránsito de Siesa ({db})…")
                 res[f"transitos_{empresa}"] = _volcar(
                     cur, _stream(eng, SQL_TRANSITOS, prm, expanding="bodegas"), "ddmrp.transitos",

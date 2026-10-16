@@ -95,8 +95,14 @@ def regla_actual(c) -> int:
     return int(v) if v is not None else 1
 
 
+def dias_alcance(c) -> list[int]:
+    """DIAs de abastecimiento entre cuyas tiendas se reparte el CEDI. Vacio = todas las tiendas."""
+    return [r[0] for r in c.execute(text("SELECT dia FROM ddmrp.reparto_dia ORDER BY dia")).all()]
+
+
 def aplicar_a_ejecucion(c, eid: int) -> dict:
-    """Reparte el inventario del CEDI entre TODAS las tiendas de cada referencia de la ejecucion del motor.
+    """Reparte el inventario del CEDI entre las tiendas de cada referencia de la ejecucion del motor: todas, o solo las de los
+    DIAs elegidos (ddmrp.reparto_dia). Las tiendas fuera del alcance no compiten por el stock y quedan con lo que pide su buffer.
     Deja en sugerencias_envio: cantidad_necesaria (lo que pide el buffer), cantidad_sugerida (lo asignado) y stock_cedi
     (lo disponible de la referencia: inventario del CEDI menos la reserva). Sin inventario del CEDI no se limita nada."""
     regla = regla_actual(c)
@@ -104,9 +110,12 @@ def aplicar_a_ejecucion(c, eid: int) -> dict:
     d = datos_cedi(c)
     if regla == 0 or not d["stock"]:
         return {"limitadas": 0, "regla": regla, "aplicado": False}
+    dias = dias_alcance(c)
     filas = c.execute(text("SELECT producto_id, bodega_id, cantidad_sugerida::float8, unidad_despacho::float8, "
                            "COALESCE(pct_buffer::float8, 1e9), COALESCE(adu::float8, 0) FROM ddmrp.sugerencias_envio "
-                           "WHERE ejecucion_id = :e AND cantidad_sugerida > 0 AND NOT condenado"), {"e": eid}).all()
+                           "WHERE ejecucion_id = :e AND cantidad_sugerida > 0 AND NOT condenado "
+                           "AND (cardinality(CAST(:d AS int[])) = 0 OR bodega_id IN (SELECT bodega_id FROM ddmrp.bodega_dia WHERE dia = ANY(CAST(:d AS int[]))))"),
+                     {"e": eid, "d": dias}).all()
     por_item: dict = {}
     for prod, bod, q, ud, pct, adu in filas:
         por_item.setdefault(prod, []).append((bod, q, ud, pct, adu))
@@ -129,4 +138,5 @@ def aplicar_a_ejecucion(c, eid: int) -> dict:
         c.execute(text("INSERT INTO stg_asig VALUES (:e, :p, :b, :q)"), [{"e": a, "p": b, "b": x, "q": q} for a, b, x, q in cambios])
         c.execute(text("UPDATE ddmrp.sugerencias_envio s SET cantidad_sugerida = t.q FROM stg_asig t "
                        "WHERE s.ejecucion_id = t.e AND s.producto_id = t.p AND s.bodega_id = t.b"))
-    return {"limitadas": len(cambios), "items_sin_alcanzar": len({x[1] for x in cambios}), "regla": regla, "aplicado": True}
+    return {"limitadas": len(cambios), "items_sin_alcanzar": len({x[1] for x in cambios}), "regla": regla, "aplicado": True,
+            "dias": dias, "tiendas_en_reparto": len({f[1] for f in filas})}

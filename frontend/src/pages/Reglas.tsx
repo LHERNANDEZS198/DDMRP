@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Alert, Box, Button, Card, CardContent, CardHeader, Dialog, DialogActions, DialogContent, DialogTitle, MenuItem, Stack, TextField, Typography } from '@mui/material'
+import { Alert, Box, Button, Card, CardContent, CardHeader, Chip, Dialog, DialogActions, DialogContent, DialogTitle, MenuItem, Stack, Table, TableBody, TableCell, TableRow, TextField, Typography } from '@mui/material'
 import Calculate from '@mui/icons-material/Calculate'
 import PlayCircle from '@mui/icons-material/PlayCircle'
 import { api, conProgreso, seguirTarea } from '../api'
@@ -13,10 +13,87 @@ const grupos: [string, string[]][] = [
   ['Decisión de pedido', ['regla_disparo', 'regla_objetivo', 'regla_redondeo', 'cantidad_minima']],
   ['Qué entra al flujo neto y a lo sugerido', ['incluir_transito', 'restar_demanda_calificada', 'sumar_vectorizacion']],
   ['Inventario del CEDI (cuando no alcanza)', ['cedi_regla_reparto']],
-  ['Datos de Siesa', ['etl_traer_ventas']],
+  ['Envío a las tiendas (Matriz de despacho)', ['valor_minimo_envio']],
+  ['Datos de Siesa', ['etl_traer_ventas', 'inv_tiendas_resta_comprometido']],
   ['Parámetros del modelo (hoja Modelo)', ['meses_historia', 'meses_adu', 'mult_cota_max_promo', 'mult_cota_min_promo', 'adu_bajo_min', 'adu_bajo_max']],
   ['Historial (vistas de cambios y tendencia)', ['retener_dias']],
 ]
+
+/** A que tiendas se reparte el inventario del CEDI cuando no alcanza: todas, o solo las de los DIAs elegidos. */
+function RepartoDias({ editar, onCambio }: { editar: boolean; onCambio: (m: string) => void }) {
+  const [d, setD] = useState<{ elegidos: number[]; dias: { dia: number; tiendas: number }[] } | null>(null)
+  const cargar = () => api('/reglas/reparto-dias').then(setD).catch(() => {})
+  useEffect(() => { cargar() }, [])
+  const guardar = async (dias: number[]) => {
+    try { const x = await api('/reglas/reparto-dias', { method: 'PUT', body: JSON.stringify({ dias }) }); onCambio(`Reparto del CEDI: guardado. ${x.aviso}`); cargar() }
+    catch (e: any) { onCambio('Error: ' + e.message) }
+  }
+  if (!d) return null
+  const todas = d.elegidos.length === 0
+  const alternar = (dia: number) => guardar(d.elegidos.includes(dia) ? d.elegidos.filter(x => x !== dia) : [...d.elegidos, dia].sort((a, b) => a - b))
+  return (
+    <Box sx={{ display: 'grid', gap: 1 }}>
+      <Box><Typography sx={{ fontWeight: 600 }}>Entre qué tiendas se reparte el inventario del CEDI</Typography>
+        <Typography variant="caption" color="text.secondary">
+          La necesidad de cada referencia se suma entre las tiendas que entran al reparto; si el CEDI no alcanza, se reparte entre ellas con la regla de arriba.
+          <b> Todas</b>: compiten las tiendas de todos los DIAs (cada referencia se reparte entre todas, aunque hoy no se despache a algunas).
+          <b> DIAs elegidos</b> (p. ej. DIA 1 + DIA 2): solo compiten las tiendas de esos DIAs; las demás quedan con lo que pide su buffer, sin gastar stock del CEDI.
+          Una tienda que esté en varios DIAs entra si alguno de ellos está elegido.</Typography></Box>
+      <Stack direction="row" sx={{ gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+        <Chip label="Todas las tiendas" color={todas ? 'primary' : 'default'} variant={todas ? 'filled' : 'outlined'} disabled={!editar} onClick={() => guardar([])} />
+        {d.dias.map(x => <Chip key={x.dia} label={`DIA ${x.dia} (${x.tiendas} tiendas)`} disabled={!editar}
+          color={d.elegidos.includes(x.dia) ? 'primary' : 'default'} variant={d.elegidos.includes(x.dia) ? 'filled' : 'outlined'} onClick={() => alternar(x.dia)} />)}
+        {!d.dias.length && <Typography variant="caption" color="text.secondary">Aún no hay DIAs: cárgalos en Maestros → DIA de abastecimiento por tienda.</Typography>}
+      </Stack>
+    </Box>)
+}
+
+/** Para entender por que un inventario no cuadra: lo que dice Siesa (en vivo) frente a lo que tiene el sistema. */
+function Diagnostico() {
+  const [bodega, setBodega] = useState(''); const [prod, setProd] = useState('')
+  const [res, setRes] = useState<any>(null); const [err, setErr] = useState(''); const [cargando, setCargando] = useState(false)
+  const consultar = async () => {
+    setErr(''); setRes(null); setCargando(true)
+    try { setRes(await api(`/admin/diagnostico-inventario?bodega=${encodeURIComponent(bodega.trim())}&producto=${encodeURIComponent(prod.trim())}`)) }
+    catch (e: any) { setErr(e.message) } finally { setCargando(false) }
+  }
+  const inv = res?.local?.inventario_actual?.[0]
+  return (
+    <Box sx={{ display: 'grid', gap: 1.5 }}>
+      <Typography variant="body2" color="text.secondary">
+        Escribe la tienda y la referencia (ej. SV021 y 190240): se consulta Siesa en vivo (existencia, comprometida y costos) y se compara con el inventario que tiene este sistema.
+      </Typography>
+      <Stack direction="row" sx={{ gap: 1, flexWrap: 'wrap' }}>
+        <TextField size="small" label="Tienda" value={bodega} onChange={e => setBodega(e.target.value)} sx={{ width: 130 }} />
+        <TextField size="small" label="Referencia" value={prod} onChange={e => setProd(e.target.value)} sx={{ width: 150 }} />
+        <Button variant="outlined" disabled={!bodega.trim() || !prod.trim() || cargando} onClick={consultar}>{cargando ? 'Consultando…' : 'Consultar'}</Button>
+      </Stack>
+      {err && <Alert severity="error">{err}</Alert>}
+      {res && (<Box sx={{ display: 'grid', gap: 1 }}>
+        <Alert severity={res.local.en_bitacora.length ? 'success' : 'warning'} sx={{ py: 0 }}>
+          {res.local.en_bitacora.length ? `La tienda ${res.bodega} está en la bitácora (empresa ${res.local.en_bitacora[0].empresa}): el ETL trae su inventario.`
+            : `La tienda ${res.bodega} NO está en la bitácora: el ETL no trae su inventario y el motor la ignora. Cárgala en Maestros → Bitácora.`}
+        </Alert>
+        <Alert severity="info" sx={{ py: 0 }}>
+          Inventario que tiene el sistema: <b>{inv ? Number(inv.disponible).toLocaleString('es-CO') : 'sin fila (cuenta como 0)'}</b>{inv ? ` (corte ${inv.fecha_corte})` : ''}
+          {' · '}{res.local.resta_comprometido ? 'se calcula como existencia − comprometida' : 'se calcula como la existencia (sin restar lo comprometido)'}
+          {res.local.costo?.length ? ` · costo promedio guardado: $${Math.round(res.local.costo[0]).toLocaleString('es-CO')}` : ' · sin costo guardado'}
+        </Alert>
+        {res.aviso && <Alert severity="warning" sx={{ py: 0 }}>{res.aviso}</Alert>}
+        {res.siesa.map((s: any, i: number) => (
+          <Box key={i}>
+            <Typography variant="subtitle2">Siesa · empresa {s.empresa} ({s.base})</Typography>
+            {s.error ? <Alert severity="error" sx={{ py: 0 }}>{s.error}</Alert>
+              : <Table size="small"><TableBody>
+                  {Object.entries(s.columnas).map(([k, v]) => (
+                    <TableRow key={k} sx={/exist|compr|costo/i.test(k) ? { bgcolor: '#fff8e1' } : undefined}>
+                      <TableCell sx={{ fontFamily: 'monospace', py: 0.3 }}>{k}</TableCell><TableCell sx={{ py: 0.3 }}>{String(v)}</TableCell></TableRow>))}
+                </TableBody></Table>}
+          </Box>))}
+        {!res.siesa.length && !res.aviso && <Alert severity="warning" sx={{ py: 0 }}>Siesa no devolvió filas de existencia para esa tienda y referencia.</Alert>}
+      </Box>)}
+    </Box>)
+}
 
 export default function Reglas() {
   const { puede } = useYo(); const editar = puede('editar_reglas'); const motor = puede('correr_motor')
@@ -60,7 +137,7 @@ export default function Reglas() {
           <Box component="ul" sx={{ m: 0, pl: 3, display: 'grid', gap: 0.5 }}>
             <li>La matriz de despacho y el plano pasan a usar <b>solo la corrida nueva</b>.</li>
             <li>Todo vuelve a <b>Pendiente</b>: lo aprobado y las cantidades que hayas editado de la corrida anterior ya no se ven ni se exportan.</li>
-            <li>El reparto del inventario del CEDI se recalcula con el stock fresco de PT001, así que las cantidades pueden cambiar.</li>
+            <li>El reparto del inventario del CEDI se recalcula con el stock fresco de PT001, así que las cantidades pueden cambiar{aviso?.d.dias_reparto?.length ? ` (se reparte solo entre las tiendas de los DIAs ${aviso.d.dias_reparto.join(' + ')})` : ' (se reparte entre todas las tiendas)'}.</li>
             {aviso?.que === 'pipeline' && <li>También se vuelve a leer todo Siesa (inventario, tránsitos, items): tarda varios minutos.</li>}
           </Box>
           {(aviso?.d.aprobadas > 0 || aviso?.d.enviadas > 0) && (
@@ -94,8 +171,14 @@ export default function Reglas() {
                   : <TextField type="number" size="small" disabled={!editar} defaultValue={r.valor ?? 0} key={r.valor} slotProps={{ htmlInput: { step: 'any', min: 0 } }}
                       onBlur={e => { const v = Number(e.target.value); if (v !== r.valor) guardar(r, v) }} />}
               </Box>))}
+            {titulo.startsWith('Inventario del CEDI') && <RepartoDias editar={editar} onCambio={setMsg} />}
           </CardContent>
         </Card>))}
+      {(puede('sincronizar_siesa') || motor) && (
+        <Card variant="outlined">
+          <CardHeader title="Revisar un inventario (Siesa vs este sistema)" slotProps={{ title: { variant: 'subtitle1', fontWeight: 700 } }} sx={{ bgcolor: '#eef2e3', py: 1 }} />
+          <CardContent><Diagnostico /></CardContent>
+        </Card>)}
       <Aviso msg={msg} onClose={() => setMsg('')} />
     </Box>)
 }

@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     # 0002 de terceros. De cada item se traen TODOS sus criterios. Vacio = todos los items.
     siesa_criterios_items: str = "001:0001,001:0002"
     siesa_plan_laboratorio: str = "006"   # plan de criterios de items que define el laboratorio
+    # Columna de t400_cm_existencia con el costo promedio unitario que se usa para valorar los despachos
+    # (en el reporte "Existencia a la fecha por bodega" es "Costo prom. unit. (ins)"). Si no existe, el ETL avisa y sigue sin costos.
+    siesa_costo_columna: str = "f400_costo_prom_uni_ins"
     siesa_user: str = ""
     siesa_password: str = ""
 
