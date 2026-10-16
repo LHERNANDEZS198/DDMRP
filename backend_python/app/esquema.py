@@ -7,6 +7,13 @@ log = logging.getLogger("esquema")
 
 SENTENCIAS = [
     "ALTER TABLE ddmrp.maestro_bodega ADD COLUMN IF NOT EXISTS descripcion TEXT",
+    # cotas como fraccion (0.125 = 12,5%): 4 decimales en vez de 2
+    """DO $$ BEGIN
+         IF (SELECT numeric_scale FROM information_schema.columns WHERE table_schema='ddmrp'
+             AND table_name='abast_control_referencias' AND column_name='cota_maxima') = 2 THEN
+           ALTER TABLE ddmrp.abast_control_referencias
+             ALTER COLUMN cota_maxima TYPE NUMERIC(12,4), ALTER COLUMN cota_minima TYPE NUMERIC(12,4);
+         END IF; END $$""",
 ]
 
 

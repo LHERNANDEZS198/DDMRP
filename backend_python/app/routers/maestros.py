@@ -191,6 +191,8 @@ def _valor_num(v, tipo: str):
         return None
     if isinstance(v, str):
         v = v.strip().replace(" ", "")
+        if v.endswith("%"):                              # 20% -> 0.2 (las cotas se guardan como fraccion del TOG)
+            return _valor_num(v[:-1], tipo) / 100 if tipo != "int" else int(float(v[:-1].replace(",", ".")))
         if v.count(",") == 1 and v.count(".") == 0:   # 1,5 -> 1.5
             v = v.replace(",", ".")
     x = float(v)

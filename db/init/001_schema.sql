@@ -38,8 +38,8 @@ CREATE TABLE abast_control_referencias (    -- cotas max/min (porcentaje del TOG
   empresa       TEXT NOT NULL,
   bodega_id     TEXT NOT NULL,
   producto_id   TEXT NOT NULL,
-  cota_maxima   NUMERIC(12,2),
-  cota_minima   NUMERIC(12,2),
+  cota_maxima   NUMERIC(12,4),
+  cota_minima   NUMERIC(12,4),
   PRIMARY KEY (empresa, bodega_id, producto_id)
 );
 CREATE INDEX idx_ctrl_pb ON abast_control_referencias (producto_id, bodega_id);
