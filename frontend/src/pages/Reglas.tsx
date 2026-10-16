@@ -109,7 +109,7 @@ export default function Reglas() {
   // Antes de correr el motor, si ya corrió hoy, avisa qué se pierde de vista y pide confirmar
   const [aviso, setAviso] = useState<{ que: 'motor' | 'pipeline'; d: any } | null>(null)
   const preguntar = async (que: 'motor' | 'pipeline') => {
-    try { const d = await api('/admin/motor-hoy'); if (d.corrio_hoy) { setAviso({ que, d }); return } } catch { /* si falla la consulta, no bloquea */ }
+    try { const d = await api('/admin/motor-hoy'); setAviso({ que, d }); return } catch { /* si falla la consulta, no bloquea */ }
     que === 'motor' ? recalcular() : pipeline()
   }
   const recalcular = async () => {
@@ -128,16 +128,21 @@ export default function Reglas() {
   return (
     <Box sx={{ maxWidth: 860, mx: 'auto', display: 'grid', gap: 2 }}>
       <Dialog open={!!aviso} onClose={() => setAviso(null)} maxWidth="sm" fullWidth>
-        <DialogTitle>El motor ya corrió hoy</DialogTitle>
+        <DialogTitle>{aviso?.d.corrio_hoy ? 'El motor ya corrió hoy' : (aviso?.que === 'pipeline' ? 'Correr ETL + motor' : 'Recalcular con el motor')}</DialogTitle>
         <DialogContent sx={{ display: 'grid', gap: 1.5 }}>
-          <Typography>
+          <Alert severity="info">
+            {aviso?.d.dias_reparto?.length
+              ? <>El stock del CEDI (PT001) se reparte <b>solo entre las tiendas de los DIAs {aviso.d.dias_reparto.join(' + ')}</b>: esas compiten por la escasez; las demás quedan con lo que pide su buffer.</>
+              : <>El stock del CEDI (PT001) se reparte entre <b>todas las tiendas</b> cuando no alcanza. Puedes limitarlo a ciertos DIAs en “Reparto del CEDI por día”.</>}
+          </Alert>
+          {aviso?.d.corrio_hoy && <Typography>
             Ya hay {aviso?.d.corridas} corrida(s) de hoy (la última a las {aviso?.d.ultima ? new Date(aviso.d.ultima).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }) : ''}).
             Si corres de nuevo:
-          </Typography>
+          </Typography>}
           <Box component="ul" sx={{ m: 0, pl: 3, display: 'grid', gap: 0.5 }}>
-            <li>La matriz de despacho y el plano pasan a usar <b>solo la corrida nueva</b>.</li>
-            <li>Todo vuelve a <b>Pendiente</b>: lo aprobado y las cantidades que hayas editado de la corrida anterior ya no se ven ni se exportan.</li>
-            <li>El reparto del inventario del CEDI se recalcula con el stock fresco de PT001, así que las cantidades pueden cambiar{aviso?.d.dias_reparto?.length ? ` (se reparte solo entre las tiendas de los DIAs ${aviso.d.dias_reparto.join(' + ')})` : ' (se reparte entre todas las tiendas)'}.</li>
+            {aviso?.d.corrio_hoy && <li>La matriz de despacho y el plano pasan a usar <b>solo la corrida nueva</b>.</li>}
+            {aviso?.d.corrio_hoy && <li>Todo vuelve a <b>Pendiente</b>: lo aprobado y las cantidades que hayas editado de la corrida anterior ya no se ven ni se exportan.</li>}
+            {aviso?.d.corrio_hoy && <li>Las cantidades pueden cambiar porque el CEDI se reparte con el stock fresco de PT001.</li>}
             {aviso?.que === 'pipeline' && <li>También se vuelve a leer todo Siesa (inventario, tránsitos, items): tarda varios minutos.</li>}
           </Box>
           {(aviso?.d.aprobadas > 0 || aviso?.d.enviadas > 0) && (
@@ -147,7 +152,7 @@ export default function Reglas() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setAviso(null)} autoFocus>Cancelar</Button>
-          <Button color="warning" variant="contained" onClick={() => { const q = aviso!.que; setAviso(null); q === 'motor' ? recalcular() : pipeline() }}>Correr de todos modos</Button>
+          <Button color={aviso?.d.corrio_hoy ? 'warning' : 'primary'} variant="contained" onClick={() => { const q = aviso!.que; setAviso(null); q === 'motor' ? recalcular() : pipeline() }}>{aviso?.d.corrio_hoy ? 'Correr de todos modos' : 'Correr'}</Button>
         </DialogActions>
       </Dialog>
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ alignItems: { sm: 'center' } }}>

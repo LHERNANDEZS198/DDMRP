@@ -105,6 +105,11 @@ export default function Despacho() {
     return { lista, uds: lista.reduce((s, [, x]) => s + x.uds, 0), valor: lista.reduce((s, [, x]) => s + x.valor, 0), sinCosto: lista.reduce((s, [, x]) => s + x.sinCosto, 0) }
   }, [vista, ediciones])
   const minimo: number = cedi?.minimo_envio ?? 0; const regla = minimo > 0 && (cedi?.con_costos ?? 0) > 0
+  // tiendas bajo el mínimo según TODAS sus filas (no solo las filtradas): se pintan en gris en la matriz
+  const bajoMin = useMemo(() => {
+    const v = new Map<string, number>(); for (const r of rows) v.set(r.bodega_id, (v.get(r.bodega_id) ?? 0) + valorDe(r))
+    return new Set(regla ? [...v.entries()].filter(([, x]) => x < minimo).map(([b]) => b) : [])
+  }, [rows, ediciones, regla, minimo])
   const aprobar = async () => {
     const sel = grid?.getSelectedRows() ?? []
     if (!sel.length) { setMsg('Selecciona filas'); return }
@@ -199,6 +204,7 @@ export default function Despacho() {
         <Chip label={`${Math.round(tot.uds).toLocaleString('es-CO')} uds a enviar`} size="small" color="primary" />
         <Chip label={`Costo total ${cop(tot.valor)}`} size="small" color="primary" />
         <Chip label={`${tot.lista.length} tiendas`} size="small" />
+        {bajoMin.size > 0 && <Tooltip title={`En gris: ${[...bajoMin].join(', ')}. No salen en el plano ni se marcan como enviadas.`}><Chip label={`${bajoMin.size} tiendas bajo el mínimo`} size="small" /></Tooltip>}
         {tot.sinCosto > 0 && <Chip label={`${tot.sinCosto} filas sin costo`} size="small" color="warning" />}
         <Button size="small" endIcon={<ExpandMore sx={{ transform: porTienda ? 'rotate(180deg)' : 'none' }} />} onClick={() => setPorTienda(!porTienda)}>Por tienda</Button>
       </Paper>
@@ -222,6 +228,7 @@ export default function Despacho() {
       </Collapse>
       <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 300 }}>
         <Tabla cargando={cargando} textoCargando="Cargando la matriz…" vacio="No hay filas con este filtro" rowData={vista} columnDefs={ayudar(cols)} tooltipShowDelay={300} rowSelection="multiple" rowBuffer={20}
+          getRowStyle={(p: any) => bajoMin.has(p.data?.bodega_id) ? { color: '#9e9e9e', background: 'rgba(158,158,158,0.12)' } : undefined}
           context={{ aprobar: pAprobar }} onCellValueChanged={() => setEdiciones(n => n + 1)} onGridReady={e => setGrid(e.api)} defaultColDef={{ resizable: true, sortable: true }} />
       </Box>
       <Aviso msg={msg} onClose={() => setMsg('')} />
