@@ -7,3 +7,9 @@ dist/
 target/
 *.parquet
 exports/
+
+# Excel de trabajo y temporales de Office (no van al repo)
+*.xlsx
+*.xlsm
+*.xlsb
+~$*
