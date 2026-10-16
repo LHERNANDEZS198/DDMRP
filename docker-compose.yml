@@ -1,0 +1,58 @@
+name: ddmrp
+
+services:
+  db:
+    image: postgres:16-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ddmrp}
+      POSTGRES_USER: ${POSTGRES_USER:-ddmrp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?define POSTGRES_PASSWORD en .env}
+    command: >
+      postgres
+      -c shared_buffers=2GB
+      -c effective_cache_size=6GB
+      -c work_mem=64MB
+      -c maintenance_work_mem=512MB
+      -c max_parallel_workers_per_gather=4
+      -c random_page_cost=1.1
+      -c wal_compression=on
+      -c checkpoint_timeout=15min
+      -c max_wal_size=4GB
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    shm_size: 1gb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend_python/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+    expose:
+      - "8000"
+    ports:
+      - "127.0.0.1:8000:8000"   # util en desarrollo (docs en /docs)
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+volumes:
+  pgdata:

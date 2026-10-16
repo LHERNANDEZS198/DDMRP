@@ -1,0 +1,56 @@
+hola, usando cowork en C:\Users\dir.compras\Desktop\Python\DDMRP, por favor ayudame a relizar el siguiente proyect:
+
+Actúa como un Arquitecto de Software Principal experto en Rust, Python y Sistemas Logísticos de Cadena de Suministro (DDMRP). 
+Necesito diseñar la arquitectura técnica y el andamiaje (boilerplate) inicial para un sistema de abastecimiento diario masivo a tiendas 
+que procesa más de 337,500 combinaciones (2,500 productos × 135 bodegas).
+
+El sistema debe considerar los siguientes componentes, restricciones y tecnologías:
+
+1. ARQUITECTURA DE DATOS (Flujo de Capas):
+- Fuente de origen: ERP Siesa corriendo sobre una base de datos Microsoft SQL Server (MSSQL).
+- Base de datos intermedia analítica: PostgreSQL (Instancia dedicada en Linux). Se requiere modelar el proceso para extraer masivamente 
+los históricos de ventas, inventarios actuales, tránsitos y metadatos de ítems desde Siesa e insertarlos de forma eficiente en PostgreSQL.
+- Base de datos de autenticación: Una base de datos MySQL externa ya existente (los detalles de conexión se especificarán después).
+
+2. DIVISIÓN DE MOTORES (Rust + Python):
+- Motor de Cálculo (Rust): Debe programarse en Rust nativo utilizando 'Polars' o estructuras en memoria ultrarrápidas multihilo. 
+Su única responsabilidad es absorber los millones de filas desde PostgreSQL cada mañana, aplicar el algoritmo matemático DDMRP (Cálculo de ADU, Zonas de Buffer Verde/Amarillo/Rojo, Estado de Flujo Neto) y generar las sugerencias de envío diarios en menos de un minuto.
+- Capa de Conectividad y Orquestación (Python): Python actuará como el "pegamento". Se encargará de disparar el ETL nocturno desde
+ Siesa hacia PostgreSQL (usando SQLAlchemy/PyArrow), orquestar la ejecución del binario de Rust (vía PyO3 o llamadas de sistema seguras)
+ y exponer una API REST ágil utilizando FastAPI para la interfaz de usuario.
+
+3. INTERFAZ DE USUARIO (UI Web):
+- Tecnología recomendada: Aplicación Web construida en React.js, Vue.js o Svelte, utilizando obligatoriamente componentes de tablas de 
+alta velocidad (como AG Grid o TanStack Table) para renderizar dinámicamente miles de filas sin congelar el navegador.
+- Funcionalidades requeridas en la UI:
+  * Dashboard de Alertas Logísticas (SKUs en Zona Roja / Quiebres potenciales).
+  * Pantalla de Configuración y Gestión: Permitir a los analistas modificar manualmente mediante la UI las variables de Item/Bodega 
+  (Lead Times, Factores de Variabilidad, Factores de Zona, Segmentaciones ABC/XYZ).
+  * Matriz de Despacho Diario: Tabla interactiva para aprobar/editar los envíos sugeridos antes de confirmarlos.
+  TODO: generar el archivo plano para cargar a siesa, y luego superTodo: mandar directamente por medio de webservice a siesa
+
+4. SEGURIDAD Y PERMISOS:
+- Autenticación: Validar credenciales contra la base de datos externa de MySQL reloj.
+- Autorización (Permission Matrix): Implementar un sistema de matriz de permisos basado en roles (RBAC) o atributos (ABAC). Un usuario puede tener permiso de "Lectura" en una bodega pero de "Edición/Aprobación" en otra, o estar limitado por categorías de producto.
+
+5. ENTORNO Y DESPLIEGUE (Docker + Linux):
+- Servidor de Producción: Servidor Linux (Ubuntu Server / Rocky Linux).
+- Portabilidad Local: Se requiere un archivo 'docker-compose.yml' que orqueste todo el entorno tanto para desarrollo local como 
+para el despliegue en producción. Debe incluir contenedores separados para:
+  * El Backend (FastAPI + binario de Rust precompilado).
+  * La Base de Datos Intermedia (PostgreSQL optimizado para lectura).
+  * El Frontend (Nginx sirviendo la UI web construida).
+- vincular a github
+
+ENTREGABLES SOLICITADOS:
+1. Diagrama de arquitectura de bloques detallado que muestre el flujo de datos desde Siesa hasta la UI.
+2. Diseño lógico del esquema de base de datos en PostgreSQL para las tablas de: 'historico_ventas', 'maestro_item_bodega_config' (para guardar las variables del DDMRP) y 'sugerencias_envio'.
+3. Código base estructurado (Estructura de carpetas) para un monorrepo que divida /frontend, /backend_python y /core_rust.
+4. Un ejemplo inicial de cómo estructurar en Rust (usando structs) el cálculo de los buffers DDMRP por ítem/bodega usando concurrencia segura.
+5. El archivo 'docker-compose.yml' base configurado para levantar el entorno local en Linux/Windows/Mac.
+Usa el código con precaución.
+
+💡 Un par de consejos técnicos antes de arrancar:
+
+• Usa tipos correctos en Postgres: Para la tabla intermedia en Postgres, asegúrate de que campos como producto_id y bodega_id tengan índices compuestos (CREATE INDEX idx_producto_bodega ON tabla(producto_id, bodega_id);). Esto hará que las consultas de Rust pasen de tardar segundos a milisegundos.
+• El puente PyO3: Al dejar que Python maneje la API (FastAPI) y Rust maneje los números pesados mediante PyO3, tu equipo no tendrá que desarrollar un servidor web complejo en Rust, reduciendo el tiempo de desarrollo a la mitad.
