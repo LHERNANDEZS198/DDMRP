@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { AgGridReact } from 'ag-grid-react'
 import { ColDef, GridApi, ICellRendererParams } from 'ag-grid-community'
 import { Alert, Box, Button, Checkbox, Chip, FormControlLabel, IconButton, MenuItem, Paper, Stack, TextField, Tooltip, Typography } from '@mui/material'
@@ -63,8 +63,14 @@ export default function Despacho() {
   }
   const quitar = (b: string) => { setFiltrar(true); setTiendas(t => t.filter(x => x !== b)) }
   const poner = (b: string) => { if (!b) return; setFiltrar(true); setTiendas(t => t.includes(b) ? t : [...t, b].sort()); setNueva('') }
-  const cargar = () => api('/despacho/matriz?estado=' + ver + (filtrar ? '&bodegas=' + encodeURIComponent(tiendas.join(',') || '-') : '')).then(setRows)
-  useEffect(() => { cargar() }, [filtrar, tiendas.join(','), ver])
+  // Solo vale la respuesta de la última petición: si cambias de "Ver" mientras llega una lista grande, la vieja no debe pisar la nueva
+  const peticion = useRef(0)
+  const cargar = () => {
+    const n = ++peticion.current
+    return api('/despacho/matriz?estado=' + ver + (filtrar ? '&bodegas=' + encodeURIComponent(tiendas.join(',') || '-') : ''))
+      .then(r => { if (n === peticion.current) setRows(r) })
+  }
+  useEffect(() => { setRows([]); cargar() }, [filtrar, tiendas.join(','), ver])
   const aprobar = async () => {
     const sel = grid?.getSelectedRows() ?? []
     if (!sel.length) { setMsg('Selecciona filas'); return }
@@ -80,7 +86,8 @@ export default function Despacho() {
     if (!sel.length) { setMsg('Selecciona filas aprobadas'); return }
     try {
       const r = await api('/despacho/desaprobar', { method: 'POST', body: JSON.stringify(sel.map((x: any) => ({ ejecucion_id: x.ejecucion_id, producto_id: x.producto_id, bodega_id: x.bodega_id }))) })
-      setMsg(`Devueltas a pendiente: ${r.devueltas}` + (r.omitidas ? ` (${r.omitidas} no estaban aprobadas)` : '')); cargar()
+      setMsg(r.devueltas ? `Devueltas a pendiente: ${r.devueltas}` + (r.omitidas ? ` (${r.omitidas} no estaban aprobadas)` : '')
+        : 'Ninguna se devolvió: las filas elegidas no están aprobadas en la corrida actual.'); grid?.deselectAll(); cargar()
     } catch (x: any) { setMsg('Error: ' + x.message) }
   }
   const plano = async () => {
