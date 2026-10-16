@@ -32,6 +32,8 @@ REGLAS = [
          opciones=None),
     dict(clave="meses_historia", titulo="Meses de historia de ventas", ayuda="Incluye el mes en curso. 2 a 12 (Excel: 7).", opciones=None, min=2, max=12, entero=True),
     dict(clave="meses_adu", titulo="Meses que entran al ADU (+ forecast)", ayuda="1 hasta los meses de historia (Excel: 4).", opciones=None, min=1, max=12, entero=True),
+    dict(clave="etl_traer_ventas", titulo="El ETL trae las ventas por mes de Siesa",
+         ayuda="Si: cada corrida del ETL (y la nocturna) trae las ventas. No: solo con el boton 'Traer ventas por mes' de Maestros.", opciones=SI_NO),
     dict(clave="retener_dias", titulo="Dias de historial que se conservan", ayuda="Para la vista de cambios en un periodo: se guarda la ultima corrida de cada dia. 7 a 730.", opciones=None, min=7, max=730, entero=True),
     dict(clave="mult_cota_max_promo", titulo="Multiplicador de cota maxima en promocion", ayuda="Hoja Modelo AZ.", opciones=None),
     dict(clave="mult_cota_min_promo", titulo="Multiplicador de cota minima en promocion", ayuda="Hoja Modelo BA.", opciones=None),

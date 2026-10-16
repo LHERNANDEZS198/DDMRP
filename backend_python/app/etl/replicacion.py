@@ -19,6 +19,7 @@ from datetime import date
 from pathlib import Path
 from sqlalchemy import bindparam, text
 from ..config import settings
+from .. import progreso
 from ..db import pg, siesa_engine
 
 log = logging.getLogger("etl")
@@ -195,6 +196,10 @@ def _items_de_siesa(cur, eng, primera: bool = True) -> dict:
     cur.execute("""INSERT INTO ddmrp.maestro_item (producto_id, descripcion)
                    SELECT producto_id, COALESCE(descripcion, producto_id) FROM stg_items
                    ON CONFLICT (producto_id) DO UPDATE SET descripcion = EXCLUDED.descripcion, actualizado = now()""")
+    borrados = 0
+    if primera and items:   # espejo de Siesa: se van los items viejos que ya no estan en la seleccion (los de Stores se agregan despues)
+        cur.execute("DELETE FROM ddmrp.maestro_item m WHERE NOT EXISTS (SELECT 1 FROM stg_items s WHERE s.producto_id = m.producto_id)")
+        borrados = cur.rowcount
     cur.execute("DROP TABLE stg_items")
     cur.executemany("UPDATE ddmrp.maestro_item SET categoria = %s WHERE producto_id = %s", [(l, p) for p, l in labs])
     for cod, nom in nombres_lab:
@@ -211,7 +216,7 @@ def _items_de_siesa(cur, eng, primera: bool = True) -> dict:
     for pid, cid, nom in nombres_crit:
         cur.execute("INSERT INTO ddmrp.criterio (plan_id, criterio_id, nombre) VALUES (%s, %s, %s) "
                     "ON CONFLICT (plan_id, criterio_id) DO UPDATE SET nombre = EXCLUDED.nombre", (pid, cid, nom))
-    return {"items": len(items), "con_laboratorio": len(labs), "criterios": len(crit), "planes": len({c[1] for c in crit})}
+    return {"items": len(items), "eliminados": borrados, "con_laboratorio": len(labs), "criterios": len(crit), "planes": len({c[1] for c in crit})}
 
 
 def sincronizar_items_ahora() -> dict:
@@ -234,7 +239,71 @@ def sincronizar_items_ahora() -> dict:
         raw.close()
 
 
+def _param(cur, clave: str):
+    cur.execute("SELECT valor FROM ddmrp.parametro WHERE clave = %s", (clave,))
+    f = cur.fetchone()
+    return float(f[0]) if f else None
+
+
+def sincronizar_ventas() -> dict:
+    """Ventas por mes de Siesa -> ddmrp.ventas_mensual. Solo reemplaza la ventana de meses y las bodegas leidas
+    (el historico anterior no se toca). Va aparte del ETL porque es la consulta pesada: se lanza a demanda o por parametro."""
+    res: dict = {}
+    with progreso.tarea("Ventas", "Ventas por mes traídas de Siesa"):
+        vsql = _ventas_sql()
+        if not vsql:
+            raise RuntimeError("etl/sql/ventas_siesa.sql no tiene consulta: cargalas por Excel (maestro ventas por mes)")
+        if not settings.siesa_host:
+            raise RuntimeError("Siesa no esta configurado (SIESA_HOST)")
+        raw = pg.raw_connection()
+        try:
+            with raw.cursor() as cur:
+                meses = _param(cur, "meses_historia")
+                desde = _primer_mes(date.today(), min(max(int(meses), 2), 12) if meses else MESES_VENTANA)
+                cur.execute("SELECT empresa, bodega_id FROM ddmrp.abast_bitacora")
+                por_empresa: dict[str, list[str]] = {}
+                for emp, b in cur.fetchall():
+                    por_empresa.setdefault(emp, []).append(b)
+                if not por_empresa:
+                    raise RuntimeError("abast_bitacora esta vacia: cargala en Maestros antes de traer las ventas")
+                cur.execute("CREATE TEMP TABLE stg_vm (mes char(6), bodega_id text, producto_id text, cantidad numeric) ON COMMIT DROP")
+                leidas: list[str] = []
+                for empresa, db in (("05", settings.siesa_db), ("21", settings.siesa_db_s)):
+                    bodegas = por_empresa.get(empresa, [])
+                    if not db or not bodegas:
+                        continue
+                    eng, n = siesa_engine(db), 0
+                    progreso.avance(f"Leyendo ventas de {db} desde {desde:%Y-%m} ({len(bodegas)} bodegas)… puede tardar varios minutos")
+                    with cur.copy("COPY stg_vm (mes, bodega_id, producto_id, cantidad) FROM STDIN") as cp:
+                        for r in _stream(eng, vsql, {"cia": settings.siesa_cia, "bodegas": bodegas, "desde": desde}, expanding="bodegas"):
+                            cp.write_row(r); n += 1
+                            if n % 50000 == 0:
+                                progreso.avance(f"Leyendo ventas de {db}: {n:,} filas…")
+                    res[f"ventas_{empresa}"] = n
+                    leidas += bodegas
+                if not leidas:
+                    raise RuntimeError("No hay bodegas para leer (revisa SIESA_DB / SIESA_DB_S y la bitacora)")
+                progreso.avance("Guardando las ventas en la base…")
+                cur.execute("DELETE FROM ddmrp.ventas_mensual WHERE mes >= %s AND bodega_id = ANY(%s)", (f"{desde:%Y%m}", leidas))
+                cur.execute("""INSERT INTO ddmrp.ventas_mensual (mes, bodega_id, producto_id, cantidad)
+                               SELECT mes, bodega_id, producto_id, SUM(cantidad) FROM stg_vm
+                               WHERE mes >= %s GROUP BY 1, 2, 3""", (f"{desde:%Y%m}",))
+                res["meses_desde"] = f"{desde:%Y%m}"
+            raw.commit()
+        except Exception:
+            raw.rollback()
+            raise
+        finally:
+            raw.close()
+    return res
+
+
 def correr_etl() -> dict:
+    with progreso.tarea("ETL", "ETL listo"):
+        return _correr_etl()
+
+
+def _correr_etl() -> dict:
     res: dict = {}
     raw = pg.raw_connection()
     try:
@@ -256,31 +325,24 @@ def correr_etl() -> dict:
 
             cur.execute("TRUNCATE ddmrp.inventario_actual")
             cur.execute("TRUNCATE ddmrp.transitos")
-            cur.execute("CREATE TEMP TABLE stg_vm (mes char(6), bodega_id text, producto_id text, cantidad numeric) ON COMMIT DROP")
-            vsql = _ventas_sql()
-            if not vsql:
-                log.warning("etl/sql/ventas_siesa.sql sin consulta: las ventas NO se actualizan (cargalas por Excel)")
-            ventas_ok: list[str] = []
-
+            traer_ventas = (_param(cur, "etl_traer_ventas") or 0) >= 1
+            if not traer_ventas:
+                log.info("ETL: las ventas por mes no se traen aqui (parametro etl_traer_ventas = 0); usa el boton 'Traer ventas'")
             for empresa, db in (("05", settings.siesa_db), ("21", settings.siesa_db_s)):
                 bodegas = por_empresa.get(empresa, [])
                 if not db or not bodegas:
                     continue
                 eng, prm = siesa_engine(db), {"cia": settings.siesa_cia, "bodegas": bodegas}
                 log.info("ETL empresa %s (%s): %s bodegas", empresa, db, len(bodegas))
+                progreso.avance(f"Leyendo inventario de Siesa ({db}, {len(bodegas)} bodegas)…")
                 res[f"inventario_{empresa}"] = _volcar(
                     cur, _stream(eng, SQL_INVENTARIO, prm, expanding="bodegas"), "ddmrp.inventario_actual",
                     ["producto_id", "bodega_id", "fecha_corte", "disponible"], reemplazar=False)
+                progreso.avance(f"Leyendo traslados en tránsito de Siesa ({db})…")
                 res[f"transitos_{empresa}"] = _volcar(
                     cur, _stream(eng, SQL_TRANSITOS, prm, expanding="bodegas"), "ddmrp.transitos",
                     ["producto_id", "bodega_id", "documento", "cantidad"], reemplazar=False)
-                if vsql:
-                    n = 0
-                    with cur.copy("COPY stg_vm (mes, bodega_id, producto_id, cantidad) FROM STDIN") as cp:
-                        for r in _stream(eng, vsql, {**prm, "desde": desde}, expanding="bodegas"):
-                            cp.write_row(r); n += 1
-                    res[f"ventas_{empresa}"] = n
-                    ventas_ok += bodegas
+                progreso.avance(f"Leyendo items, criterios y centros de operación ({db})…")
                 try:  # descripciones, laboratorio, criterios y centro de operacion: utiles pero no criticos
                     res[f"items_{empresa}"] = _items_de_siesa(cur, eng, primera=(empresa == "05"))
                     for b, co in _stream(eng, SQL_CO, prm, expanding="bodegas"):
@@ -291,17 +353,12 @@ def correr_etl() -> dict:
                         raise
                     log.warning("Items / centro de operacion de %s no se actualizaron: %s", db, e)
 
-            if vsql and ventas_ok:
-                # Se reemplaza solo la ventana de meses (el historico anterior no se toca) y solo las bodegas leidas.
-                cur.execute("DELETE FROM ddmrp.ventas_mensual WHERE mes >= %s AND bodega_id = ANY(%s)",
-                            (f"{desde:%Y%m}", ventas_ok))
-                cur.execute("""INSERT INTO ddmrp.ventas_mensual (mes, bodega_id, producto_id, cantidad)
-                               SELECT mes, bodega_id, producto_id, SUM(cantidad) FROM stg_vm
-                               WHERE mes >= %s GROUP BY 1, 2, 3""", (f"{desde:%Y%m}",))
         raw.commit()
     except Exception:
         raw.rollback()
         raise
     finally:
         raw.close()
+    if traer_ventas:
+        res.update(sincronizar_ventas())
     return res

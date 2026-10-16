@@ -7,7 +7,7 @@ import Upload from '@mui/icons-material/Upload'
 import ContentPaste from '@mui/icons-material/ContentPaste'
 import DeleteOutline from '@mui/icons-material/DeleteOutline'
 import CloudSync from '@mui/icons-material/CloudSync'
-import { api, bajar, subir } from '../api'
+import { api, bajar, subir, conProgreso } from '../api'
 import Aviso from '../Aviso'
 import { useYo } from '../Yo'
 
@@ -104,16 +104,26 @@ export default function Config() {
     } catch (x: any) { setMsg('Error: ' + x.message) }
   }
   const traerTiendas = async () => {
-    try { setMsg('Trayendo las tiendas de Siesa…'); const r = await api('/admin/sincronizar-bodegas', { method: 'POST' }); setMsg(`Tiendas sincronizadas: ${r.tiendas}`) }
+    try { setMsg('Trayendo las tiendas de Siesa…'); const r = await conProgreso(setMsg, () => api('/admin/sincronizar-bodegas', { method: 'POST' })); setMsg(`Tiendas sincronizadas: ${r.tiendas}`) }
     catch (x: any) { setMsg('Error: ' + x.message) }
   }
   const traerItems = async () => {
     try {
       setMsg('Trayendo los items de Siesa con todos sus criterios… puede tardar un par de minutos')
-      const r = await api('/admin/sincronizar-items', { method: 'POST' })
+      const r = await conProgreso(setMsg, () => api('/admin/sincronizar-items', { method: 'POST' }))
       const a = r['05'] ?? r['21'] ?? {}
-      setMsg(`Items traídos de Siesa: ${a.items ?? 0} items · ${a.criterios ?? 0} asignaciones de criterio en ${a.planes ?? 0} criterios`)
+      setMsg(`Items traídos de Siesa: ${a.items ?? 0} items` + (a.eliminados ? ` (${a.eliminados} viejos eliminados)` : '') + ` · `+ `${a.criterios ?? 0} asignaciones de criterio en ${a.planes ?? 0} criterios`)
       if (sel === 'items') cargar()
+    } catch (x: any) { setMsg('Error: ' + x.message) }
+  }
+  const traerVentas = async () => {
+    if (!window.confirm('Traer las ventas por mes de Siesa? Reemplaza la ventana de meses (los meses anteriores no se tocan). Puede tardar varios minutos.')) return
+    try {
+      setMsg('Trayendo las ventas por mes de Siesa… puede tardar varios minutos')
+      const r = await conProgreso(setMsg, () => api('/admin/sincronizar-ventas', { method: 'POST' }))
+      const n = (r.ventas_05 ?? 0) + (r.ventas_21 ?? 0)
+      setMsg(`Ventas traídas de Siesa: ${n.toLocaleString()} filas desde ${r.meses_desde}`)
+      if (sel === 'ventas-mensual') cargar()
     } catch (x: any) { setMsg('Error: ' + x.message) }
   }
   const eliminar = async () => {
@@ -148,6 +158,7 @@ export default function Config() {
         {def && !def.sin_reemplazo && <Button color="error" startIcon={<DeleteOutline />} onClick={eliminar}>Eliminar seleccionadas</Button>}</>}
         <Box sx={{ flex: 1 }} />
         {pSync && <Button size="small" startIcon={<CloudSync />} onClick={traerItems} title="Descripción, laboratorio y todos los criterios de items desde Siesa">Traer items de Siesa</Button>}
+        {pSync && <Button size="small" startIcon={<CloudSync />} onClick={traerVentas} title="Ventas por mes desde Siesa, a demanda (es la consulta pesada)">Traer ventas por mes</Button>}
         {pSync && <Button size="small" startIcon={<CloudSync />} onClick={traerTiendas} title="Lee de Siesa las tiendas (código y nombre)">Traer tiendas de Siesa</Button>}
       </Paper>
       {def && (

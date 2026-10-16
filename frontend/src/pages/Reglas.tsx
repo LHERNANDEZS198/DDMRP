@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Box, Button, Card, CardContent, CardHeader, MenuItem, Stack, TextField, Typography } from '@mui/material'
 import Calculate from '@mui/icons-material/Calculate'
 import PlayCircle from '@mui/icons-material/PlayCircle'
-import { api } from '../api'
+import { api, conProgreso, seguirTarea } from '../api'
 import Aviso from '../Aviso'
 import { useYo } from '../Yo'
 
@@ -27,11 +27,16 @@ export default function Reglas() {
   }
   const recalcular = async () => {
     setMsg('Recalculando con el motor Rust…')
-    try { const x = await api('/admin/correr-motor', { method: 'POST' }); setMsg(`Listo: ${x.filas} combinaciones calculadas`) } catch (e: any) { setMsg('Error: ' + e.message) }
+    try { const x = await conProgreso(setMsg, () => api('/admin/correr-motor', { method: 'POST' })); setMsg(`Listo: ${x.filas} combinaciones calculadas`) } catch (e: any) { setMsg('Error: ' + e.message) }
   }
   const pipeline = async () => {
     setMsg('Lanzando ETL + motor…')
-    try { await api('/admin/correr-pipeline', { method: 'POST' }); setMsg('Lanzado en segundo plano. Revisa Alertas en unos minutos.') } catch (e: any) { setMsg('Error: ' + e.message) }
+    try {
+      const previo = (await api('/admin/progreso')).inicio ?? null
+      await api('/admin/correr-pipeline', { method: 'POST' })
+      const fin = await seguirTarea(setMsg, previo)
+      setMsg(fin.estado === 'error' ? fin.mensaje : `Listo: ${fin.mensaje}. Revisa Alertas y Control.`)
+    } catch (e: any) { setMsg('Error: ' + e.message) }
   }
   return (
     <Box sx={{ maxWidth: 860, mx: 'auto', display: 'grid', gap: 2 }}>

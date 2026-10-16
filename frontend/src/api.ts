@@ -67,3 +67,31 @@ export async function subir<T = any>(path: string, archivo: File): Promise<T> {
   if (!r.ok) throw new Error(await errorDe(r))
   return r.json()
 }
+
+const espera = (ms: number) => new Promise(r => setTimeout(r, ms))
+const texto = (e: any) => { const m: string = e.mensaje || 'Trabajando…'; return /…\s*$/.test(m) ? m : m + '…' }
+
+/** Ejecuta una tarea larga (la peticion espera la respuesta) y mientras tanto muestra lo que el servidor va haciendo. */
+export async function conProgreso<T>(setMsg: (s: string) => void, fn: () => Promise<T>): Promise<T> {
+  let vivo = true
+  const t = setInterval(async () => {
+    try { const e = await api('/admin/progreso'); if (vivo && e.estado === 'corriendo') setMsg(texto(e)) } catch { /* sin progreso: se queda el mensaje inicial */ }
+  }, 2000)
+  try { return await fn() } finally { vivo = false; clearInterval(t) }
+}
+
+/** Para tareas que el servidor corre en segundo plano (ETL + motor): sigue el progreso hasta que termine. */
+export async function seguirTarea(setMsg: (s: string) => void, inicioPrevio: number | null): Promise<{ estado: string; mensaje: string }> {
+  let visto = false
+  for (let i = 0; i < 2000; i++) {
+    await espera(2000)
+    try {
+      const e = await api('/admin/progreso')
+      if (e.inicio !== inicioPrevio) visto = true
+      if (visto && e.estado === 'corriendo') setMsg(texto(e))
+      else if (visto) return e
+      else if (i > 10) return { estado: 'ok', mensaje: 'Lanzado; revisa Alertas en unos minutos' }
+    } catch { /* reintenta */ }
+  }
+  return { estado: 'ok', mensaje: 'Sigue corriendo en segundo plano' }
+}

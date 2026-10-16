@@ -5,6 +5,7 @@ from sqlalchemy import text
 from .config import settings
 from .db import pg
 from .etl.replicacion import correr_etl
+from . import progreso
 
 log = logging.getLogger("orq")
 
@@ -39,7 +40,13 @@ DETALLE_DIAS = 7
 
 
 def ejecutar_motor(fecha: date | None = None) -> dict:
+    with progreso.tarea("Motor", "Motor listo"):
+        return _ejecutar_motor(fecha)
+
+
+def _ejecutar_motor(fecha: date | None = None) -> dict:
     fecha = fecha or date.today()
+    progreso.avance("Calculando buffers con el motor Rust (varios minutos con todas las tiendas)…")
     with pg.begin() as c:
         eid = c.execute(text("INSERT INTO ddmrp.ejecucion_motor (fecha_calculo) VALUES (:f) RETURNING id"),
                         {"f": fecha}).scalar_one()
@@ -52,6 +59,7 @@ def ejecutar_motor(fecha: date | None = None) -> dict:
         with pg.begin() as c:
             c.execute(text("UPDATE ddmrp.ejecucion_motor SET fin=now(), estado='ok', filas=:n WHERE id=:i"),
                       {"n": res["filas"], "i": eid})
+        progreso.avance("Guardando la foto diaria para las vistas de cambios y tendencia…")
         try:
             guardar_historia(eid)
         except Exception:
@@ -66,7 +74,8 @@ def ejecutar_motor(fecha: date | None = None) -> dict:
 
 
 def pipeline_nocturno():
-    log.info("Pipeline nocturno: ETL")
-    etl = correr_etl()
-    log.info("ETL listo: %s. Pipeline nocturno: motor", etl)
-    return {"etl": etl, **ejecutar_motor()}
+    with progreso.tarea("ETL + motor", "ETL y motor listos"):
+        log.info("Pipeline nocturno: ETL")
+        etl = correr_etl()
+        log.info("ETL listo: %s. Pipeline nocturno: motor", etl)
+        return {"etl": etl, **ejecutar_motor()}

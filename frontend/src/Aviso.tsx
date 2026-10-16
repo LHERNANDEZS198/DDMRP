@@ -12,7 +12,7 @@ export default function Aviso({ msg, onClose }: { msg: string; onClose: () => vo
     if (!enCurso) return
     setSeg(0); const t0 = Date.now(); const id = setInterval(() => setSeg(Math.floor((Date.now() - t0) / 1000)), 1000)
     return () => clearInterval(id)
-  }, [enCurso, msg])
+  }, [enCurso])
   const tiempo = seg >= 60 ? `${Math.floor(seg / 60)} min ${seg % 60} s` : `${seg} s`
   return (
     <Snackbar open={!!msg} autoHideDuration={enCurso ? null : err ? 15000 : 6000}
