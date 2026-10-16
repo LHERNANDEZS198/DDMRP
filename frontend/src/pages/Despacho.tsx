@@ -4,6 +4,7 @@ import { ColDef, GridApi } from 'ag-grid-community'
 import { Box, Button, Checkbox, Chip, FormControlLabel, MenuItem, Paper, Stack, TextField, Typography } from '@mui/material'
 import Check from '@mui/icons-material/Check'
 import Download from '@mui/icons-material/Download'
+import Undo from '@mui/icons-material/Undo'
 import { api, descargar } from '../api'
 import Aviso from '../Aviso'
 import { useYo } from '../Yo'
@@ -14,6 +15,7 @@ const cols: ColDef[] = [
   { field: 'producto_id', headerName: 'Producto', filter: true },
   { field: 'descripcion', flex: 1, minWidth: 220, filter: true },
   { field: 'zona', filter: true },
+  { field: 'estado', filter: true, width: 115 },
   { field: 'inventario', type: 'numericColumn' },
   { field: 'en_transito', headerName: 'Transito', type: 'numericColumn' },
   { field: 'tog_aj', headerName: 'TOG aj.', type: 'numericColumn' },
@@ -33,6 +35,7 @@ export default function Despacho() {
   const [notas, setNotas] = useState('')
   const [consec, setConsec] = useState(1)
   const [marcar, setMarcar] = useState(false)
+  const [ver, setVer] = useState<'pendiente' | 'aprobada' | 'enviada'>('pendiente')
   // Corrida del dia: DIA de abastecimiento + tiendas elegidas (se pueden poner o quitar antes de generar)
   const [dias, setDias] = useState<{ dia: number; bodegas: string[] }[]>([])
   const [todas, setTodas] = useState<string[]>([])
@@ -48,8 +51,8 @@ export default function Despacho() {
   }
   const quitar = (b: string) => { setFiltrar(true); setTiendas(t => t.filter(x => x !== b)) }
   const poner = (b: string) => { if (!b) return; setFiltrar(true); setTiendas(t => t.includes(b) ? t : [...t, b].sort()); setNueva('') }
-  const cargar = () => api('/despacho/matriz' + (filtrar ? '?bodegas=' + encodeURIComponent(tiendas.join(',') || '-') : '')).then(setRows)
-  useEffect(() => { cargar() }, [filtrar, tiendas.join(',')])
+  const cargar = () => api('/despacho/matriz?estado=' + ver + (filtrar ? '&bodegas=' + encodeURIComponent(tiendas.join(',') || '-') : '')).then(setRows)
+  useEffect(() => { cargar() }, [filtrar, tiendas.join(','), ver])
   const aprobar = async () => {
     const sel = grid?.getSelectedRows() ?? []
     if (!sel.length) { setMsg('Selecciona filas'); return }
@@ -57,7 +60,15 @@ export default function Despacho() {
       await api('/despacho/aprobar', { method: 'POST', body: JSON.stringify(sel.map((r: any) => ({
         ejecucion_id: r.ejecucion_id, producto_id: r.producto_id, bodega_id: r.bodega_id,
         cantidad_aprobada: r.cantidad_aprobada ?? r.cantidad_sugerida, aprobar: true }))) })
-      setMsg(`Aprobadas ${sel.length}`); cargar()
+      setMsg(`Aprobadas ${sel.length}. Las ves en “Aprobadas”, desde donde puedes devolverlas a pendiente.`); cargar()
+    } catch (x: any) { setMsg('Error: ' + x.message) }
+  }
+  const devolver = async () => {
+    const sel = grid?.getSelectedRows() ?? []
+    if (!sel.length) { setMsg('Selecciona filas aprobadas'); return }
+    try {
+      const r = await api('/despacho/desaprobar', { method: 'POST', body: JSON.stringify(sel.map((x: any) => ({ ejecucion_id: x.ejecucion_id, producto_id: x.producto_id, bodega_id: x.bodega_id }))) })
+      setMsg(`Devueltas a pendiente: ${r.devueltas}` + (r.omitidas ? ` (${r.omitidas} no estaban aprobadas)` : '')); cargar()
     } catch (x: any) { setMsg('Error: ' + x.message) }
   }
   const plano = async () => {
@@ -84,7 +95,11 @@ export default function Despacho() {
         {filtrar && <Button size="small" onClick={() => { setDia(''); setFiltrar(false); setTiendas([]) }}>Ver todas</Button>}
       </Paper>
       <Paper variant="outlined" sx={{ p: 1.5, display: 'flex', flexWrap: 'wrap', gap: 1.5, alignItems: 'center' }}>
-        {pAprobar && <Button variant="contained" startIcon={<Check />} onClick={aprobar}>Aprobar seleccionados</Button>}
+        <TextField select size="small" label="Ver" value={ver} onChange={e => setVer(e.target.value as any)} sx={{ minWidth: 130 }}>
+          <MenuItem value="pendiente">Pendientes</MenuItem><MenuItem value="aprobada">Aprobadas</MenuItem><MenuItem value="enviada">Enviadas</MenuItem>
+        </TextField>
+        {pAprobar && ver === 'pendiente' && <Button variant="contained" startIcon={<Check />} onClick={aprobar}>Aprobar seleccionados</Button>}
+        {pAprobar && ver === 'aprobada' && <Button variant="outlined" color="warning" startIcon={<Undo />} onClick={devolver}>Devolver a pendiente</Button>}
         {pPlano && <><TextField size="small" sx={{ width: 320 }} label="Nota del documento" value={notas} onChange={e => setNotas(e.target.value)}
           placeholder={`ABASTECIMIENTO DEL <dia> DE <MES>${dia ? ` DÍA ${dia}` : ''}`} />
         <TextField size="small" type="number" label="Consecutivo inicial" sx={{ width: 150 }} value={consec}

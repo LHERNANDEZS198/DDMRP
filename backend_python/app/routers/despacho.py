@@ -24,13 +24,16 @@ def dias(user=Depends(requiere("ver_despacho"))):
 
 @router.get("/matriz")
 def matriz(bodega_id: str | None = None, bodegas: str | None = None, solo_pendientes: bool = True,
-           user=Depends(requiere("ver_despacho"))):
+           estado: str | None = None, user=Depends(requiere("ver_despacho"))):
     """bodegas = lista separada por comas (las tiendas elegidas para la corrida del dia)."""
     w, p = filtro_sql_permisos(user)
     f = f"s.ejecucion_id = {ULTIMA} AND s.cantidad_sugerida > 0 AND {w}"
     if bodega_id: f += " AND s.bodega_id=:b"; p["b"] = bodega_id
     if bodegas: f += " AND s.bodega_id = ANY(:bs)"; p["bs"] = [x.strip() for x in bodegas.split(",") if x.strip()]
-    if solo_pendientes: f += " AND s.estado='PENDIENTE'"
+    if estado is None:
+        estado = "pendiente" if solo_pendientes else "todas"
+    if estado.lower() in ("pendiente", "aprobada", "enviada"):
+        f += f" AND s.estado='{estado.upper()}'"
     sql = f"""SELECT s.ejecucion_id, s.empresa, s.producto_id, mi.descripcion, mi.categoria, s.bodega_id, s.zona::text zona,
                      s.inventario, s.en_transito, s.flujo_neto, s.tor, s.toy_aj, s.tog_aj, s.unidad_despacho,
                      s.vectorizacion, s.cantidad_sugerida, s.cantidad_aprobada, s.estado::text estado
@@ -62,6 +65,27 @@ def aprobar(items: list[Aprobacion], user=Depends(requiere("aprobar_despacho")))
                       {"q": it.cantidad_aprobada, "ap": it.aprobar, "u": user["nombre"],
                        "e": it.ejecucion_id, "p": it.producto_id, "b": it.bodega_id})
     return {"ok": True, "n": len(items)}
+
+
+class Clave(BaseModel):
+    ejecucion_id: int
+    producto_id: str
+    bodega_id: str
+
+
+@router.post("/desaprobar")
+def desaprobar(items: list[Clave], user=Depends(requiere("aprobar_despacho"))):
+    """Vuelta atras: las APROBADAS vuelven a PENDIENTE (y pierden la cantidad aprobada). Las ya ENVIADAS no se tocan."""
+    n = 0
+    with pg.begin() as c:
+        for it in items:
+            cat = c.execute(text("SELECT categoria FROM ddmrp.maestro_item WHERE producto_id=:p"), {"p": it.producto_id}).scalar()
+            exigir(user, it.bodega_id, cat, "aprobacion")
+            n += c.execute(text("""UPDATE ddmrp.sugerencias_envio SET estado='PENDIENTE'::ddmrp.estado_sugerencia, cantidad_aprobada=NULL,
+                                   aprobado_por=:u, aprobado_en=now()
+                                   WHERE ejecucion_id=:e AND producto_id=:p AND bodega_id=:b AND estado='APROBADA'"""),
+                           {"u": user["nombre"], "e": it.ejecucion_id, "p": it.producto_id, "b": it.bodega_id}).rowcount
+    return {"ok": True, "devueltas": n, "omitidas": len(items) - n}
 
 
 class PlanoReq(BaseModel):
