@@ -7,10 +7,12 @@ import LogoutIcon from '@mui/icons-material/Logout'
 import WarningAmber from '@mui/icons-material/WarningAmber'
 import LocalShipping from '@mui/icons-material/LocalShipping'
 import Rule from '@mui/icons-material/Rule'
+import Insights from '@mui/icons-material/Insights'
 import Storage from '@mui/icons-material/Storage'
 import { getUser, logout } from './api'
 
 export const NAV = [
+  { to: '/control', label: 'Control DDMRP', icon: <Insights /> },
   { to: '/dashboard', label: 'Alertas', icon: <WarningAmber /> },
   { to: '/despacho', label: 'Matriz de despacho', icon: <LocalShipping /> },
   { to: '/reglas', label: 'Reglas de pedido', icon: <Rule /> },

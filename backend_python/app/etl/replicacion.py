@@ -59,6 +59,10 @@ JOIN t106_mc_criterios_item_mayores m ON m.f106_id_plan = c.f125_id_plan AND m.f
 WHERE c.f125_id_plan = :plan AND i.f120_id_cia = :cia AND i.f120_referencia IS NOT NULL
 GROUP BY i.f120_referencia"""
 
+# Nombre de cada laboratorio (criterio mayor del mismo plan)
+SQL_LAB_NOMBRES = """SELECT RTRIM(f106_id), MAX(RTRIM(f106_descripcion)) FROM t106_mc_criterios_item_mayores
+WHERE f106_id_plan = :plan AND f106_id_cia = :cia GROUP BY f106_id"""
+
 # Traslados abiertos hacia las tiendas (f406_ind_estado = 0). Se agrupan por referencia/bodega destino/bodega origen.
 SQL_TRANSITOS = """
 SELECT RTRIM(i.f120_referencia), RTRIM(be.f150_id), 'TR-' + RTRIM(bs.f150_id),
@@ -211,6 +215,14 @@ def correr_etl() -> dict:
                     cur.execute("DROP TABLE stg_items")
                     labs = list(_stream(eng, SQL_LAB, {"cia": settings.siesa_cia, "plan": settings.siesa_plan_laboratorio}))
                     cur.executemany("UPDATE ddmrp.maestro_item SET categoria = %s WHERE producto_id = %s", [(l, r) for r, l in labs])
+                    try:   # los nombres son un adorno: si la consulta falla no se pierde el laboratorio de cada item
+                        for cod, nom in _stream(eng, SQL_LAB_NOMBRES, {"cia": settings.siesa_cia, "plan": settings.siesa_plan_laboratorio}):
+                            cur.execute("INSERT INTO ddmrp.laboratorio (codigo, nombre) VALUES (%s, %s) "
+                                        "ON CONFLICT (codigo) DO UPDATE SET nombre = EXCLUDED.nombre", (cod, nom))
+                    except Exception as e2:
+                        if isinstance(e2, psycopg.Error):
+                            raise
+                        log.warning("Nombres de laboratorio no actualizados: %s", e2)
                     for b, co in _stream(eng, SQL_CO, prm, expanding="bodegas"):
                         cur.execute("INSERT INTO ddmrp.bodega_centro_operacion (bodega_id, id_co) VALUES (%s, %s) "
                                     "ON CONFLICT (bodega_id) DO UPDATE SET id_co = EXCLUDED.id_co", (b, co))

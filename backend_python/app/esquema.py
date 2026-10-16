@@ -6,6 +6,7 @@ from .db import pg
 log = logging.getLogger("esquema")
 
 SENTENCIAS = [
+    "CREATE TABLE IF NOT EXISTS ddmrp.laboratorio (codigo TEXT PRIMARY KEY, nombre TEXT)",
     "ALTER TABLE ddmrp.maestro_bodega ADD COLUMN IF NOT EXISTS descripcion TEXT",
     # cotas como fraccion (0.125 = 12,5%): 4 decimales en vez de 2
     """DO $$ BEGIN
