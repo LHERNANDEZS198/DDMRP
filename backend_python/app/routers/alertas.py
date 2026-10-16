@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from ..db import pg
-from ..security import usuario_actual, filtro_sql_permisos
+from ..security import usuario_actual, filtro_sql_permisos, requiere
 
-router = APIRouter(prefix="/alertas", tags=["alertas"])
+router = APIRouter(prefix="/alertas", tags=["alertas"], dependencies=[Depends(requiere("ver_alertas"))])
 
 ULTIMA = "(SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok')"
 

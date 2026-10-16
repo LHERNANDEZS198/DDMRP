@@ -4,9 +4,9 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
 from ..db import pg
-from ..security import usuario_actual, filtro_sql_permisos
+from ..security import usuario_actual, filtro_sql_permisos, requiere
 
-router = APIRouter(prefix="/control", tags=["control"])
+router = APIRouter(prefix="/control", tags=["control"], dependencies=[Depends(requiere("ver_control"))])
 ULTIMA = "(SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok')"
 ZONAS = ("ROJA", "AMARILLA", "VERDE", "EXCESO")
 FROM = """FROM ddmrp.sugerencias_envio s

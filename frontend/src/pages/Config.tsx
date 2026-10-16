@@ -9,6 +9,7 @@ import DeleteOutline from '@mui/icons-material/DeleteOutline'
 import CloudSync from '@mui/icons-material/CloudSync'
 import { api, bajar, subir } from '../api'
 import Aviso from '../Aviso'
+import { useYo } from '../Yo'
 
 type Def = { todas?: boolean; clave: string; label: string; llave: string[]; editable: string[]; tipos: Record<string, string>; sin_reemplazo: boolean }
 
@@ -30,6 +31,7 @@ const resumen = (r: any) =>
   (r.omitidas ? ` · ${r.omitidas} filas omitidas por datos inválidos (ej. ${r.ejemplos_omitidas?.[0] ?? ''})` : '')
 
 export default function Config() {
+  const { puede } = useYo(); const pCarga = puede('cargar_maestros'); const pSync = puede('sincronizar_siesa')
   const [defs, setDefs] = useState<Def[]>([])
   const [sel, setSel] = useState('bitacora')
   const [rows, setRows] = useState<any[]>([])
@@ -49,16 +51,16 @@ export default function Config() {
   const cols: ColDef[] = useMemo(() => {
     if (!def) return []
     const llave = def.llave.map(k => ({ field: k, filter: true, pinned: k === def.llave[0] ? ('left' as const) : undefined,
-      checkboxSelection: k === def.llave[0] && !def.sin_reemplazo, headerCheckboxSelection: k === def.llave[0] && !def.sin_reemplazo }))
+      checkboxSelection: pCarga && k === def.llave[0] && !def.sin_reemplazo, headerCheckboxSelection: pCarga && k === def.llave[0] && !def.sin_reemplazo }))
     const desc: ColDef[] = [
       ...(rows[0] && 'bodega_nombre' in rows[0] ? [{ field: 'bodega_nombre', headerName: 'Tienda', filter: true, width: 200 }] : []),
       ...(rows[0] && 'descripcion' in rows[0] && !def.editable.includes('descripcion') ? [{ field: 'descripcion', filter: true, width: 240 }] : []),
     ]
     const ed = def.editable.map(k => def.tipos[k] === 'txt'
-      ? { field: k, editable: true, filter: true }
-      : { field: k, editable: true, type: 'numericColumn', filter: 'agNumberColumnFilter' })
+      ? { field: k, editable: pCarga, filter: true }
+      : { field: k, editable: pCarga, type: 'numericColumn', filter: 'agNumberColumnFilter' })
     return [...llave, ...desc, ...ed]
-  }, [def, rows])
+  }, [def, rows, pCarga])
 
   const onChange = async (e: CellValueChangedEvent) => {
     if (!def) return
@@ -129,7 +131,7 @@ export default function Config() {
         </TextField>
         <Button variant="outlined" startIcon={<Download />} onClick={descargar}>Descargar Excel</Button>
         <Box sx={{ borderLeft: '1px solid #ccc', height: 28, mx: .5 }} />
-        <TextField select size="small" label="Al cargar" value={modo} onChange={e => setModo(e.target.value as any)} sx={{ minWidth: 270 }}>
+        {pCarga && <><TextField select size="small" label="Al cargar" value={modo} onChange={e => setModo(e.target.value as any)} sx={{ minWidth: 270 }}>
           <MenuItem value="actualizar">Crear nuevos y actualizar existentes</MenuItem>
           {!def?.sin_reemplazo && <MenuItem value="reemplazar">Reemplazar todo el maestro</MenuItem>}
         </TextField>
@@ -138,10 +140,10 @@ export default function Config() {
         <Button variant="contained" startIcon={<Upload />} onClick={() => fileRef.current?.click()}>Subir Excel / CSV</Button>
         <input ref={fileRef} type="file" accept=".xlsx,.csv,.txt" hidden onChange={e => subirArchivo(e.target.files?.[0])} />
         <Button startIcon={<ContentPaste />} onClick={() => setPegar(!pegar)}>Pegar desde Excel</Button>
-        {def && !def.sin_reemplazo && <Button color="error" startIcon={<DeleteOutline />} onClick={eliminar}>Eliminar seleccionadas</Button>}
+        {def && !def.sin_reemplazo && <Button color="error" startIcon={<DeleteOutline />} onClick={eliminar}>Eliminar seleccionadas</Button>}</>}
         <Box sx={{ flex: 1 }} />
-        <Button size="small" startIcon={<CloudSync />} onClick={traerItems} title="Descripción, laboratorio y todos los criterios de items desde Siesa">Traer items de Siesa</Button>
-        <Button size="small" startIcon={<CloudSync />} onClick={traerTiendas} title="Lee de Siesa las tiendas (código y nombre)">Traer tiendas de Siesa</Button>
+        {pSync && <Button size="small" startIcon={<CloudSync />} onClick={traerItems} title="Descripción, laboratorio y todos los criterios de items desde Siesa">Traer items de Siesa</Button>}
+        {pSync && <Button size="small" startIcon={<CloudSync />} onClick={traerTiendas} title="Lee de Siesa las tiendas (código y nombre)">Traer tiendas de Siesa</Button>}
       </Paper>
       {def && (
         <Typography variant="body2" color="text.secondary">

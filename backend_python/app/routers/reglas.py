@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text
 from ..db import pg
-from ..security import usuario_actual
+from ..security import usuario_actual, requiere
 from .maestros import _puede_global
 
 router = APIRouter(prefix="/reglas", tags=["reglas"])
@@ -53,7 +53,7 @@ class Cambio(BaseModel):
 
 
 @router.put("/{clave}")
-def cambiar(clave: str, body: Cambio, user=Depends(usuario_actual)):
+def cambiar(clave: str, body: Cambio, user=Depends(requiere("editar_reglas"))):
     r = CLAVES.get(clave)
     if not r:
         raise HTTPException(404, "Regla desconocida")

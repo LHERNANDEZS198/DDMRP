@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from ..db import pg
-from ..security import usuario_actual, filtro_sql_permisos, exigir, asignaciones, nivel_efectivo, NIVELES
+from ..security import usuario_actual, filtro_sql_permisos, exigir, asignaciones, nivel_efectivo, NIVELES, requiere
 
 router = APIRouter(prefix="/maestros", tags=["maestros"])
 
@@ -109,7 +109,7 @@ def _autorizar(user, d: dict, llave: dict, conn):
 
 
 @router.get("")
-def listar_maestros(user=Depends(usuario_actual)):
+def listar_maestros(user=Depends(requiere("ver_maestros", "cargar_maestros"))):
     return [{"clave": k, "label": v["label"], "llave": v["llave"], "editable": list(v["editable"]),
              "tipos": v["editable"], "sin_reemplazo": bool(v.get("sin_reemplazo")), "todas": bool(v.get("todas"))}
             for k, v in MAESTROS.items()]
@@ -117,7 +117,7 @@ def listar_maestros(user=Depends(usuario_actual)):
 
 @router.get("/{nombre}")
 def leer(nombre: str, bodega_id: str | None = None, producto_id: str | None = None, limit: int = 20000,
-         user=Depends(usuario_actual)):
+         user=Depends(requiere("ver_maestros", "cargar_maestros"))):
     d = _def(nombre)
     cols = d["llave"] + [c for c in d["editable"] if c not in d["llave"]]
     sel = ", ".join(f"t.{c}" for c in cols)
@@ -147,7 +147,7 @@ class Cambio(BaseModel):
 
 
 @router.patch("/{nombre}")
-def editar(nombre: str, cambios: list[Cambio], user=Depends(usuario_actual)):
+def editar(nombre: str, cambios: list[Cambio], user=Depends(requiere("cargar_maestros"))):
     d = _def(nombre)
     with pg.begin() as c:
         for ch in cambios:
@@ -419,7 +419,7 @@ class Carga(BaseModel):
 
 
 @router.post("/{nombre}/carga")
-def cargar(nombre: str, body: Carga, user=Depends(usuario_actual)):
+def cargar(nombre: str, body: Carga, user=Depends(requiere("cargar_maestros"))):
     """Alta/actualizacion masiva (pegar desde Excel). Cada fila trae las columnas llave y las editables."""
     d = _def(nombre)
     return _importar(nombre, d, [{str(k).strip().lower(): v for k, v in f.items()} for f in body.filas], body.modo, user, body.omitir_invalidas)
@@ -427,7 +427,7 @@ def cargar(nombre: str, body: Carga, user=Depends(usuario_actual)):
 
 @router.post("/{nombre}/excel")
 async def subir_excel(nombre: str, archivo: UploadFile = File(...), modo: str = Query("actualizar"),
-                      omitir_invalidas: bool = Query(False), user=Depends(usuario_actual)):
+                      omitir_invalidas: bool = Query(False), user=Depends(requiere("cargar_maestros"))):
     """Carga un .xlsx / .csv. modo=actualizar: crea las filas nuevas y actualiza las existentes (solo las columnas
     que vengan en el archivo). modo=reemplazar: borra el maestro y deja exactamente lo del archivo."""
     d = _def(nombre)
@@ -438,7 +438,7 @@ async def subir_excel(nombre: str, archivo: UploadFile = File(...), modo: str = 
 
 
 @router.get("/{nombre}/excel")
-def bajar_excel(nombre: str, user=Depends(usuario_actual)):
+def bajar_excel(nombre: str, user=Depends(requiere("ver_maestros", "cargar_maestros"))):
     """Descarga lo que el usuario puede ver, con los mismos encabezados que acepta la carga (sirve de plantilla).
     Maestros por tienda: la tienda va con su codigo y su nombre (la empresa se deduce) y, si el maestro es solo por
     tienda (bitacora, centro de operacion), vienen todas las tiendas aunque aun no tengan datos."""
@@ -498,7 +498,7 @@ class Eliminar(BaseModel):
 
 
 @router.post("/{nombre}/eliminar")
-def eliminar(nombre: str, body: Eliminar, user=Depends(usuario_actual)):
+def eliminar(nombre: str, body: Eliminar, user=Depends(requiere("cargar_maestros"))):
     """Borra filas por su llave (p.ej. quitar una tienda de un DIA). No aplica a factores ni parametros."""
     d = _def(nombre)
     if d.get("sin_reemplazo") or nombre == "factores":

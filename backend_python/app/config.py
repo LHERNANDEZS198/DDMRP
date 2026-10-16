@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     auth_mysql_password: str = ""
     auth_user_query: str = ("SELECT CODIGO AS id, NOMBRE AS nombre, CLAVE AS password_hash "
                             "FROM USUARIOS WHERE CODIGO = :usuario")
+    auth_buscar_query: str = ("SELECT CODIGO AS id, NOMBRE AS nombre FROM USUARIOS "
+                              "WHERE CODIGO LIKE :q OR NOMBRE LIKE :q ORDER BY NOMBRE LIMIT 20")
     admin_bootstrap: str = ""  # CODIGOs (coma) que entran como admin de la app en el primer arranque
 
     # --- App ---

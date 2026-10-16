@@ -6,6 +6,7 @@ import Check from '@mui/icons-material/Check'
 import Download from '@mui/icons-material/Download'
 import { api, descargar } from '../api'
 import Aviso from '../Aviso'
+import { useYo } from '../Yo'
 
 const cols: ColDef[] = [
   { checkboxSelection: true, headerCheckboxSelection: true, width: 50, pinned: 'left' },
@@ -19,12 +20,13 @@ const cols: ColDef[] = [
   { field: 'unidad_despacho', headerName: 'Und. desp.', type: 'numericColumn' },
   { field: 'vectorizacion', headerName: 'Derrame', type: 'numericColumn' },
   { field: 'cantidad_sugerida', headerName: 'Sugerido', type: 'numericColumn' },
-  { field: 'cantidad_aprobada', headerName: 'A enviar', editable: true, type: 'numericColumn',
+  { field: 'cantidad_aprobada', headerName: 'A enviar', editable: (p: any) => !!p.context?.aprobar, type: 'numericColumn',
     valueGetter: p => p.data.cantidad_aprobada ?? p.data.cantidad_sugerida,
     valueSetter: p => { p.data.cantidad_aprobada = Number(p.newValue); return true } },
 ]
 
 export default function Despacho() {
+  const { puede } = useYo(); const pAprobar = puede('aprobar_despacho'); const pPlano = puede('descargar_planos')
   const [rows, setRows] = useState<any[]>([])
   const [grid, setGrid] = useState<GridApi | null>(null)
   const [msg, setMsg] = useState('')
@@ -82,18 +84,18 @@ export default function Despacho() {
         {filtrar && <Button size="small" onClick={() => { setDia(''); setFiltrar(false); setTiendas([]) }}>Ver todas</Button>}
       </Paper>
       <Paper variant="outlined" sx={{ p: 1.5, display: 'flex', flexWrap: 'wrap', gap: 1.5, alignItems: 'center' }}>
-        <Button variant="contained" startIcon={<Check />} onClick={aprobar}>Aprobar seleccionados</Button>
-        <TextField size="small" sx={{ width: 320 }} label="Nota del documento" value={notas} onChange={e => setNotas(e.target.value)}
+        {pAprobar && <Button variant="contained" startIcon={<Check />} onClick={aprobar}>Aprobar seleccionados</Button>}
+        {pPlano && <><TextField size="small" sx={{ width: 320 }} label="Nota del documento" value={notas} onChange={e => setNotas(e.target.value)}
           placeholder={`ABASTECIMIENTO DEL <dia> DE <MES>${dia ? ` DÍA ${dia}` : ''}`} />
         <TextField size="small" type="number" label="Consecutivo inicial" sx={{ width: 150 }} value={consec}
           slotProps={{ htmlInput: { min: 1 } }} onChange={e => setConsec(Number(e.target.value))} />
         <FormControlLabel control={<Checkbox size="small" checked={marcar} onChange={e => setMarcar(e.target.checked)} />} label="Marcar como enviadas" />
         <Button variant="outlined" startIcon={<Download />} onClick={plano}>Generar archivo plano Siesa</Button>
-        <Button disabled title="Fase 3">Enviar a Siesa (web service)</Button>
+        <Button disabled title="Fase 3">Enviar a Siesa (web service)</Button></>}
       </Paper>
       <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 300 }}>
         <AgGridReact rowData={rows} columnDefs={cols} rowSelection="multiple" rowBuffer={20}
-          onGridReady={e => setGrid(e.api)} defaultColDef={{ resizable: true, sortable: true }} />
+          context={{ aprobar: pAprobar }} onGridReady={e => setGrid(e.api)} defaultColDef={{ resizable: true, sortable: true }} />
       </Box>
       <Aviso msg={msg} onClose={() => setMsg('')} />
     </Box>)

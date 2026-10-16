@@ -10,6 +10,8 @@ import LocalShipping from '@mui/icons-material/LocalShipping'
 import Rule from '@mui/icons-material/Rule'
 import Insights from '@mui/icons-material/Insights'
 import Storage from '@mui/icons-material/Storage'
+import ManageAccounts from '@mui/icons-material/ManageAccounts'
+import { useYo } from './Yo'
 import { getUser, logout } from './api'
 
 export const VISTAS = [
@@ -18,14 +20,17 @@ export const VISTAS = [
   { to: '/control/tendencia', label: 'Tendencia en el tiempo', ayuda: 'Curva del buffer, inventario y flujo neto' },
 ]
 export const NAV = [
-  { to: '/control', label: 'Control DDMRP', icon: <Insights />, vistas: true },
-  { to: '/dashboard', label: 'Alertas', icon: <WarningAmber /> },
-  { to: '/despacho', label: 'Matriz de despacho', icon: <LocalShipping /> },
-  { to: '/reglas', label: 'Reglas de pedido', icon: <Rule /> },
-  { to: '/config', label: 'Maestros', icon: <Storage /> },
+  { to: '/control', label: 'Control DDMRP', icon: <Insights />, vistas: true, req: ['ver_control'] },
+  { to: '/dashboard', label: 'Alertas', icon: <WarningAmber />, req: ['ver_alertas'] },
+  { to: '/despacho', label: 'Matriz de despacho', icon: <LocalShipping />, req: ['ver_despacho'] },
+  { to: '/reglas', label: 'Reglas de pedido', icon: <Rule />, req: ['editar_reglas', 'correr_motor'] },
+  { to: '/config', label: 'Maestros', icon: <Storage />, req: ['ver_maestros', 'cargar_maestros', 'sincronizar_siesa'] },
+  { to: '/usuarios', label: 'Usuarios', icon: <ManageAccounts />, req: ['admin_usuarios'] },
 ]
 
 export default function Shell() {
+  const { yo, puede } = useYo()
+  const NAV_OK = NAV.filter(n => puede(...n.req))
   const theme = useTheme(); const movil = useMediaQuery(theme.breakpoints.down('md'))
   const [abierto, setAbierto] = useState(false); const [ancla, setAncla] = useState<HTMLElement | null>(null)
   const loc = useLocation(); const user = getUser(); const nav = useNavigate()
@@ -38,7 +43,7 @@ export default function Shell() {
           {movil && <IconButton color="inherit" edge="start" onClick={() => setAbierto(true)}><MenuIcon /></IconButton>}
           <Box component="img" src="/logo-sersa.jpeg" alt="" sx={{ height: 30, borderRadius: 1, bgcolor: 'white', p: .3 }} />
           <Typography sx={{ fontWeight: 700, mr: 2 }}>DDMRP</Typography>
-          {!movil ? NAV.map(n => (n as any).vistas ? (
+          {!movil ? NAV_OK.map(n => (n as any).vistas ? (
             <Box key={n.to}>
               <Button color="inherit" startIcon={n.icon} endIcon={<ExpandMore />} onClick={e => setAnclaV(e.currentTarget)}
                 sx={{ opacity: loc.pathname.startsWith(n.to) ? 1 : .75, borderBottom: loc.pathname.startsWith(n.to) ? '2px solid #fff' : '2px solid transparent', borderRadius: 0 }}>{n.label}</Button>
@@ -56,14 +61,14 @@ export default function Shell() {
             <Avatar sx={{ width: 32, height: 32, bgcolor: '#fff', color: 'primary.main', fontSize: 14, fontWeight: 700 }}>{(user[0] || '?').toUpperCase()}</Avatar>
           </IconButton>
           <Menu anchorEl={ancla} open={!!ancla} onClose={() => setAncla(null)}>
-            <MenuItem disabled>{user || 'Usuario'}</MenuItem><Divider />
+            <MenuItem disabled>{yo?.nombre || user || 'Usuario'} · {user}</MenuItem><Divider />
             <MenuItem onClick={logout}><ListItemIcon><LogoutIcon fontSize="small" /></ListItemIcon>Cerrar sesión</MenuItem>
           </Menu>
         </Toolbar>
       </AppBar>
       <Drawer open={abierto} onClose={() => setAbierto(false)}>
         <List sx={{ width: 250 }}>
-          {NAV.flatMap(n => (n as any).vistas ? VISTAS.map(v => ({ to: v.to, label: 'Control · ' + v.label, icon: n.icon })) : [n]).map(n => (
+          {NAV_OK.flatMap(n => (n as any).vistas ? VISTAS.map(v => ({ to: v.to, label: 'Control · ' + v.label, icon: n.icon })) : [n]).map(n => (
             <ListItemButton key={n.to} component={NavLink} to={n.to} onClick={() => setAbierto(false)} selected={loc.pathname === n.to}>
               <ListItemIcon>{n.icon}</ListItemIcon><ListItemText primary={n.label} /></ListItemButton>))}
         </List>

@@ -27,8 +27,42 @@ SENTENCIAS = [
            ALTER TABLE ddmrp.abast_control_referencias
              ALTER COLUMN cota_maxima TYPE NUMERIC(12,4), ALTER COLUMN cota_minima TYPE NUMERIC(12,4);
          END IF; END $$""",
+    """CREATE TABLE IF NOT EXISTS ddmrp.perfil (
+         perfil_id   TEXT PRIMARY KEY,
+         nombre      TEXT NOT NULL,
+         descripcion TEXT,
+         nivel       TEXT NOT NULL DEFAULT 'lectura' CHECK (nivel IN ('lectura','edicion','aprobacion')),
+         permisos    TEXT[] NOT NULL DEFAULT '{}',
+         sistema     BOOLEAN NOT NULL DEFAULT FALSE)""",
+    """CREATE TABLE IF NOT EXISTS ddmrp.usuario (
+         usuario_id  TEXT PRIMARY KEY,
+         nombre      TEXT,
+         perfil_id   TEXT REFERENCES ddmrp.perfil(perfil_id),
+         activo      BOOLEAN NOT NULL DEFAULT TRUE,
+         bodegas     TEXT[] NOT NULL DEFAULT '{}',
+         categorias  TEXT[] NOT NULL DEFAULT '{}',
+         actualizado TIMESTAMPTZ NOT NULL DEFAULT now())""",
+    """INSERT INTO ddmrp.perfil (perfil_id, nombre, descripcion, nivel, permisos, sistema) VALUES
+         ('administrador', 'Administrador', 'Todo, incluido administrar usuarios', 'aprobacion', '{admin}', true),
+         ('abastecimiento', 'Abastecimiento', 'Analiza el buffer, aprueba y descarga los planos', 'aprobacion',
+            '{ver_control,ver_alertas,ver_despacho,aprobar_despacho,descargar_planos,ver_maestros}', true),
+         ('maestros', 'Cargador de maestros', 'Carga y corrige maestros y reglas', 'edicion',
+            '{ver_control,ver_alertas,ver_maestros,cargar_maestros,editar_reglas}', true),
+         ('operador', 'Operador del motor', 'Corre ETL y motor, trae tiendas e items de Siesa', 'lectura',
+            '{ver_control,ver_alertas,ver_maestros,correr_motor,sincronizar_siesa}', true),
+         ('logistica', 'Logistica (planos)', 'Ve la matriz y descarga los planos', 'aprobacion',
+            '{ver_control,ver_alertas,ver_despacho,descargar_planos}', true),
+         ('consulta', 'Consulta', 'Solo ve el control y las alertas', 'lectura', '{ver_control,ver_alertas}', true)
+       ON CONFLICT (perfil_id) DO NOTHING""",
+    # usuarios que ya tenian filas en rbac_asignacion: se registran con un perfil equivalente (no se tocan sus filas)
+    """INSERT INTO ddmrp.usuario (usuario_id, nombre, perfil_id)
+       SELECT r.usuario_id, r.usuario_id,
+              CASE WHEN bool_or(r.es_admin) THEN 'administrador'
+                   WHEN bool_or(r.nivel::text = 'aprobacion') THEN 'abastecimiento'
+                   WHEN bool_or(r.nivel::text = 'edicion') THEN 'maestros' ELSE 'consulta' END
+       FROM ddmrp.rbac_asignacion r GROUP BY r.usuario_id
+       ON CONFLICT (usuario_id) DO NOTHING""",
 ]
-
 
 # Tablas con empresa en la llave (y el resto de la llave): una carga vieja pudo guardar "Funat"/"Stores" en vez de 05/21
 EMPRESA_EN_TABLAS = {

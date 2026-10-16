@@ -23,8 +23,50 @@ def usuario_actual(token: str = Depends(oauth2)) -> dict:
         raise HTTPException(401, "Token invalido")
 
 
+# Funciones que se pueden dar a un perfil (clave, etiqueta, grupo). 'admin' = todo.
+PERMISOS = [
+    ("ver_control", "Ver Control DDMRP (foto, cambios, tendencia)", "Consultar"),
+    ("ver_alertas", "Ver alertas de zona roja", "Consultar"),
+    ("ver_despacho", "Ver la matriz de despacho", "Despacho"),
+    ("aprobar_despacho", "Aprobar / ajustar cantidades a despachar", "Despacho"),
+    ("descargar_planos", "Descargar planos de Siesa", "Despacho"),
+    ("ver_maestros", "Ver y descargar los maestros", "Configurar"),
+    ("cargar_maestros", "Cargar / editar / eliminar en los maestros", "Configurar"),
+    ("editar_reglas", "Cambiar las reglas de pedido", "Configurar"),
+    ("correr_motor", "Correr motor, ETL y pipeline completo", "Operar"),
+    ("sincronizar_siesa", "Traer tiendas e items desde Siesa", "Operar"),
+    ("admin_usuarios", "Administrar usuarios y perfiles", "Administrar"),
+]
+CLAVES_PERMISO = [p[0] for p in PERMISOS]
+
+
+def _bootstrap(usuario_id: str) -> bool:
+    return usuario_id in {x.strip() for x in settings.admin_bootstrap.split(",") if x.strip()}
+
+
+def permisos(usuario_id: str) -> set[str]:
+    """Funciones habilitadas para el usuario segun su perfil. Admin (o ADMIN_BOOTSTRAP) = todas."""
+    if _bootstrap(usuario_id):
+        return set(CLAVES_PERMISO)
+    with pg.connect() as c:
+        r = c.execute(text("SELECT p.permisos FROM ddmrp.usuario u JOIN ddmrp.perfil p ON p.perfil_id = u.perfil_id "
+                           "WHERE u.usuario_id = :u AND u.activo"), {"u": usuario_id}).scalar()
+    p = set(r or [])
+    return set(CLAVES_PERMISO) if "admin" in p else p
+
+
+def requiere(*claves: str):
+    """Dependencia de FastAPI: deja pasar si el usuario tiene alguna de las funciones."""
+    def dep(user: dict = Depends(usuario_actual)) -> dict:
+        if not permisos(user["id"]).intersection(claves):
+            nombres = " o ".join(dict((k, l) for k, l, _ in PERMISOS)[k] for k in claves)
+            raise HTTPException(403, f"Tu perfil no tiene permiso para: {nombres}")
+        return user
+    return dep
+
+
 def asignaciones(usuario_id: str) -> list[dict]:
-    if usuario_id in {x.strip() for x in settings.admin_bootstrap.split(",") if x.strip()}:
+    if _bootstrap(usuario_id):
         return [{"bodega_id": "*", "categoria": "*", "nivel": "aprobacion", "es_admin": True}]
     with pg.connect() as c:
         r = c.execute(text("SELECT bodega_id, categoria, nivel::text AS nivel, es_admin FROM ddmrp.rbac_asignacion "

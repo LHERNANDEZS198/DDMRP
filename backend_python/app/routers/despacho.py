@@ -5,14 +5,14 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from ..db import pg
 from ..plano_siesa import co_derivado, generar_xlsx, notas_por_defecto
-from ..security import usuario_actual, filtro_sql_permisos, exigir
+from ..security import usuario_actual, filtro_sql_permisos, exigir, requiere
 
 router = APIRouter(prefix="/despacho", tags=["despacho"])
 ULTIMA = "(SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok')"
 
 
 @router.get("/dias")
-def dias(user=Depends(usuario_actual)):
+def dias(user=Depends(requiere("ver_despacho"))):
     """DIA de abastecimiento de cada tienda (maestro dias-bodega) y todas las bodegas, para armar la corrida."""
     with pg.connect() as c:
         por_dia: dict[int, list[str]] = {}
@@ -24,7 +24,7 @@ def dias(user=Depends(usuario_actual)):
 
 @router.get("/matriz")
 def matriz(bodega_id: str | None = None, bodegas: str | None = None, solo_pendientes: bool = True,
-           user=Depends(usuario_actual)):
+           user=Depends(requiere("ver_despacho"))):
     """bodegas = lista separada por comas (las tiendas elegidas para la corrida del dia)."""
     w, p = filtro_sql_permisos(user)
     f = f"s.ejecucion_id = {ULTIMA} AND s.cantidad_sugerida > 0 AND {w}"
@@ -49,7 +49,7 @@ class Aprobacion(BaseModel):
 
 
 @router.post("/aprobar")
-def aprobar(items: list[Aprobacion], user=Depends(usuario_actual)):
+def aprobar(items: list[Aprobacion], user=Depends(requiere("aprobar_despacho"))):
     with pg.begin() as c:
         for it in items:
             cat = c.execute(text("SELECT categoria FROM ddmrp.maestro_item WHERE producto_id=:p"),
@@ -75,7 +75,7 @@ class PlanoReq(BaseModel):
 
 
 @router.post("/exportar-plano")
-def exportar_plano(req: PlanoReq, user=Depends(usuario_actual)):
+def exportar_plano(req: PlanoReq, user=Depends(requiere("descargar_planos"))):
     """FASE 2: archivo plano para Siesa con las sugerencias APROBADAS (una requisicion RIT por bodega)."""
     with pg.begin() as c:
         eid = req.ejecucion_id or c.execute(text("SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok'")).scalar()
@@ -108,6 +108,6 @@ def exportar_plano(req: PlanoReq, user=Depends(usuario_actual)):
 
 
 @router.post("/enviar-siesa")
-def enviar_siesa(user=Depends(usuario_actual)):
+def enviar_siesa(user=Depends(requiere("descargar_planos"))):
     """FASE 3: envio directo por web service de Siesa."""
     raise HTTPException(501, "Pendiente: integracion web service Siesa")
