@@ -30,9 +30,12 @@ MAESTROS = {
         llave=["empresa", "bodega_id", "producto_id"], editable={"cota_maxima": "num", "cota_minima": "num"},
         bodega="bodega_id", producto="producto_id"),
     "vectorizacion": dict(
-        label="Vectorizacion (derrame)", tabla="ddmrp.abast_vectorizacion",
+        label="Vectorizacion (derrame); NxP = condenar item en esa tienda", tabla="ddmrp.abast_vectorizacion",
         llave=["empresa", "bodega_id", "producto_id"], editable={"vectorizacion": "num"},
-        bodega="bodega_id", producto="producto_id"),
+        bodega="bodega_id", producto="producto_id", nxp=True),   # NxP en vectorizacion = condenado (item x tienda): va al maestro de condenados
+    "condenados": dict(
+        label="Condenados: items que no se despachan (todas las tiendas o solo una)", tabla="ddmrp.item_condenado",
+        llave=["bodega_id", "producto_id"], editable={"motivo": "txt"}, bodega="bodega_id", producto="producto_id", todas="*"),
     "pronostico": dict(
         label="Pronostico (unidades/mes)", tabla="ddmrp.pronostico",
         llave=["empresa", "bodega_id", "producto_id"], editable={"pronostico": "num"},
@@ -108,7 +111,7 @@ def _autorizar(user, d: dict, llave: dict, conn):
 @router.get("")
 def listar_maestros(user=Depends(usuario_actual)):
     return [{"clave": k, "label": v["label"], "llave": v["llave"], "editable": list(v["editable"]),
-             "tipos": v["editable"], "sin_reemplazo": bool(v.get("sin_reemplazo"))}
+             "tipos": v["editable"], "sin_reemplazo": bool(v.get("sin_reemplazo")), "todas": bool(v.get("todas"))}
             for k, v in MAESTROS.items()]
 
 
@@ -174,6 +177,11 @@ def editar(nombre: str, cambios: list[Cambio], user=Depends(usuario_actual)):
 MAX_FILAS = 1_000_000
 
 
+TODAS = {"*", "TODAS", "TODO", "TODOS", "ALL"}
+NXP = {"nxp", "n x p", "condenado", "condenar"}
+EMPRESA_ALIAS = {"funat": "05", "stores": "21", "store": "21", "tiendas": "21"}
+
+
 def _valor_llave(col: str, v) -> str:
     """Normaliza una celda llave. Excel convierte '019901' en 19901: se recuperan los ceros."""
     if v is None:
@@ -181,6 +189,10 @@ def _valor_llave(col: str, v) -> str:
     if isinstance(v, float) and v.is_integer():
         v = int(v)
     t = str(v).strip()
+    if col == "empresa" and t and not t.isdigit():   # nombres en vez de codigo: Funat -> 05, Stores -> 21
+        t = EMPRESA_ALIAS.get(t.lower(), t)
+        if not t.isdigit():
+            raise ValueError(f"empresa {t!r} no reconocida: usa 05 (Funat) o 21 (Stores)")
     if isinstance(v, int) and col in ANCHO:
         t = t.zfill(ANCHO[col])
     return t
@@ -236,7 +248,7 @@ def _mapa_bodegas():
             sorted({r[1] for r in rows}))
 
 
-def _preparar(d: dict, filas: list[dict], omitir: bool = False, malas_out: list | None = None) -> tuple[list[str], list[dict]]:
+def _preparar(d: dict, filas: list[dict], omitir: bool = False, malas_out: list | None = None, cond_out: list | None = None) -> tuple[list[str], list[dict]]:
     """Valida y normaliza. La tienda se identifica por codigo (SV021) o por nombre y la empresa se deduce de la tienda.
     Devuelve (columnas editables presentes, filas listas)."""
     presentes = set().union(*[f.keys() for f in filas]) if filas else set()
@@ -251,8 +263,8 @@ def _preparar(d: dict, filas: list[dict], omitir: bool = False, malas_out: list 
         amigable = ([d["bodega"]] if con_bodega else []) + otras + list(d["editable"])
         raise HTTPException(400, f"Faltan columnas: {faltan}. Encabezados: {amigable}")
     cols = [c for c in d["editable"] if c in presentes]
-    if d["editable"] and not cols:
-        raise HTTPException(400, f"No hay ninguna columna a cargar. Encabezados: {list(d['editable'])}")
+    # "NxP" (condenar) en la columna vectorizacion: la referencia no se despacha a esa tienda (va al maestro de condenados)
+    es_nxp = lambda v: isinstance(v, str) and v.strip().lower() in NXP
     por_cod, por_nom, empresas = _mapa_bodegas() if ("empresa" in d["llave"] or con_bodega) else ({}, {}, [])
     malas, out = [], []
     for n, f in enumerate(filas, start=2):
@@ -261,6 +273,8 @@ def _preparar(d: dict, filas: list[dict], omitir: bool = False, malas_out: list 
             if con_bodega:
                 cod = _valor_llave("bodega_id", f.get(cod_h)) if cod_h else ""
                 hit = por_cod.get(cod.upper()) if cod else None
+                if d.get("todas") and not hit and (cod.upper() in TODAS or (not cod and not (nom_h and f.get(nom_h)))):
+                    hit = (d["todas"], None)   # el item queda condenado en todas las tiendas
                 if not hit and (cod or nom_h):
                     hit = por_nom.get(_norm(cod)) or (por_nom.get(_norm(f.get(nom_h))) if nom_h else None)
                 if not hit:
@@ -284,8 +298,14 @@ def _preparar(d: dict, filas: list[dict], omitir: bool = False, malas_out: list 
             if not all(v for k, v in llave.items() if k != "empresa"):
                 raise ValueError("llave vacia")
             fila_base = dict(llave)
+            cond_nxp = bool(d.get("nxp")) and es_nxp(f.get("vectorizacion"))
+            if cond_nxp and cond_out is not None:
+                cond_out.append((llave[d["bodega"]], llave[d["producto"]]))
             for c in cols:
                 t = d["editable"][c]
+                if cond_nxp and c == "vectorizacion":
+                    fila_base[c] = 0
+                    continue
                 fila_base[c] = _valor_num(f.get(c), t) if t in ("num", "int") else (str(f[c]).strip() if f.get(c) not in (None, "") else None)
             if "empresa" in d["llave"] and not fila_base.get("empresa"):
                 if not empresas:
@@ -341,7 +361,8 @@ def _importar_(nombre: str, d: dict, filas: list[dict], modo: str, user, omitir:
     if reemplazo and d.get("sin_reemplazo"):
         raise HTTPException(400, "Este maestro no admite reemplazo total: usa 'actualizar'")
     malas: list[str] = []
-    cols, filas = _preparar(d, filas, omitir, malas)
+    cond_nxp: list[tuple[str, str]] = []
+    cols, filas = _preparar(d, filas, omitir, malas, cond_nxp)
     if not filas:
         raise HTTPException(400, "El archivo no trae filas")
     llave, tabla = d["llave"], d["tabla"]
@@ -379,11 +400,15 @@ def _importar_(nombre: str, d: dict, filas: list[dict], modo: str, user, omitir:
             creadas = 0
         else:
             ignoradas, creadas = 0, n_unicas - existentes
+        if cond_nxp:
+            c.execute(text("INSERT INTO ddmrp.item_condenado (bodega_id, producto_id, motivo) SELECT * FROM unnest(CAST(:b AS text[]), CAST(:p AS text[]), CAST(:m AS text[])) "
+                           "ON CONFLICT (producto_id, bodega_id) DO NOTHING"),
+                      {"b": [x[0] for x in cond_nxp], "p": [x[1] for x in cond_nxp], "m": ["NxP (carga de vectorizacion)"] * len(cond_nxp)})
         c.execute(text("INSERT INTO ddmrp.config_audit (tabla, llave, campo, valor_anterior, valor_nuevo, usuario) "
                        "VALUES (:t, '*', :m, NULL, :n, :u)"),
                   {"t": nombre, "m": "carga_" + modo, "n": f"{len(filas)} filas ({creadas} nuevas)", "u": user["nombre"]})
     return {"ok": True, "modo": modo, "filas": len(filas), "unicas": n_unicas, "creadas": creadas,
-            "actualizadas": 0 if reemplazo else existentes, "ignoradas": ignoradas,
+            "actualizadas": 0 if reemplazo else existentes, "ignoradas": ignoradas, "condenados_nxp": len(cond_nxp),
             "omitidas": len(malas), "ejemplos_omitidas": malas[:5]}
 
 

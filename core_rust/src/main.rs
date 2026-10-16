@@ -47,6 +47,7 @@ SELECT b.empresa, k.bodega_id, k.producto_id,
   COALESCE(c.cota_minima, 0)::float8       AS cota_min,
   COALESCE(pr.indicativo, 0)::int2         AS promo,
   COALESCE(ve.vectorizacion, 0)::float8    AS vectorizacion,
+  (EXISTS (SELECT 1 FROM ddmrp.item_condenado cd WHERE cd.producto_id = k.producto_id AND cd.bodega_id IN (k.bodega_id, '*')))::int::int2 AS condenado,
   COALESCE(i.disponible, 0)::float8        AS inventario,
   COALESCE(t.cant, 0)::float8              AS en_transito,
   COALESCE(d.cantidad, 0)::float8          AS demanda_calificada
@@ -134,8 +135,8 @@ fn main() -> Result<()> {
     let factores = leer_factores(&mut client)?;
     let params = leer_parametros(&mut client)?;
 
-    let items: Vec<Entrada> = client
-        .query(SQL_ENTRADA, &[&fecha])?
+    let rows = client.query(SQL_ENTRADA, &[&fecha])?;
+    let items: Vec<Entrada> = rows
         .iter()
         .map(|r| Entrada {
             empresa: r.get("empresa"),
@@ -160,25 +161,30 @@ fn main() -> Result<()> {
         bail!("no hay combinaciones bodega/producto para calcular (ventas_mensual / abast_bitacora vacias?)");
     }
 
-    let res = calcular_lote(&items, &factores, &params);
+    let condenado: Vec<bool> = rows.iter().map(|r| r.get::<_, i16>("condenado") != 0).collect();
+    let mut res = calcular_lote(&items, &factores, &params);
+    // NxP (condenado): se calcula el buffer pero no se despacha nada
+    for (r, c) in res.iter_mut().zip(&condenado) {
+        if *c { r.cantidad_sugerida = 0.0; }
+    }
 
     // Escritura masiva via COPY (CSV); los ids son texto sin comas, se entrecomillan por seguridad.
     let q = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
     let mut w = client.copy_in(
         "COPY ddmrp.sugerencias_envio (ejecucion_id, fecha_calculo, empresa, bodega_id, producto_id, adu, iv, forecast, \
          lead_time, frecuencia, unidad_despacho, zrb, zrs, za, zv, tor, toy, tog, toy_aj, tog_aj, inventario, en_transito, \
-         demanda_calificada, flujo_neto, pct_buffer, zona, vectorizacion, cantidad_sugerida) FROM STDIN WITH (FORMAT csv)",
+         demanda_calificada, flujo_neto, pct_buffer, zona, vectorizacion, cantidad_sugerida, condenado) FROM STDIN WITH (FORMAT csv)",
     )?;
-    for r in &res {
+    for (i, r) in res.iter().enumerate() {
         let z = &r.zonas;
         writeln!(
             w,
-            "{},{},{},{},{},{:.2},{:.4},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.3},{:.3},{:.3},{:.3},{:.2},{},{:.2},{:.3}",
+            "{},{},{},{},{},{:.2},{:.4},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.3},{:.3},{:.3},{:.3},{:.2},{},{:.2},{:.3},{}",
             ejecucion_id, fecha, q(&r.empresa), q(&r.bodega_id), q(&r.producto_id),
             num(r.adu), num(r.iv), num(r.forecast), r.lead_time, r.frecuencia, r.unidad_despacho,
             z.zrb, z.zrs, z.za, z.zv, z.tor, z.toy, z.tog, r.toy_aj, r.tog_aj,
             r.inventario, r.en_transito, r.demanda_calificada, r.flujo_neto, num(r.pct_buffer),
-            r.zona.as_db(), r.vectorizacion, r.cantidad_sugerida
+            r.zona.as_db(), r.vectorizacion, r.cantidad_sugerida, condenado[i]
         )?;
     }
     w.finish()?;

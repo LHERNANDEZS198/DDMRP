@@ -59,6 +59,16 @@ JOIN t106_mc_criterios_item_mayores m ON m.f106_id_plan = c.f125_id_plan AND m.f
 WHERE c.f125_id_plan = :plan AND i.f120_id_cia = :cia AND i.f120_referencia IS NOT NULL
 GROUP BY i.f120_referencia"""
 
+# Todos los criterios de items (cada plan de criterios tiene un criterio mayor por item): linea, marca, categoria, etc.
+SQL_ITEM_CRITERIOS = """SELECT DISTINCT RTRIM(i.f120_referencia), RTRIM(c.f125_id_plan), RTRIM(c.f125_id_criterio_mayor)
+FROM t120_mc_items i
+JOIN t125_mc_items_criterios c ON c.f125_rowid_item = i.f120_rowid AND c.f125_id_cia = i.f120_id_cia
+WHERE i.f120_id_cia = :cia AND i.f120_referencia IS NOT NULL AND RTRIM(i.f120_referencia) <> ''
+  AND c.f125_id_criterio_mayor IS NOT NULL"""
+SQL_PLANES_NOMBRES = "SELECT RTRIM(f105_id), RTRIM(f105_descripcion) FROM t105_mc_criterios_item_planes WHERE f105_id_cia = :cia"
+SQL_CRITERIOS_NOMBRES = """SELECT RTRIM(f106_id_plan), RTRIM(f106_id), RTRIM(f106_descripcion) FROM t106_mc_criterios_item_mayores
+WHERE f106_id_cia = :cia"""
+
 # Nombre de cada laboratorio (criterio mayor del mismo plan)
 SQL_LAB_NOMBRES = """SELECT RTRIM(f106_id), MAX(RTRIM(f106_descripcion)) FROM t106_mc_criterios_item_mayores
 WHERE f106_id_plan = :plan AND f106_id_cia = :cia GROUP BY f106_id"""
@@ -156,6 +166,71 @@ def sincronizar_bodegas_ahora() -> int:
         raw.close()
 
 
+def _items_de_siesa(cur, eng, primera: bool = True) -> dict:
+    """Descripcion, laboratorio (plan 006) y TODOS los criterios de items de una base de Siesa.
+    Primero se lee todo del origen y solo despues se escribe, para que un fallo de Siesa no deje la tabla a medias.
+    Si hay dos bases (Funat y Stores), la primera manda y la segunda solo agrega lo que falte."""
+    prm = {"cia": settings.siesa_cia}
+    items = list(_stream(eng, SQL_ITEMS, prm))
+    labs = list(_stream(eng, SQL_LAB, {**prm, "plan": settings.siesa_plan_laboratorio}))
+    crit = list(_stream(eng, SQL_ITEM_CRITERIOS, prm))
+    permitidos = {p.strip() for p in settings.siesa_planes_items.split(",") if p.strip()}
+    if permitidos:
+        crit = [c for c in crit if c[1] in permitidos]
+    nombres_lab, nombres_plan, nombres_crit = [], [], []
+    for sql, destino, aviso in ((SQL_LAB_NOMBRES, nombres_lab, "laboratorios"), (SQL_PLANES_NOMBRES, nombres_plan, "planes"),
+                                (SQL_CRITERIOS_NOMBRES, nombres_crit, "criterios")):
+        try:   # los nombres son un adorno: si la consulta falla no se pierde lo demas
+            destino.extend(_stream(eng, sql, {**prm, "plan": settings.siesa_plan_laboratorio}))
+        except Exception as e:
+            log.warning("Nombres de %s no leidos: %s", aviso, e)
+    cur.execute("CREATE TEMP TABLE IF NOT EXISTS stg_items (producto_id text, descripcion text)")
+    cur.execute("TRUNCATE stg_items")
+    with cur.copy("COPY stg_items FROM STDIN") as cp:
+        for x in items:
+            cp.write_row(x)
+    cur.execute("""INSERT INTO ddmrp.maestro_item (producto_id, descripcion)
+                   SELECT producto_id, COALESCE(descripcion, producto_id) FROM stg_items
+                   ON CONFLICT (producto_id) DO UPDATE SET descripcion = EXCLUDED.descripcion, actualizado = now()""")
+    cur.execute("DROP TABLE stg_items")
+    cur.executemany("UPDATE ddmrp.maestro_item SET categoria = %s WHERE producto_id = %s", [(l, p) for p, l in labs])
+    for cod, nom in nombres_lab:
+        cur.execute("INSERT INTO ddmrp.laboratorio (codigo, nombre) VALUES (%s, %s) "
+                    "ON CONFLICT (codigo) DO UPDATE SET nombre = EXCLUDED.nombre", (cod, nom))
+    if primera and crit:
+        cur.execute("TRUNCATE ddmrp.item_criterio")
+    resolver = "DO UPDATE SET criterio_id = EXCLUDED.criterio_id" if primera else "DO NOTHING"
+    cur.executemany(f"INSERT INTO ddmrp.item_criterio (producto_id, plan_id, criterio_id) VALUES (%s, %s, %s) "
+                    f"ON CONFLICT (producto_id, plan_id) {resolver}", crit)
+    for pid, nom in nombres_plan:
+        cur.execute("INSERT INTO ddmrp.criterio_plan (plan_id, nombre) VALUES (%s, %s) "
+                    "ON CONFLICT (plan_id) DO UPDATE SET nombre = EXCLUDED.nombre", (pid, nom))
+    for pid, cid, nom in nombres_crit:
+        cur.execute("INSERT INTO ddmrp.criterio (plan_id, criterio_id, nombre) VALUES (%s, %s, %s) "
+                    "ON CONFLICT (plan_id, criterio_id) DO UPDATE SET nombre = EXCLUDED.nombre", (pid, cid, nom))
+    return {"items": len(items), "con_laboratorio": len(labs), "criterios": len(crit), "planes": len({c[1] for c in crit})}
+
+
+def sincronizar_items_ahora() -> dict:
+    """Boton "Traer items de Siesa": las dos bases (Funat y Stores) sin correr el ETL completo."""
+    if not settings.siesa_host:
+        raise RuntimeError("Siesa no esta configurado (SIESA_HOST)")
+    out: dict = {}
+    raw = pg.raw_connection()
+    try:
+        with raw.cursor() as cur:
+            for empresa, db in (("05", settings.siesa_db), ("21", settings.siesa_db_s)):
+                if db:
+                    out[empresa] = _items_de_siesa(cur, siesa_engine(db), primera=(empresa == "05"))
+        raw.commit()
+        return out
+    except Exception:
+        raw.rollback()
+        raise
+    finally:
+        raw.close()
+
+
 def correr_etl() -> dict:
     res: dict = {}
     raw = pg.raw_connection()
@@ -203,26 +278,8 @@ def correr_etl() -> dict:
                             cp.write_row(r); n += 1
                     res[f"ventas_{empresa}"] = n
                     ventas_ok += bodegas
-                try:  # descripciones y centro de operacion: utiles pero no criticos
-                    filas = list(_stream(eng, SQL_ITEMS, {"cia": settings.siesa_cia}))
-                    cur.execute("CREATE TEMP TABLE stg_items (producto_id text, descripcion text) ON COMMIT DROP")
-                    with cur.copy("COPY stg_items FROM STDIN") as cp:
-                        for r in filas:
-                            cp.write_row(r)
-                    cur.execute("""INSERT INTO ddmrp.maestro_item (producto_id, descripcion)
-                                   SELECT producto_id, COALESCE(descripcion, producto_id) FROM stg_items
-                                   ON CONFLICT (producto_id) DO UPDATE SET descripcion = EXCLUDED.descripcion, actualizado = now()""")
-                    cur.execute("DROP TABLE stg_items")
-                    labs = list(_stream(eng, SQL_LAB, {"cia": settings.siesa_cia, "plan": settings.siesa_plan_laboratorio}))
-                    cur.executemany("UPDATE ddmrp.maestro_item SET categoria = %s WHERE producto_id = %s", [(l, r) for r, l in labs])
-                    try:   # los nombres son un adorno: si la consulta falla no se pierde el laboratorio de cada item
-                        for cod, nom in _stream(eng, SQL_LAB_NOMBRES, {"cia": settings.siesa_cia, "plan": settings.siesa_plan_laboratorio}):
-                            cur.execute("INSERT INTO ddmrp.laboratorio (codigo, nombre) VALUES (%s, %s) "
-                                        "ON CONFLICT (codigo) DO UPDATE SET nombre = EXCLUDED.nombre", (cod, nom))
-                    except Exception as e2:
-                        if isinstance(e2, psycopg.Error):
-                            raise
-                        log.warning("Nombres de laboratorio no actualizados: %s", e2)
+                try:  # descripciones, laboratorio, criterios y centro de operacion: utiles pero no criticos
+                    res[f"items_{empresa}"] = _items_de_siesa(cur, eng, primera=(empresa == "05"))
                     for b, co in _stream(eng, SQL_CO, prm, expanding="bodegas"):
                         cur.execute("INSERT INTO ddmrp.bodega_centro_operacion (bodega_id, id_co) VALUES (%s, %s) "
                                     "ON CONFLICT (bodega_id) DO UPDATE SET id_co = EXCLUDED.id_co", (b, co))

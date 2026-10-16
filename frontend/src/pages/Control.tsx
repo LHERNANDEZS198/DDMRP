@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AgGridReact } from 'ag-grid-react'
 import { ColDef, ICellRendererParams } from 'ag-grid-community'
-import { Autocomplete, Box, Button, Card, CardActionArea, Chip, Paper, Tab, Tabs, TextField, Tooltip, Typography } from '@mui/material'
+import { Autocomplete, Box, Button, Card, CardActionArea, Chip, MenuItem, Paper, Tab, Tabs, TextField, Tooltip, Typography } from '@mui/material'
 import { useLocation } from 'react-router-dom'
 import { BufferTrend, ZonaShare, Punto } from '../TrendCharts'
 import { api } from '../api'
@@ -10,13 +10,13 @@ const COLOR: Record<string, string> = { ROJA: '#c62828', AMARILLA: '#f9a825', VE
 const ZONAS = ['ROJA', 'AMARILLA', 'VERDE', 'EXCESO']
 const KEY: Record<string, string> = { ROJA: 'roja', AMARILLA: 'amarilla', VERDE: 'verde', EXCESO: 'exceso' }
 const NIVELES = [
-  { k: 'empresa', label: 'Empresa' }, { k: 'bodega', label: 'Tienda' }, { k: 'laboratorio', label: 'Laboratorio' },
+  { k: 'empresa', label: 'Empresa' }, { k: 'bodega', label: 'Tienda' }, { k: 'laboratorio', label: 'Laboratorio' }, { k: 'criterio', label: 'Criterio de items' },
   { k: 'item', label: 'Item' }, { k: 'detalle', label: 'Tienda × item' },
 ] as const
 type Nivel = typeof NIVELES[number]['k']
-const SIGUIENTE: Record<Nivel, Nivel> = { empresa: 'bodega', bodega: 'laboratorio', laboratorio: 'item', item: 'detalle', detalle: 'detalle' }
-type F = { empresa: string[]; bodegas: string[]; labs: string[]; q: string; zonas: string[]; dia: string }
-const VACIO: F = { empresa: [], bodegas: [], labs: [], q: '', zonas: [], dia: '' }
+const SIGUIENTE: Record<Nivel, Nivel> = { empresa: 'bodega', bodega: 'laboratorio', laboratorio: 'item', criterio: 'item', item: 'detalle', detalle: 'detalle' }
+type F = { empresa: string[]; bodegas: string[]; labs: string[]; q: string; zonas: string[]; dia: string; plan: string; crit: string[] }
+const VACIO: F = { empresa: [], bodegas: [], labs: [], q: '', zonas: [], dia: '', plan: '', crit: [] }
 
 const qs = (f: F, sinZonas = false) => {
   const p = new URLSearchParams()
@@ -26,6 +26,7 @@ const qs = (f: F, sinZonas = false) => {
   if (f.q.trim()) p.set('q', f.q.trim())
   if (!sinZonas && f.zonas.length) p.set('zonas', f.zonas.join(','))
   if (f.dia) p.set('dia', f.dia)
+  if (f.plan && f.crit.length) p.set('crit', f.crit.map(v => `${f.plan}:${v}`).join(','))
   return p
 }
 
@@ -101,7 +102,7 @@ export default function Control() {
   const [f, setF] = useState<F>(VACIO)
   const [qTxt, setQTxt] = useState('')
   const [nivel, setNivel] = useState<Nivel>('empresa')
-  const [opc, setOpc] = useState<any>({ tiendas: [], laboratorios: [], dias: [], empresas: [], ejecucion: null })
+  const [opc, setOpc] = useState<any>({ tiendas: [], laboratorios: [], dias: [], empresas: [], criterios: [], ejecucion: null })
   const [kpi, setKpi] = useState<any>(null)
   const [grupos, setGrupos] = useState<any[]>([])
   const [det, setDet] = useState<{ filas: any[]; total: number; truncado: boolean }>({ filas: [], total: 0, truncado: false })
@@ -121,7 +122,7 @@ export default function Control() {
       return () => { vivo = false }
     }
     const base = cambiosModo ? '/control/cambios' : '/control/resumen'
-    const extra = cambiosModo ? '&' + per : ''
+    const extra = (cambiosModo ? '&' + per : '') + (nivel === 'criterio' ? '&plan=' + encodeURIComponent(f.plan || opc.criterios?.[0]?.plan_id || '') : '')
     api(`${base}?agrupar=empresa&${qs(f, true)}${extra}`).then(r => { if (!vivo) return; setKpi(r.total); if (cambiosModo) { setPeriodo(r.periodo); setMatriz(r.matriz) } })
       .catch(e => vivo && setErr(e.message))
     const p = nivel === 'detalle'
@@ -129,13 +130,15 @@ export default function Control() {
       : api(`${base}?agrupar=${nivel}&${qs(f)}${extra}`).then(r => vivo && setGrupos(r.grupos))
     p.catch(e => vivo && setErr(e.message)).finally(() => vivo && setCargando(false))
     return () => { vivo = false }
-  }, [clave, nivel, cambiosModo, tendModo, desde, hasta, mov])
+  }, [clave, f.plan, opc.criterios, nivel, cambiosModo, tendModo, desde, hasta, mov])
 
   const total = (cambiosModo ? kpi?.n_fin : kpi?.n) || 1
+  const planNombre = (p: string) => opc.criterios?.find((x: any) => x.plan_id === p)?.nombre ?? p
+  const critNombre = (p: string, v: string) => opc.criterios?.find((x: any) => x.plan_id === p)?.valores.find((y: any) => y.id === v)?.nombre ?? v
   const nombreTienda = (id: string) => opc.tiendas.find((t: any) => t.bodega_id === id)?.nombre
   const entrar = (clave: string) => {   // zoom in: aplica el filtro del grupo y baja un nivel
     setF(x => nivel === 'empresa' ? { ...x, empresa: [clave] } : nivel === 'bodega' ? { ...x, bodegas: [clave] }
-      : nivel === 'laboratorio' ? { ...x, labs: [clave] } : nivel === 'item' ? { ...x, q: clave } : x)
+      : nivel === 'laboratorio' ? { ...x, labs: [clave] } : nivel === 'criterio' ? { ...x, plan: x.plan || opc.criterios?.[0]?.plan_id || '', crit: [clave] } : nivel === 'item' ? { ...x, q: clave } : x)
     if (nivel === 'item') setQTxt(clave)
     setNivel(SIGUIENTE[nivel])
   }
@@ -143,7 +146,7 @@ export default function Control() {
     setF(x => ({ ...x, [k]: Array.isArray(x[k]) ? (x[k] as string[]).filter(y => y !== v) : '' }))
     if (k === 'q') setQTxt('')
   }
-  const hayFiltros = f.empresa.length + f.bodegas.length + f.labs.length + f.zonas.length > 0 || !!f.q || !!f.dia
+  const hayFiltros = f.empresa.length + f.bodegas.length + f.labs.length + f.zonas.length + f.crit.length > 0 || !!f.q || !!f.dia
 
   const colsGrupo: ColDef[] = useMemo(() => [
     { field: 'clave', headerName: NIVELES.find(n => n.k === nivel)?.label, width: 130, pinned: 'left' },
@@ -198,6 +201,7 @@ export default function Control() {
     { field: 'flujo_neto', headerName: 'Flujo neto', type: 'numericColumn', width: 105 },
     { field: 'adu', headerName: 'ADU', type: 'numericColumn', width: 90 },
     { field: 'cantidad_sugerida', headerName: 'Sugerido', type: 'numericColumn', width: 100 },
+    { field: 'condenado', headerName: 'Condenado', width: 110, cellRenderer: (p: ICellRendererParams) => p.value ? <Chip size="small" label="NxP" sx={{ height: 20, fontSize: 11, bgcolor: '#424242', color: '#fff' }} /> : '' },
   ]
 
   return (
@@ -238,6 +242,17 @@ export default function Control() {
         <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 240, flex: '2 1 240px' }} options={opc.laboratorios.map((l: any) => l.codigo)} value={f.labs}
           getOptionLabel={(o: string) => { const l = opc.laboratorios.find((x: any) => x.codigo === o); return l?.nombre ? `${o} · ${l.nombre}` : o }}
           onChange={(_, v) => setF(x => ({ ...x, labs: v }))} renderInput={p => <TextField {...p} label="Laboratorio" />} />
+        {opc.criterios?.length > 0 && <>
+          <TextField select size="small" label="Criterio de items" value={f.plan} onChange={e => setF(x => ({ ...x, plan: e.target.value, crit: [] }))} sx={{ minWidth: 190, flex: '1 1 190px' }}
+            slotProps={{ select: { displayEmpty: true }, inputLabel: { shrink: true } }}>
+            <MenuItem value="">(elige un criterio)</MenuItem>
+            {opc.criterios.map((p: any) => <MenuItem key={p.plan_id} value={p.plan_id}>{p.nombre}</MenuItem>)}
+          </TextField>
+          {f.plan && <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 220, flex: '2 1 220px' }}
+            options={(opc.criterios.find((p: any) => p.plan_id === f.plan)?.valores ?? []).map((v: any) => v.id)} value={f.crit}
+            getOptionLabel={(o: string) => critNombre(f.plan, o)} onChange={(_, v) => setF(x => ({ ...x, crit: v }))}
+            renderInput={p => <TextField {...p} label="Valores" />} />}
+        </>}
         <TextField size="small" label="Item (código o nombre)" value={qTxt} onChange={e => setQTxt(e.target.value)} sx={{ minWidth: 200, flex: '1 1 200px' }} />
         <TextField select size="small" label="DIA" value={f.dia} onChange={e => setF(x => ({ ...x, dia: e.target.value }))} sx={{ width: 100 }}
           slotProps={{ select: { native: true }, inputLabel: { shrink: true } }}>
@@ -277,6 +292,8 @@ export default function Control() {
           {f.empresa.map(v => <Chip key={'e' + v} size="small" color="primary" label={`Empresa ${v}`} onDelete={() => quitar('empresa', v)} />)}
           {f.bodegas.map(v => <Chip key={'b' + v} size="small" color="primary" label={`Tienda ${v}`} onDelete={() => quitar('bodegas', v)} />)}
           {f.labs.map(v => <Chip key={'l' + v} size="small" color="primary" label={`Lab ${v}`} onDelete={() => quitar('labs', v)} />)}
+          {f.crit.map(v => <Chip key={'c' + v} size="small" color="primary" label={`${planNombre(f.plan)}: ${critNombre(f.plan, v)}`} onDelete={() => quitar('crit', v)} />)}
+        {f.crit.map(v => <Chip key={'c' + v} size="small" color="primary" label={`${planNombre(f.plan)}: ${critNombre(f.plan, v)}`} onDelete={() => quitar('crit', v)} />)}
           {f.q && <Chip size="small" color="primary" label={`Item “${f.q}”`} onDelete={() => quitar('q')} />}
         </Box>)}
       {tendModo && (
@@ -294,6 +311,7 @@ export default function Control() {
         {f.empresa.map(v => <Chip key={'e' + v} size="small" color="primary" label={`Empresa ${v}`} onDelete={() => quitar('empresa', v)} />)}
         {f.bodegas.map(v => <Chip key={'b' + v} size="small" color="primary" label={`Tienda ${v}`} onDelete={() => quitar('bodegas', v)} />)}
         {f.labs.map(v => <Chip key={'l' + v} size="small" color="primary" label={`Lab ${v}`} onDelete={() => quitar('labs', v)} />)}
+        {f.crit.map(v => <Chip key={'c' + v} size="small" color="primary" label={`${planNombre(f.plan)}: ${critNombre(f.plan, v)}`} onDelete={() => quitar('crit', v)} />)}
         {f.zonas.map(v => <Chip key={'z' + v} size="small" sx={{ bgcolor: COLOR[v], color: '#fff' }} label={v} onDelete={() => quitar('zonas', v)} />)}
         {f.q && <Chip size="small" color="primary" label={`Item “${f.q}”`} onDelete={() => quitar('q')} />}
         {f.dia && <Chip size="small" color="primary" label={`DIA ${f.dia}`} onDelete={() => quitar('dia')} />}

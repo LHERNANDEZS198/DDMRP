@@ -6,6 +6,12 @@ from .db import pg
 log = logging.getLogger("esquema")
 
 SENTENCIAS = [
+    "CREATE TABLE IF NOT EXISTS ddmrp.criterio_plan (plan_id TEXT PRIMARY KEY, nombre TEXT)",
+    "CREATE TABLE IF NOT EXISTS ddmrp.criterio (plan_id TEXT NOT NULL, criterio_id TEXT NOT NULL, nombre TEXT, PRIMARY KEY (plan_id, criterio_id))",
+    "CREATE TABLE IF NOT EXISTS ddmrp.item_criterio (producto_id TEXT NOT NULL, plan_id TEXT NOT NULL, criterio_id TEXT NOT NULL, PRIMARY KEY (producto_id, plan_id))",
+    "CREATE INDEX IF NOT EXISTS idx_itemcrit_plan ON ddmrp.item_criterio (plan_id, criterio_id)",
+    "CREATE TABLE IF NOT EXISTS ddmrp.item_condenado (producto_id TEXT NOT NULL, bodega_id TEXT NOT NULL DEFAULT '*', motivo TEXT, PRIMARY KEY (producto_id, bodega_id))",
+    "ALTER TABLE ddmrp.sugerencias_envio ADD COLUMN IF NOT EXISTS condenado BOOLEAN NOT NULL DEFAULT false",
     """CREATE TABLE IF NOT EXISTS ddmrp.buffer_historia (   -- foto diaria liviana: sirve a "cambios en un periodo" y a la tendencia
          fecha DATE NOT NULL, empresa TEXT NOT NULL, bodega_id TEXT NOT NULL, producto_id TEXT NOT NULL,
          zona ddmrp.zona_buffer NOT NULL, tor REAL, toy_aj REAL, tog_aj REAL, inventario REAL, flujo_neto REAL, pct_buffer REAL,

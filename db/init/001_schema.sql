@@ -201,6 +201,7 @@ CREATE TABLE sugerencias_envio (
   zona           zona_buffer NOT NULL,
   vectorizacion  NUMERIC(14,2) NOT NULL DEFAULT 0,
   cantidad_sugerida NUMERIC(14,3) NOT NULL,
+  condenado      BOOLEAN NOT NULL DEFAULT false,  -- NxP: se calcula el buffer pero no se despacha
   cantidad_aprobada NUMERIC(14,3),
   estado         estado_sugerencia NOT NULL DEFAULT 'PENDIENTE',
   aprobado_por   TEXT,

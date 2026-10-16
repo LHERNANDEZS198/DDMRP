@@ -10,7 +10,7 @@ import CloudSync from '@mui/icons-material/CloudSync'
 import { api, bajar, subir } from '../api'
 import Aviso from '../Aviso'
 
-type Def = { clave: string; label: string; llave: string[]; editable: string[]; tipos: Record<string, string>; sin_reemplazo: boolean }
+type Def = { todas?: boolean; clave: string; label: string; llave: string[]; editable: string[]; tipos: Record<string, string>; sin_reemplazo: boolean }
 
 // Pega filas desde Excel (con encabezados). Separador: tab, ; o coma.
 function parsear(txt: string): Record<string, string>[] {
@@ -100,6 +100,15 @@ export default function Config() {
     try { setMsg('Trayendo las tiendas de Siesa…'); const r = await api('/admin/sincronizar-bodegas', { method: 'POST' }); setMsg(`Tiendas sincronizadas: ${r.tiendas}`) }
     catch (x: any) { setMsg('Error: ' + x.message) }
   }
+  const traerItems = async () => {
+    try {
+      setMsg('Trayendo los items de Siesa con todos sus criterios… puede tardar un par de minutos')
+      const r = await api('/admin/sincronizar-items', { method: 'POST' })
+      const a = r['05'] ?? r['21'] ?? {}
+      setMsg(`Items traídos de Siesa: ${a.items ?? 0} items · ${a.criterios ?? 0} asignaciones de criterio en ${a.planes ?? 0} criterios`)
+      if (sel === 'items') cargar()
+    } catch (x: any) { setMsg('Error: ' + x.message) }
+  }
   const eliminar = async () => {
     const s = grid?.getSelectedRows() ?? []
     if (!def || !s.length) { setMsg('Selecciona filas para eliminar'); return }
@@ -131,12 +140,13 @@ export default function Config() {
         <Button startIcon={<ContentPaste />} onClick={() => setPegar(!pegar)}>Pegar desde Excel</Button>
         {def && !def.sin_reemplazo && <Button color="error" startIcon={<DeleteOutline />} onClick={eliminar}>Eliminar seleccionadas</Button>}
         <Box sx={{ flex: 1 }} />
+        <Button size="small" startIcon={<CloudSync />} onClick={traerItems} title="Descripción, laboratorio y todos los criterios de items desde Siesa">Traer items de Siesa</Button>
         <Button size="small" startIcon={<CloudSync />} onClick={traerTiendas} title="Lee de Siesa las tiendas (código y nombre)">Traer tiendas de Siesa</Button>
       </Paper>
       {def && (
         <Typography variant="body2" color="text.secondary">
           “Descargar Excel” te da la plantilla con los datos actuales. La tienda se identifica por código de Siesa (ej. SV021) y la empresa se deduce sola.
-          Las referencias van como texto de 6 dígitos. Columnas a cargar:{' '}
+          Las referencias van como texto de 6 dígitos.{def.todas ? ' Para condenar el item en todas las tiendas deja la tienda vacía o escribe *.' : ''} Columnas a cargar:{' '}
           {def.editable.length ? def.editable.map(c => <Chip key={c} size="small" label={c} sx={{ mr: .5 }} />) : '(solo existencia de la fila)'}
         </Typography>)}
       {pegar && def && (

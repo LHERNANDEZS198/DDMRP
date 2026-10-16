@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     siesa_db_s: str = ""      # empresa '21' (Store); vacio = no se consulta
     siesa_cia: int = 1        # f120_id_cia
     siesa_grupo_bodegas_tienda: str = "025"   # grupo de bodegas (t152) que son tiendas
+    siesa_planes_items: str = ""   # planes de criterios de items que se importan (coma); vacio = todos
     siesa_plan_laboratorio: str = "006"   # plan de criterios de items que define el laboratorio
     siesa_user: str = ""
     siesa_password: str = ""
