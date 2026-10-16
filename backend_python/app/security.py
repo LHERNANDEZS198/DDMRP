@@ -27,6 +27,7 @@ def usuario_actual(token: str = Depends(oauth2)) -> dict:
 PERMISOS = [
     ("ver_control", "Ver Control DDMRP (foto, cambios, tendencia)", "Consultar"),
     ("ver_alertas", "Ver alertas de zona roja", "Consultar"),
+    ("ver_auditoria", "Auditar el cálculo y descargarlo a Excel con fórmulas", "Consultar"),
     ("ver_despacho", "Ver la matriz de despacho", "Despacho"),
     ("aprobar_despacho", "Aprobar / ajustar cantidades a despachar", "Despacho"),
     ("descargar_planos", "Descargar planos de Siesa", "Despacho"),

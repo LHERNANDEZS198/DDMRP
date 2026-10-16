@@ -11,6 +11,7 @@ import Despacho from './pages/Despacho'
 import Reglas from './pages/Reglas'
 import Usuarios from './pages/Usuarios'
 import Log from './pages/Log'
+import Auditoria from './pages/Auditoria'
 import { Yo, YoCtx, useYo } from './Yo'
 
 /** Pantallas y la función que las habilita (basta una). Se usa también en el menú. */
@@ -18,6 +19,7 @@ export const PANTALLAS = [
   { to: '/control', req: ['ver_control'] },
   { to: '/dashboard', req: ['ver_alertas'] },
   { to: '/despacho', req: ['ver_despacho'] },
+  { to: '/auditoria', req: ['ver_auditoria'] },
   { to: '/reglas', req: ['editar_reglas', 'correr_motor'] },
   { to: '/config', req: ['ver_maestros', 'cargar_maestros', 'sincronizar_siesa'] },
   { to: '/usuarios', req: ['admin_usuarios'] },
@@ -60,6 +62,7 @@ export default function App() {
           <Route path="/reglas" element={<Req to="/reglas"><Reglas /></Req>} />
           <Route path="/config" element={<Req to="/config"><Config /></Req>} />
           <Route path="/usuarios" element={<Req to="/usuarios"><Usuarios /></Req>} />
+          <Route path="/auditoria" element={<Req to="/auditoria"><Auditoria /></Req>} />
           <Route path="/log" element={<Req to="/log"><Log /></Req>} />
           <Route path="*" element={<Inicio />} />
         </Route>

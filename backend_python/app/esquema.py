@@ -63,7 +63,7 @@ SENTENCIAS = [
     """INSERT INTO ddmrp.perfil (perfil_id, nombre, descripcion, nivel, permisos, sistema) VALUES
          ('administrador', 'Administrador', 'Todo, incluido administrar usuarios', 'aprobacion', '{admin}', true),
          ('abastecimiento', 'Abastecimiento', 'Analiza el buffer, aprueba y descarga los planos', 'aprobacion',
-            '{ver_control,ver_alertas,ver_despacho,aprobar_despacho,descargar_planos,ver_maestros}', true),
+            '{ver_control,ver_alertas,ver_despacho,aprobar_despacho,descargar_planos,ver_maestros,ver_auditoria}', true),
          ('maestros', 'Cargador de maestros', 'Carga y corrige maestros y reglas', 'edicion',
             '{ver_control,ver_alertas,ver_maestros,cargar_maestros,editar_reglas}', true),
          ('operador', 'Operador del motor', 'Corre ETL y motor, trae tiendas e items de Siesa', 'lectura',

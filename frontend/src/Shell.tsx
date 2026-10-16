@@ -12,6 +12,7 @@ import Insights from '@mui/icons-material/Insights'
 import Storage from '@mui/icons-material/Storage'
 import ManageAccounts from '@mui/icons-material/ManageAccounts'
 import History from '@mui/icons-material/History'
+import FactCheck from '@mui/icons-material/FactCheck'
 import { useYo } from './Yo'
 import { getUser, logout } from './api'
 
@@ -24,6 +25,7 @@ export const NAV = [
   { to: '/control', label: 'Control DDMRP', icon: <Insights />, vistas: true, req: ['ver_control'] },
   { to: '/dashboard', label: 'Alertas', icon: <WarningAmber />, req: ['ver_alertas'] },
   { to: '/despacho', label: 'Matriz de despacho', icon: <LocalShipping />, req: ['ver_despacho'] },
+  { to: '/auditoria', label: 'Auditoría', icon: <FactCheck />, req: ['ver_auditoria'] },
   { to: '/reglas', label: 'Reglas de pedido', icon: <Rule />, req: ['editar_reglas', 'correr_motor'] },
   { to: '/config', label: 'Maestros', icon: <Storage />, req: ['ver_maestros', 'cargar_maestros', 'sincronizar_siesa'] },
   { to: '/usuarios', label: 'Usuarios', icon: <ManageAccounts />, req: ['admin_usuarios'] },

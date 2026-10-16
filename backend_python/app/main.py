@@ -6,7 +6,7 @@ from .config import settings
 from .esquema import asegurar_esquema
 from .bitacora import cerrar_huerfanas
 from .orchestrator import pipeline_nocturno
-from .routers import auth, alertas, maestros, despacho, admin, reglas, control, usuarios, log
+from .routers import auth, alertas, maestros, despacho, admin, reglas, control, usuarios, log, auditoria
 
 logging.basicConfig(level=logging.INFO)
 
@@ -23,7 +23,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="DDMRP API", lifespan=lifespan)
-for r in (auth, alertas, maestros, despacho, admin, reglas, control, usuarios, log):
+for r in (auth, alertas, maestros, despacho, admin, reglas, control, usuarios, log, auditoria):
     app.include_router(r.router, prefix="/api")
 
 
