@@ -44,6 +44,12 @@ SQL_CO = "SELECT RTRIM(f150_id), RTRIM(f150_id_co) FROM t150_mc_bodegas WHERE f1
 SQL_ITEMS = """SELECT RTRIM(f120_referencia), MAX(RTRIM(f120_descripcion)) FROM t120_mc_items
 WHERE f120_id_cia = :cia AND f120_referencia IS NOT NULL AND RTRIM(f120_referencia) <> '' GROUP BY RTRIM(f120_referencia)"""
 
+# Tiendas: bodegas del grupo de bodegas de tiendas (t152) con su nombre. Es la lista que ve el usuario en los Excel.
+SQL_BODEGAS = """SELECT RTRIM(b.f150_id), RTRIM(b.f150_descripcion)
+FROM t150_mc_bodegas b
+JOIN t152_mc_bodega_grupo_bodega g ON g.f152_rowid_bodega = b.f150_rowid
+WHERE b.f150_id_cia = :cia AND g.f152_id_grupo_bodega = :grupo"""
+
 # Laboratorio (categoria, base de los permisos) = criterio mayor del plan de items (mismo join que MercadoLibre_Items_Funat)
 SQL_LAB = """SELECT RTRIM(i.f120_referencia), MAX(RTRIM(m.f106_id))
 FROM t120_mc_items i
@@ -108,6 +114,44 @@ def _volcar(cur, filas, destino: str, cols: list[str], reemplazar: bool = True) 
     return n
 
 
+def sincronizar_bodegas(cur) -> int:
+    """Trae de Siesa las tiendas (codigo + nombre) a ddmrp.maestro_bodega y suma las que ya esten en la bitacora.
+    Un fallo del origen no tumba el ETL: se registra y se sigue con lo que haya."""
+    n = 0
+    if settings.siesa_host:
+        for empresa, db in (("05", settings.siesa_db), ("21", settings.siesa_db_s)):
+            if not db:
+                continue
+            try:
+                filas = list(_stream(siesa_engine(db), SQL_BODEGAS,
+                                     {"cia": settings.siesa_cia, "grupo": settings.siesa_grupo_bodegas_tienda}))
+            except Exception as e:
+                log.warning("No se pudieron leer las tiendas de %s: %s", db, e)
+                continue
+            for cod, nombre in filas:
+                cur.execute("INSERT INTO ddmrp.maestro_bodega (bodega_id, empresa, descripcion) VALUES (%s, %s, %s) "
+                            "ON CONFLICT (bodega_id) DO UPDATE SET descripcion = EXCLUDED.descripcion, empresa = EXCLUDED.empresa",
+                            (cod, empresa, nombre))
+                n += 1
+    cur.execute("INSERT INTO ddmrp.maestro_bodega (bodega_id, empresa) SELECT bodega_id, empresa FROM ddmrp.abast_bitacora "
+                "ON CONFLICT (bodega_id) DO NOTHING")
+    return n
+
+
+def sincronizar_bodegas_ahora() -> int:
+    raw = pg.raw_connection()
+    try:
+        with raw.cursor() as cur:
+            n = sincronizar_bodegas(cur)
+        raw.commit()
+        return n
+    except Exception:
+        raw.rollback()
+        raise
+    finally:
+        raw.close()
+
+
 def correr_etl() -> dict:
     res: dict = {}
     raw = pg.raw_connection()
@@ -116,8 +160,7 @@ def correr_etl() -> dict:
             cur.execute("SELECT valor FROM ddmrp.parametro WHERE clave = 'meses_historia'")
             fila = cur.fetchone()
             desde = _primer_mes(date.today(), min(max(int(fila[0]), 2), 12) if fila else MESES_VENTANA)
-            cur.execute("TRUNCATE ddmrp.maestro_bodega")
-            cur.execute("INSERT INTO ddmrp.maestro_bodega (bodega_id, empresa) SELECT bodega_id, empresa FROM ddmrp.abast_bitacora")
+            res["tiendas"] = sincronizar_bodegas(cur)
             cur.execute("SELECT empresa, bodega_id FROM ddmrp.abast_bitacora")
             por_empresa: dict[str, list[str]] = {}
             for emp, b in cur.fetchall():

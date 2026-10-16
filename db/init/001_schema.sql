@@ -14,7 +14,8 @@ CREATE TABLE maestro_item (
 
 CREATE TABLE maestro_bodega (
   bodega_id     TEXT PRIMARY KEY,
-  empresa       TEXT NOT NULL               -- '05' Funat, '21' Store
+  empresa       TEXT NOT NULL,              -- '05' Funat, '21' Store
+  descripcion   TEXT                        -- nombre de la tienda (Siesa t150)
 );
 
 -- Centro de operacion de cada bodega (f440_id_co del archivo plano de Siesa)

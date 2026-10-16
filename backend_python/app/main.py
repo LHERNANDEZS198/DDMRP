@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
 from .config import settings
+from .esquema import asegurar_esquema
 from .orchestrator import pipeline_nocturno
 from .routers import auth, alertas, maestros, despacho, admin, reglas
 
@@ -11,6 +12,7 @@ logging.basicConfig(level=logging.INFO)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    asegurar_esquema()
     sch = BackgroundScheduler(timezone="America/Bogota")
     sch.add_job(pipeline_nocturno, "cron", hour=settings.etl_cron_hour, minute=0, id="nocturno")
     sch.start()

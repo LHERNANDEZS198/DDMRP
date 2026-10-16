@@ -1,6 +1,6 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from ..orchestrator import pipeline_nocturno, ejecutar_motor
-from ..etl.replicacion import correr_etl
+from ..etl.replicacion import correr_etl, sincronizar_bodegas_ahora
 from ..security import usuario_actual, asignaciones
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -25,3 +25,9 @@ def etl(user=Depends(usuario_actual)):
 @router.post("/correr-motor")
 def motor(user=Depends(usuario_actual)):
     _solo_admin(user); return ejecutar_motor()
+
+
+@router.post("/sincronizar-bodegas")
+def bodegas(user=Depends(usuario_actual)):
+    """Trae las tiendas (codigo y nombre) de Siesa: sirve para que los Excel se llenen por codigo o por nombre."""
+    _solo_admin(user); return {"tiendas": sincronizar_bodegas_ahora()}

@@ -1,6 +1,6 @@
 """Maestros editables desde la UI (lead time, cotas, unidad de despacho, vectorizacion, pronostico, promociones,
 factores y parametros del modelo). Todo el SQL sale de esta lista blanca: el cliente nunca elige tablas ni columnas."""
-import csv, io
+import csv, io, unicodedata
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from openpyxl import Workbook, load_workbook
@@ -123,6 +123,8 @@ def leer(nombre: str, bodega_id: str | None = None, producto_id: str | None = No
         join = f"LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = t.{d['producto']}" if d.get("producto") else ""
         w, p = filtro_sql_permisos(user, f"t.{d['bodega']}", "mi.categoria" if d.get("producto") else "'*'")
         sel += ", mi.descripcion" if d.get("producto") else ""
+        join += f" LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = t.{d['bodega']}"
+        sel += ", mb.descripcion AS bodega_nombre"
         if bodega_id:
             w += f" AND t.{d['bodega']} = :b"; p["b"] = bodega_id
     elif d.get("producto"):
@@ -214,29 +216,82 @@ def _leer_archivo(nombre_archivo: str, datos: bytes) -> list[dict]:
     return [{c: (r[i] if i < len(r) else None) for i, c in enumerate(cab) if c} for r in filas[1:]]
 
 
+BOD_COD = ("bodega_id", "bodega", "codigo_bodega", "cod_bodega")
+BOD_NOM = ("bodega_nombre", "nombre_bodega", "tienda", "nombre")
+
+
+def _norm(t) -> str:
+    t = unicodedata.normalize("NFKD", str(t or "")).encode("ascii", "ignore").decode().lower()
+    return " ".join(t.split())
+
+
+def _mapa_bodegas():
+    """(por codigo, por nombre) desde ddmrp.maestro_bodega (que el ETL trae de Siesa t150)."""
+    with pg.connect() as c:
+        rows = c.execute(text("SELECT bodega_id, empresa, descripcion FROM ddmrp.maestro_bodega")).all()
+    return ({r[0].strip().upper(): (r[0], r[1]) for r in rows},
+            {_norm(r[2]): (r[0], r[1]) for r in rows if r[2]},
+            sorted({r[1] for r in rows}))
+
+
 def _preparar(d: dict, filas: list[dict]) -> tuple[list[str], list[dict]]:
-    """Valida y normaliza. Devuelve (columnas editables presentes, filas listas)."""
+    """Valida y normaliza. La tienda se identifica por codigo (SV021) o por nombre y la empresa se deduce de la tienda.
+    Devuelve (columnas editables presentes, filas listas)."""
     presentes = set().union(*[f.keys() for f in filas]) if filas else set()
-    faltan = [k for k in d["llave"] if k not in presentes]
+    cod_h = next((h for h in BOD_COD if h in presentes), None)
+    nom_h = next((h for h in BOD_NOM if h in presentes), None)
+    con_bodega = bool(d.get("bodega"))
+    otras = [k for k in d["llave"] if k != "empresa" and not (con_bodega and k == d["bodega"])]
+    faltan = [k for k in otras if k not in presentes]
+    if con_bodega and not (cod_h or nom_h):
+        faltan.insert(0, "bodega_id (codigo, ej. SV021) o bodega_nombre")
     if faltan:
-        raise HTTPException(400, f"Faltan columnas llave: {faltan}. Encabezados: {d['llave'] + list(d['editable'])}")
+        amigable = ([d["bodega"]] if con_bodega else []) + otras + list(d["editable"])
+        raise HTTPException(400, f"Faltan columnas: {faltan}. Encabezados: {amigable}")
     cols = [c for c in d["editable"] if c in presentes]
     if d["editable"] and not cols:
-        raise HTTPException(400, f"No hay ninguna columna a cargar. Encabezados: {d['llave'] + list(d['editable'])}")
+        raise HTTPException(400, f"No hay ninguna columna a cargar. Encabezados: {list(d['editable'])}")
+    por_cod, por_nom, empresas = _mapa_bodegas() if ("empresa" in d["llave"] or con_bodega) else ({}, {}, [])
     malas, out = [], []
     for n, f in enumerate(filas, start=2):
         try:
-            llave = {k: _valor_llave(k, f.get(k)) for k in d["llave"]}
-            if not all(llave.values()):
-                raise ValueError("llave vacia")
-            for k in d["llave"]:
-                if TIPO_LLAVE.get(k) == "int":
+            llave: dict[str, str] = {}
+            if con_bodega:
+                cod = _valor_llave("bodega_id", f.get(cod_h)) if cod_h else ""
+                hit = por_cod.get(cod.upper()) if cod else None
+                if not hit and (cod or nom_h):
+                    hit = por_nom.get(_norm(cod)) or (por_nom.get(_norm(f.get(nom_h))) if nom_h else None)
+                if not hit:
+                    if cod and (not por_cod or _valor_llave("empresa", f.get("empresa"))):
+                        hit = (cod, None)   # maestro vacio o empresa indicada en el archivo: se acepta el codigo tal cual
+                    else:
+                        raise ValueError(f"tienda no reconocida: {cod or f.get(nom_h)!r}")
+                llave[d["bodega"]] = hit[0]
+                if "empresa" in d["llave"]:
+                    emp = _valor_llave("empresa", f.get("empresa")) or hit[1] or ""
+                    if not emp:
+                        raise ValueError("no se pudo deducir la empresa de la tienda: agrega la columna empresa")
+                    llave["empresa"] = emp
+            for k in otras:
+                llave[k] = _valor_llave(k, f.get(k))
+                if TIPO_LLAVE.get(k) == "int" and llave[k]:
                     llave[k] = str(int(float(llave[k])))
-            fila = dict(llave)
+            if "empresa" in d["llave"] and "empresa" not in llave:   # tabla por producto: sin empresa = todas
+                emp = _valor_llave("empresa", f.get("empresa"))
+                llave["empresa"] = emp
+            if not all(v for k, v in llave.items() if k != "empresa"):
+                raise ValueError("llave vacia")
+            fila_base = dict(llave)
             for c in cols:
                 t = d["editable"][c]
-                fila[c] = _valor_num(f.get(c), t) if t in ("num", "int") else (str(f[c]).strip() if f.get(c) not in (None, "") else None)
-            out.append(fila)
+                fila_base[c] = _valor_num(f.get(c), t) if t in ("num", "int") else (str(f[c]).strip() if f.get(c) not in (None, "") else None)
+            if "empresa" in d["llave"] and not fila_base.get("empresa"):
+                if not empresas:
+                    raise ValueError("falta la columna empresa (y aun no hay bodegas cargadas para deducirla)")
+                for emp in empresas:
+                    out.append({**fila_base, "empresa": emp})
+            else:
+                out.append(fila_base)
         except (ValueError, TypeError) as e:
             malas.append(f"fila {n}: {e}")
     if malas:
@@ -351,31 +406,55 @@ async def subir_excel(nombre: str, archivo: UploadFile = File(...), modo: str = 
 
 @router.get("/{nombre}/excel")
 def bajar_excel(nombre: str, user=Depends(usuario_actual)):
-    """Descarga lo que el usuario puede ver, con los mismos encabezados que acepta la carga (sirve de plantilla)."""
+    """Descarga lo que el usuario puede ver, con los mismos encabezados que acepta la carga (sirve de plantilla).
+    Maestros por tienda: la tienda va con su codigo y su nombre (la empresa se deduce) y, si el maestro es solo por
+    tienda (bitacora, centro de operacion), vienen todas las tiendas aunque aun no tengan datos."""
     d = _def(nombre)
-    cols = d["llave"] + list(d["editable"])
-    sel = ", ".join(f"t.{c}" for c in cols)
+    bod = d.get("bodega")
+    llave_xl = [k for k in d["llave"] if not (bod and k in ("empresa", bod))]
+    cols_t = [k for k in d["llave"] if not (bod and k == "empresa")] if bod else d["llave"]
+    sel = ", ".join(f"t.{c}" for c in cols_t + list(d["editable"]))
     join, w, p = "", "TRUE", {}
-    if d.get("bodega"):
+    solo_tienda = bool(bod) and not llave_xl and not d.get("producto")
+    if bod:
         join = f"LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = t.{d['producto']}" if d.get("producto") else ""
-        w, p = filtro_sql_permisos(user, f"t.{d['bodega']}", "mi.categoria" if d.get("producto") else "'*'")
+        join += f" LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = t.{bod}"
+        w, p = filtro_sql_permisos(user, f"t.{bod}", "mi.categoria" if d.get("producto") else "'*'")
+        sel = f"t.{bod}, mb.descripcion AS bodega_nombre" + "".join(f", t.{c}" for c in cols_t if c != bod) + "".join(f", t.{c}" for c in d["editable"])
+        cab = [bod, "bodega_nombre"] + [c for c in cols_t if c != bod] + list(d["editable"])
+    else:
+        cab = cols_t + list(d["editable"])
     with pg.connect() as c:
-        filas = c.execute(text(f"SELECT {sel} FROM {d['tabla']} t {join} WHERE {w} ORDER BY "
-                               + ", ".join("t." + k for k in d["llave"]) + " LIMIT 1000000"), p).all()
+        if solo_tienda:   # plantilla con todas las tiendas del maestro de bodegas
+            w2, p2 = filtro_sql_permisos(user, "mb.bodega_id", "'*'")
+            ed = "".join(f", t.{c}" for c in d["editable"])
+            filas = c.execute(text(f"SELECT mb.bodega_id, mb.descripcion{ed} FROM ddmrp.maestro_bodega mb "
+                                   f"LEFT JOIN {d['tabla']} t ON t.{bod} = mb.bodega_id WHERE {w2} ORDER BY mb.bodega_id"), p2).all()
+        else:
+            filas = c.execute(text(f"SELECT {sel} FROM {d['tabla']} t {join} WHERE {w} ORDER BY "
+                                   + ", ".join("t." + k for k in d["llave"]) + " LIMIT 1000000"), p).all()
     wb = Workbook(write_only=True)
     ws = wb.create_sheet("Datos")
-    ws.append(cols)
+    ws.append(cab)
     for r in filas:
         ws.append([float(v) if hasattr(v, "as_tuple") else v for v in r])
     ins = wb.create_sheet("Instrucciones")
-    for linea in (
-        [d["label"], "", "Fila 1 = encabezados (no los cambies). Desde la fila 2, los datos.",
-         "Columnas llave (identifican la fila): " + ", ".join(d["llave"]),
-         "Columnas a cargar: " + (", ".join(d["editable"]) or "(ninguna: la existencia de la fila es el dato)"),
-         "Actualizar: crea las filas nuevas y actualiza las existentes; solo toca las columnas que vengan en el archivo.",
-         "Reemplazar: borra el maestro y deja exactamente lo del archivo (solo admin / edicion en todas las bodegas)."]
-        + (["Las referencias van como texto de 6 digitos (ej. 019901)."] if "producto_id" in d["llave"] else [])):
-        ins.append([linea])
+    lineas = [d["label"], "", "Fila 1 = encabezados (no los cambies). Desde la fila 2, los datos."]
+    if bod:
+        lineas += ["Tienda: usa el codigo de Siesa (bodega_id, ej. SV021) o, si prefieres, solo el nombre (bodega_nombre). La empresa se deduce sola.",
+                   "La columna bodega_nombre es informativa."]
+    elif "empresa" in d["llave"]:
+        lineas.append("Empresa (05 Funat, 21 Store): opcional; si la dejas vacia aplica a todas.")
+    otras = [k for k in d["llave"] if k not in ("empresa",) and k != bod]
+    if otras:
+        lineas.append("Otras columnas llave: " + ", ".join(otras))
+    lineas += ["Columnas a cargar: " + (", ".join(d["editable"]) or "(ninguna: la existencia de la fila es el dato)"),
+               "Actualizar: crea las filas nuevas y actualiza las existentes; solo toca las columnas que vengan en el archivo.",
+               "Reemplazar: borra el maestro y deja exactamente lo del archivo (solo admin / edicion en todas las bodegas)."]
+    if "producto_id" in d["llave"]:
+        lineas.append("Las referencias van como texto de 6 digitos (ej. 019901).")
+    for l in lineas:
+        ins.append([l])
     buf = io.BytesIO(); wb.save(buf)
     return Response(buf.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f'attachment; filename="{nombre}.xlsx"'})

@@ -41,7 +41,10 @@ export default function Config() {
     if (!def) return []
     const llave = def.llave.map(k => ({ field: k, filter: true, pinned: k === def.llave[0] ? ('left' as const) : undefined,
       checkboxSelection: k === def.llave[0] && !def.sin_reemplazo, headerCheckboxSelection: k === def.llave[0] && !def.sin_reemplazo }))
-    const desc: ColDef[] = rows[0] && 'descripcion' in rows[0] && !def.editable.includes('descripcion') ? [{ field: 'descripcion', filter: true, width: 240 }] : []
+    const desc: ColDef[] = [
+      ...(rows[0] && 'bodega_nombre' in rows[0] ? [{ field: 'bodega_nombre', headerName: 'Tienda', filter: true, width: 200 }] : []),
+      ...(rows[0] && 'descripcion' in rows[0] && !def.editable.includes('descripcion') ? [{ field: 'descripcion', filter: true, width: 240 }] : []),
+    ]
     const ed = def.editable.map(k => def.tipos[k] === 'txt'
       ? { field: k, editable: true, filter: true }
       : { field: k, editable: true, type: 'numericColumn', filter: 'agNumberColumnFilter' })
@@ -82,6 +85,10 @@ export default function Config() {
       setMsg(resumen(r)); setPegar(false); setTxt(''); cargar()
     } catch (x: any) { setMsg('Error: ' + x.message) }
   }
+  const traerTiendas = async () => {
+    try { setMsg('Trayendo tiendas de Siesa...'); const r = await api('/admin/sincronizar-bodegas', { method: 'POST' }); setMsg(`Tiendas sincronizadas: ${r.tiendas}`) }
+    catch (x: any) { setMsg('Error: ' + x.message) }
+  }
   const eliminar = async () => {
     const s = grid?.getSelectedRows() ?? []
     if (!def || !s.length) { setMsg('Selecciona filas para eliminar'); return }
@@ -99,6 +106,7 @@ export default function Config() {
         <select value={sel} onChange={e => setSel(e.target.value)}>
           {defs.map(d => <option key={d.clave} value={d.clave}>{d.label}</option>)}
         </select>
+        <button onClick={traerTiendas} title="Lee de Siesa las tiendas (codigo y nombre)">Traer tiendas de Siesa</button>
         <button onClick={descargar}>Descargar Excel</button>
         <span style={{ borderLeft: '1px solid #ccc', paddingLeft: 8 }}>Cargar:</span>
         <select value={modo} onChange={e => setModo(e.target.value as any)} title="Como se aplica el archivo">
@@ -111,8 +119,8 @@ export default function Config() {
         {def && !def.sin_reemplazo && <button onClick={eliminar}>Eliminar seleccionadas</button>}
         <small>{msg}</small>
       </div>
-      {def && <small>Encabezados: <b>{[...def.llave, ...def.editable].join(' · ')}</b>
-        {' '}— “Descargar Excel” te da la plantilla con los datos actuales. Las referencias van como texto de 6 digitos.</small>}
+      {def && <small>“Descargar Excel” te da la plantilla con los datos actuales. La tienda se identifica por codigo (ej. SV021) o por nombre,
+        y la empresa se deduce sola. Las referencias van como texto de 6 digitos. Columnas a cargar: <b>{def.editable.join(' · ') || '(solo existencia de la fila)'}</b></small>}
       {pegar && def && (
         <div>
           <textarea style={{ width: '100%', height: 120 }} value={txt} onChange={e => setTxt(e.target.value)}

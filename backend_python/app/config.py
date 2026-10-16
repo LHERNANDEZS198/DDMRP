@@ -1,4 +1,4 @@
-from urllib.parse import quote_plus
+from urllib.parse import quote, quote_plus
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     siesa_db: str = ""        # empresa '05' (Funat)
     siesa_db_s: str = ""      # empresa '21' (Store); vacio = no se consulta
     siesa_cia: int = 1        # f120_id_cia
+    siesa_grupo_bodegas_tienda: str = "025"   # grupo de bodegas (t152) que son tiendas
+    siesa_plan_laboratorio: str = "006"   # plan de criterios de items que define el laboratorio
     siesa_user: str = ""
     siesa_password: str = ""
 
@@ -49,12 +51,12 @@ class Settings(BaseSettings):
 
     @property
     def pg_url(self) -> str:
-        return (f"postgresql+psycopg://{self.postgres_user}:{self.postgres_password}"
+        return (f"postgresql+psycopg://{quote(self.postgres_user, safe='')}:{quote(self.postgres_password, safe='')}"
                 f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}")
 
     @property
     def pg_dsn(self) -> str:  # para el binario Rust (crate postgres)
-        return (f"postgres://{self.postgres_user}:{self.postgres_password}"
+        return (f"postgres://{quote(self.postgres_user, safe='')}:{quote(self.postgres_password, safe='')}"
                 f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}")
 
     def siesa_odbc(self, db: str) -> str:
