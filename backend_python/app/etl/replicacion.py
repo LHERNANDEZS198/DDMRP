@@ -175,8 +175,11 @@ def _items_de_siesa(cur, eng, primera: bool = True) -> dict:
     labs = list(_stream(eng, SQL_LAB, {**prm, "plan": settings.siesa_plan_laboratorio}))
     crit = list(_stream(eng, SQL_ITEM_CRITERIOS, prm))
     permitidos = {tuple(x.strip().split(":", 1)) for x in settings.siesa_criterios_items.split(",") if ":" in x}
-    if permitidos:
-        crit = [c for c in crit if (c[1], c[2]) in permitidos]
+    if permitidos:   # el filtro elige ITEMS (los que tienen alguno de esos criterios); de cada uno se traen todos sus criterios
+        validos = {c[0] for c in crit if (c[1], c[2]) in permitidos}
+        crit = [c for c in crit if c[0] in validos]
+        items = [x for x in items if x[0] in validos]
+        labs = [x for x in labs if x[0] in validos]
     nombres_lab, nombres_plan, nombres_crit = [], [], []
     for sql, destino, aviso in ((SQL_LAB_NOMBRES, nombres_lab, "laboratorios"), (SQL_PLANES_NOMBRES, nombres_plan, "planes"),
                                 (SQL_CRITERIOS_NOMBRES, nombres_crit, "criterios")):
@@ -184,9 +187,6 @@ def _items_de_siesa(cur, eng, primera: bool = True) -> dict:
             destino.extend(_stream(eng, sql, {**prm, "plan": settings.siesa_plan_laboratorio}))
         except Exception as e:
             log.warning("Nombres de %s no leidos: %s", aviso, e)
-    if permitidos:   # los nombres solo de lo que se importa
-        nombres_crit = [n for n in nombres_crit if (n[0], n[1]) in permitidos]
-        nombres_plan = [n for n in nombres_plan if n[0] in {x[0] for x in permitidos}]
     cur.execute("CREATE TEMP TABLE IF NOT EXISTS stg_items (producto_id text, descripcion text)")
     cur.execute("TRUNCATE stg_items")
     with cur.copy("COPY stg_items FROM STDIN") as cp:
