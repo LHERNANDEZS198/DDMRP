@@ -1,0 +1,15 @@
+-- Ventas de tiendas AGREGADAS POR MES, directo de Siesa (sin FUNATLAB). Se ejecuta una vez por empresa.
+-- Parametros: :cia (SIESA_CIA), :desde (primer dia de la ventana de meses, tipo date), :bodegas (lista de bodegas
+-- de la empresa, tomadas de la bitacora).
+-- Debe devolver 4 columnas, en este orden:  mes (YYYYMM), bodega, referencia, cantidad
+--
+-- >>> PENDIENTE DE DEFINIR <<<  Las ventas hoy las alimenta un proceso de FUNATLAB (tabla
+-- Abastecimiento_Ventas_Tiendas_Funat) cuya definicion aun no tenemos. Pega aqui la consulta equivalente sobre Siesa
+-- (documentos de venta de las tiendas) o corre docs/sql/buscar_origen_ventas.sql para encontrar ese proceso.
+-- Mientras este archivo no tenga una consulta, el ETL omite las ventas y se pueden cargar por Excel
+-- (Configuracion > "Ventas por mes").
+--
+-- Plantilla (ajustar tablas/columnas/tipos de documento reales):
+-- SELECT CONVERT(char(6), h.f350_fecha, 112), RTRIM(b.f150_id), RTRIM(i.f120_referencia), CONVERT(float, SUM(m.cantidad))
+-- FROM ... WHERE h.f350_fecha >= :desde AND b.f150_id IN :bodegas AND i.f120_id_cia = :cia
+-- GROUP BY CONVERT(char(6), h.f350_fecha, 112), b.f150_id, i.f120_referencia

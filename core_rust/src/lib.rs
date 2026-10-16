@@ -76,11 +76,23 @@ pub struct Parametros {
     pub mult_cota_min_promo: f64, // BA = cota min x 1.1
     pub adu_bajo_min: f64,        // ADU entre min y max => ZRB = 0
     pub adu_bajo_max: f64,
+    // --- reglas de pedido (editables en la pantalla "Reglas") ---
+    pub regla_disparo: u8,        // 1 = NFP <= TOY aj, 2 = NFP <= TOR, 3 = NFP < TOG aj
+    pub regla_objetivo: u8,       // 1 = TOG aj, 2 = TOY aj
+    pub regla_redondeo: u8,       // 1 = arriba, 2 = cercano, 3 = abajo (al multiplo de despacho)
+    pub sumar_vectorizacion: bool,
+    pub incluir_transito: bool,
+    pub restar_demanda_calificada: bool,
+    pub cantidad_minima: f64,
 }
 
 impl Default for Parametros {
     fn default() -> Self {
-        Parametros { mult_cota_max_promo: 1.2, mult_cota_min_promo: 1.1, adu_bajo_min: 1.0, adu_bajo_max: 4.0 }
+        Parametros {
+            mult_cota_max_promo: 1.2, mult_cota_min_promo: 1.1, adu_bajo_min: 1.0, adu_bajo_max: 4.0,
+            regla_disparo: 1, regla_objetivo: 1, regla_redondeo: 1,
+            sumar_vectorizacion: true, incluir_transito: true, restar_demanda_calificada: true, cantidad_minima: 0.0,
+        }
     }
 }
 
@@ -239,16 +251,26 @@ pub fn calcular(e: &Entrada, f: &Factores, p: &Parametros) -> Resultado {
         roundup(toy_aj + z.zv + z.tog * e.cota_min)
     };
 
-    decidir(e, &z, w, y, q, toy_aj, tog_aj)
+    decidir(e, &z, w, y, q, toy_aj, tog_aj, p)
 }
 
-/// Flujo neto, zona y cantidad sugerida. PROPUESTA (el Excel termina en los topes ajustados):
-///  - flujo neto = inventario + transito - demanda calificada
+/// Redondea `x` al multiplo de `ud` segun la regla (1 arriba, 2 cercano, 3 abajo).
+pub fn a_multiplo(x: f64, ud: f64, regla: u8) -> f64 {
+    let ud = if ud > 1.0 { ud } else { 1.0 };
+    let k = x / ud;
+    let k = match regla { 2 => round_xl(k), 3 => (k + 1e-9).floor(), _ => roundup(k) };
+    k * ud
+}
+
+/// Flujo neto, zona y cantidad sugerida. PROPUESTA (el Excel termina en los topes ajustados), parametrizada:
+///  - flujo neto = inventario + transito - demanda calificada (cada termino activable)
 ///  - zona segun TOR / TOY ajustado / TOG ajustado
-///  - se pide cuando flujo neto <= TOY ajustado: llevar hasta TOG ajustado, en multiplos de la unidad de despacho
-///  - se suma la vectorizacion (derrame) tal cual
-fn decidir(e: &Entrada, z: &Zonas, w: f64, y: f64, q: f64, toy_aj: f64, tog_aj: f64) -> Resultado {
-    let nfp = e.inventario + e.en_transito - e.demanda_calificada;
+///  - se pide segun `regla_disparo`; se repone hasta `regla_objetivo`, al multiplo de despacho (`regla_redondeo`)
+///  - se suma la vectorizacion (derrame) si `sumar_vectorizacion`
+fn decidir(e: &Entrada, z: &Zonas, w: f64, y: f64, q: f64, toy_aj: f64, tog_aj: f64, p: &Parametros) -> Resultado {
+    let transito = if p.incluir_transito { e.en_transito } else { 0.0 };
+    let dem = if p.restar_demanda_calificada { e.demanda_calificada } else { 0.0 };
+    let nfp = e.inventario + transito - dem;
     let zona = if tog_aj <= 0.0 {
         if nfp > 0.0 { Zona::Exceso } else { Zona::Verde } // sin buffer definido: sin alerta
     } else if nfp <= z.tor {
@@ -260,12 +282,21 @@ fn decidir(e: &Entrada, z: &Zonas, w: f64, y: f64, q: f64, toy_aj: f64, tog_aj: 
     } else {
         Zona::Exceso
     };
-    let base = if tog_aj > 0.0 && nfp <= toy_aj {
-        let falta = tog_aj - nfp;
-        if e.unidad_despacho > 1.0 { roundup(falta / e.unidad_despacho) * e.unidad_despacho } else { roundup(falta) }
+    let pide = tog_aj > 0.0
+        && match p.regla_disparo {
+            2 => nfp <= z.tor,
+            3 => nfp < tog_aj,
+            _ => nfp <= toy_aj,
+        };
+    let base = if pide {
+        let objetivo = if p.regla_objetivo == 2 { toy_aj } else { tog_aj };
+        let falta = objetivo - nfp;
+        if falta > 0.0 { a_multiplo(falta, e.unidad_despacho, p.regla_redondeo) } else { 0.0 }
     } else {
         0.0
     };
+    let base = if base > 0.0 && base < p.cantidad_minima { 0.0 } else { base };
+    let vect = if p.sumar_vectorizacion { e.vectorizacion } else { 0.0 };
     Resultado {
         empresa: e.empresa.clone(),
         bodega_id: e.bodega_id.clone(),
@@ -286,7 +317,7 @@ fn decidir(e: &Entrada, z: &Zonas, w: f64, y: f64, q: f64, toy_aj: f64, tog_aj: 
         pct_buffer: if tog_aj > 0.0 { nfp / tog_aj * 100.0 } else { 0.0 },
         zona,
         vectorizacion: e.vectorizacion,
-        cantidad_sugerida: base + e.vectorizacion,
+        cantidad_sugerida: base + vect,
     }
 }
 
@@ -452,6 +483,35 @@ mod tests {
         assert_eq!(r.zonas.tog, 0.0);
         assert_eq!(r.zona, Zona::Verde); // sin buffer y sin stock: no es alerta
         assert_eq!(r.cantidad_sugerida, 0.0);
+    }
+
+    #[test]
+    fn reglas_configurables() {
+        let f = factores();
+        // base(): TOR 1, TOY 3, TOG 4. Inventario 3 => amarilla (NFP <= TOY)
+        let mut e = base(); e.inventario = 3.0;
+        let p = Parametros::default();
+        assert_eq!(calcular(&e, &f, &p).cantidad_sugerida, 1.0); // TOG 4 - 3
+        let mut p2 = Parametros::default(); p2.regla_disparo = 2; // solo si roja
+        assert_eq!(calcular(&e, &f, &p2).cantidad_sugerida, 0.0);
+        let mut p3 = Parametros::default(); p3.regla_objetivo = 2; // hasta TOY: falta 0
+        assert_eq!(calcular(&e, &f, &p3).cantidad_sugerida, 0.0);
+        // transito: con inventario 0 y transito 4 => NFP 4 (verde), sin contar transito => pide 4
+        let mut e2 = base(); e2.inventario = 0.0; e2.en_transito = 4.0;
+        assert_eq!(calcular(&e2, &f, &p).cantidad_sugerida, 0.0);
+        let mut p4 = Parametros::default(); p4.incluir_transito = false;
+        assert_eq!(calcular(&e2, &f, &p4).cantidad_sugerida, 4.0);
+        // vectorizacion y minimo
+        let mut e3 = base(); e3.vectorizacion = 5.0;
+        let mut p5 = Parametros::default(); p5.sumar_vectorizacion = false;
+        assert_eq!(calcular(&e3, &f, &p5).cantidad_sugerida, 4.0);
+        let mut p6 = Parametros::default(); p6.cantidad_minima = 10.0;
+        assert_eq!(calcular(&base(), &f, &p6).cantidad_sugerida, 0.0);
+        // redondeo a multiplo de 10: falta 4 => arriba 10, cercano 0, abajo 0
+        assert_eq!(a_multiplo(4.0, 10.0, 1), 10.0);
+        assert_eq!(a_multiplo(4.0, 10.0, 2), 0.0);
+        assert_eq!(a_multiplo(6.0, 10.0, 2), 10.0);
+        assert_eq!(a_multiplo(14.0, 10.0, 3), 10.0);
     }
 
     #[test]

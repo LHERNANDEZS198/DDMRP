@@ -7,8 +7,8 @@ Escala: ~2.500 productos x 135 bodegas = ~337.500 combinaciones empresa/bodega/r
 ```mermaid
 flowchart LR
   subgraph Origen
-    LAB[(FUNATLAB\ndbGTIntegrationIntermediaReal\nAbastecimiento_*)]
-    SIESA[(Siesa MSSQL\nBD por compania)]
+    SIESA[(Siesa MSSQL\nBD por compania: 05 Funat, 21 Stores)]
+    XLS[/Excel de analistas\nmaestros/]
   end
   subgraph Backend["Backend (contenedor)"]
     ETL["ETL nocturno\nPython: SQLAlchemy + COPY"]
@@ -21,8 +21,8 @@ flowchart LR
   subgraph Web["Frontend (contenedor Nginx)"]
     UI["React + AG Grid\nAlertas / Matriz de despacho / Maestros"]
   end
-  LAB -- "ventas, bitacora, cotas, unidad despacho, vectorizacion" --> ETL
-  SIESA -- "inventario por bodega" --> ETL
+  SIESA -- "inventario, transitos (traslados abiertos), ventas por mes, descripciones" --> ETL
+  XLS -- "descargar / cargar (crear, actualizar, reemplazar)" --> API
   ETL -- "COPY + volcado en 1 transaccion" --> PG
   ORQ -- "dispara tras el ETL" --> CORE
   PG -- "lee ventas 7 meses + maestros" --> CORE
@@ -35,8 +35,8 @@ flowchart LR
 ```
 
 ## Flujo diario
-1. 02:00 el orquestador lanza el ETL: replica a Postgres las tablas `Abastecimiento_*` de FUNATLAB y el inventario de Siesa
-   (una BD por empresa). El motor ya no consulta los servidores de origen.
+1. 02:00 el orquestador lanza el ETL: trae de Siesa (una BD por empresa) inventario, traslados abiertos (transitos), ventas ya
+   agregadas por mes y descripciones. **FUNATLAB ya no se usa.** El motor no consulta los servidores de origen.
 2. Corre el binario `ddmrp_core` (subproceso con argumentos fijos, sin shell). Meta < 60 s; en pruebas con 337.448 combinaciones
    y 1,5 M de lineas de venta sinteticas tardo ~9 s.
 3. El motor aplica el modelo de `docs/MODELO_DDMRP.md` y escribe `sugerencias_envio` (COPY).
@@ -45,9 +45,13 @@ flowchart LR
 
 ## Decisiones clave
 - **Rust como binario independiente** (no PyO3): aislamiento, despliegue simple y se puede correr/probar solo.
-- **Maestros replicados y editables:** bitacora, cotas, unidad de despacho y vectorizacion se replican desde FUNATLAB. Con
-  `SYNC_MAESTROS=true` el ETL los vuelve a cargar cada noche (pisa lo editado en la app); con `false` la app pasa a ser el maestro.
-  `pronostico`, `promocion`, `factor_tramo` y `parametro` solo existen en la app.
+- **Maestros propios de la app (sin FUNATLAB):** bitacora, cotas, unidad de despacho, vectorizacion, pronostico, promocion,
+  DIA por tienda, items, centro de operacion, demanda calificada, factores y parametros los alimenta el analista por pantalla
+  o por Excel (descargar lo que hay, modificar y cargar: crear nuevos, actualizar o reemplazar todo). El ETL no los toca.
+- **Reglas de pedido configurables** (pantalla “Reglas de pedido”, tabla `parametro`): cuando pedir, hasta donde, redondeo,
+  vectorizacion, transito, demanda calificada. El motor las lee en cada corrida.
+- **DIA de abastecimiento:** `bodega_dia` (una tienda puede estar en varios dias). En la matriz se elige el DIA, se ponen o quitan
+  tiendas, y el archivo plano sale solo con esas tiendas.
 - **Autenticacion** contra MySQL reloj (tabla USUARIOS, clave md5/bcrypt, solo lectura); **autorizacion** (perfiles por
   bodega/laboratorio) en Postgres (`rbac_asignacion`).
 - Toda edicion de maestros queda en `config_audit`.

@@ -4,7 +4,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
 from .config import settings
 from .orchestrator import pipeline_nocturno
-from .routers import auth, alertas, maestros, despacho, admin
+from .routers import auth, alertas, maestros, despacho, admin, reglas
 
 logging.basicConfig(level=logging.INFO)
 
@@ -19,7 +19,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="DDMRP API", lifespan=lifespan)
-for r in (auth, alertas, maestros, despacho, admin):
+for r in (auth, alertas, maestros, despacho, admin, reglas):
     app.include_router(r.router, prefix="/api")
 
 

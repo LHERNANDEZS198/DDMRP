@@ -21,12 +21,6 @@ class Settings(BaseSettings):
     siesa_user: str = ""
     siesa_password: str = ""
 
-    # --- FUNATLAB: dbGTIntegrationIntermediaReal (tablas Abastecimiento_*) ---
-    lab_server: str = ""      # p.ej. FUNATLAB\FUNATLAB  o  host,puerto
-    lab_db: str = "dbGTIntegrationIntermediaReal"
-    lab_user: str = ""
-    lab_password: str = ""
-
     # --- MySQL de reloj (solo usuario y clave) ---
     auth_mysql_host: str = ""
     auth_mysql_port: int = 3306
@@ -42,9 +36,6 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 480
     core_bin: str = "/usr/local/bin/ddmrp_core"
     etl_cron_hour: int = 2
-    # True: cada noche los maestros (bitacora, cotas, unidad despacho, vectorizacion) se recargan desde
-    # FUNATLAB y pisan lo editado en la app. Ponerlo en false cuando la app pase a ser el maestro.
-    sync_maestros: bool = True
 
     # --- Archivo plano de Siesa (requisicion inter-bodega, ver docs/Abastecimiento dia 4_15102026.xlsx) ---
     plano_tipo_docto: str = "RIT"
@@ -70,12 +61,6 @@ class Settings(BaseSettings):
         return quote_plus(f"DRIVER={{ODBC Driver 18 for SQL Server}};SERVER={self.siesa_host},{self.siesa_port};"
                           f"DATABASE={db};UID={self.siesa_user};PWD={self.siesa_password};"
                           f"Encrypt=optional;TrustServerCertificate=yes;")
-
-    @property
-    def lab_odbc(self) -> str:
-        db = f"DATABASE={self.lab_db};" if self.lab_db else ""
-        return quote_plus(f"DRIVER={{ODBC Driver 18 for SQL Server}};SERVER={self.lab_server};{db}"
-                          f"UID={self.lab_user};PWD={self.lab_password};Encrypt=optional;TrustServerCertificate=yes;")
 
     @property
     def mysql_url(self) -> str:

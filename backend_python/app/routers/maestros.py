@@ -1,15 +1,24 @@
 """Maestros editables desde la UI (lead time, cotas, unidad de despacho, vectorizacion, pronostico, promociones,
 factores y parametros del modelo). Todo el SQL sale de esta lista blanca: el cliente nunca elige tablas ni columnas."""
-from fastapi import APIRouter, Depends, HTTPException
+import csv, io
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import Response
+from openpyxl import Workbook, load_workbook
+from openpyxl.utils import get_column_letter
 from pydantic import BaseModel
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from ..db import pg
-from ..security import usuario_actual, filtro_sql_permisos, exigir, asignaciones, NIVELES
+from ..security import usuario_actual, filtro_sql_permisos, exigir, asignaciones, nivel_efectivo, NIVELES
 
 router = APIRouter(prefix="/maestros", tags=["maestros"])
 
 # tipo -> cast SQL
 CAST = {"num": "numeric", "int": "smallint", "txt": "text"}
+# tipo de las columnas llave que no son texto
+TIPO_LLAVE = {"dia": "int"}
+# columnas llave cuyo valor numerico de Excel pierde ceros a la izquierda -> se rellenan
+ANCHO = {"producto_id": 6, "empresa": 2}
 
 MAESTROS = {
     "bitacora": dict(
@@ -42,7 +51,26 @@ MAESTROS = {
         bodega=None, producto=None, global_=True),
     "parametros": dict(
         label="Parametros del modelo", tabla="ddmrp.parametro",
-        llave=["clave"], editable={"valor": "num"}, bodega=None, producto=None, global_=True),
+        llave=["clave"], editable={"valor": "num"}, bodega=None, producto=None, global_=True,
+        solo_existentes=True, sin_reemplazo=True),
+    "dias-bodega": dict(
+        label="DIA de abastecimiento por tienda", tabla="ddmrp.bodega_dia",
+        llave=["bodega_id", "dia"], editable={}, bodega="bodega_id", producto=None),
+    "items": dict(
+        label="Items: descripcion, laboratorio (categoria) y linea", tabla="ddmrp.maestro_item",
+        llave=["producto_id"], editable={"descripcion": "txt", "categoria": "txt", "linea": "txt"},
+        bodega=None, producto=None, global_=True, defecto={"descripcion": "producto_id"}),
+    "centro-operacion": dict(
+        label="Centro de operacion por bodega (archivo plano)", tabla="ddmrp.bodega_centro_operacion",
+        llave=["bodega_id"], editable={"id_co": "txt"}, bodega="bodega_id", producto=None),
+    "demanda-calificada": dict(
+        label="Demanda calificada (pedidos abiertos / picos)", tabla="ddmrp.demanda_calificada",
+        llave=["bodega_id", "producto_id"], editable={"cantidad": "num"},
+        bodega="bodega_id", producto="producto_id"),
+    "ventas-mensual": dict(
+        label="Ventas por mes (unidades)", tabla="ddmrp.ventas_mensual",
+        llave=["mes", "bodega_id", "producto_id"], editable={"cantidad": "num"},
+        bodega="bodega_id", producto="producto_id"),
 }
 
 
@@ -79,7 +107,8 @@ def _autorizar(user, d: dict, llave: dict, conn):
 
 @router.get("")
 def listar_maestros(user=Depends(usuario_actual)):
-    return [{"clave": k, "label": v["label"], "llave": v["llave"], "editable": list(v["editable"])}
+    return [{"clave": k, "label": v["label"], "llave": v["llave"], "editable": list(v["editable"]),
+             "tipos": v["editable"], "sin_reemplazo": bool(v.get("sin_reemplazo"))}
             for k, v in MAESTROS.items()]
 
 
@@ -123,7 +152,7 @@ def editar(nombre: str, cambios: list[Cambio], user=Depends(usuario_actual)):
                 raise HTTPException(400, f"La llave debe ser {d['llave']}")
             _autorizar(user, d, ch.llave, c)
             cast = CAST[d["editable"][ch.campo]]
-            donde = " AND ".join(f"{k} = :k_{k}" for k in d["llave"])
+            donde = " AND ".join(f"{k} = CAST(:k_{k} AS {CAST[TIPO_LLAVE.get(k, 'txt')]})" for k in d["llave"])
             kp = {f"k_{k}": ch.llave[k] for k in d["llave"]}
             ant = c.execute(text(f"SELECT {ch.campo}::text FROM {d['tabla']} WHERE {donde}"), kp).scalar()
             r = c.execute(text(f"UPDATE {d['tabla']} SET {ch.campo} = CAST(:v AS {cast}) WHERE {donde}"),
@@ -137,35 +166,241 @@ def editar(nombre: str, cambios: list[Cambio], user=Depends(usuario_actual)):
     return {"ok": True, "cambios": len(cambios)}
 
 
+# ---------------------------------------------------------------------------------------------------------
+# Carga masiva (pegar / Excel / CSV) y descarga a Excel
+# ---------------------------------------------------------------------------------------------------------
+MAX_FILAS = 400_000
+
+
+def _valor_llave(col: str, v) -> str:
+    """Normaliza una celda llave. Excel convierte '019901' en 19901: se recuperan los ceros."""
+    if v is None:
+        return ""
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)
+    t = str(v).strip()
+    if isinstance(v, int) and col in ANCHO:
+        t = t.zfill(ANCHO[col])
+    return t
+
+
+def _valor_num(v, tipo: str):
+    if v is None or (isinstance(v, str) and not v.strip()):
+        return None
+    if isinstance(v, str):
+        v = v.strip().replace(" ", "")
+        if v.count(",") == 1 and v.count(".") == 0:   # 1,5 -> 1.5
+            v = v.replace(",", ".")
+    x = float(v)
+    return int(x) if tipo == "int" else x
+
+
+def _leer_archivo(nombre_archivo: str, datos: bytes) -> list[dict]:
+    """Primera hoja del Excel (o CSV): fila 1 = encabezados. Devuelve filas como dict {encabezado_en_minusculas: valor}."""
+    if nombre_archivo.lower().endswith((".csv", ".txt")):
+        txt = datos.decode("utf-8-sig", errors="replace")
+        sep = max(",;\t", key=lambda c: txt.split("\n", 1)[0].count(c))
+        filas = list(csv.reader(io.StringIO(txt), delimiter=sep))
+    else:
+        try:
+            wb = load_workbook(io.BytesIO(datos), read_only=True, data_only=True)
+        except Exception:
+            raise HTTPException(400, "No pude leer el archivo: debe ser .xlsx o .csv")
+        filas = [list(r) for r in wb.worksheets[0].iter_rows(values_only=True)]
+    filas = [r for r in filas if r and any(c not in (None, "") for c in r)]
+    if len(filas) < 2:
+        raise HTTPException(400, "El archivo no tiene datos (fila 1 = encabezados, desde la fila 2 los datos)")
+    cab = [str(c).strip().lower() if c is not None else "" for c in filas[0]]
+    return [{c: (r[i] if i < len(r) else None) for i, c in enumerate(cab) if c} for r in filas[1:]]
+
+
+def _preparar(d: dict, filas: list[dict]) -> tuple[list[str], list[dict]]:
+    """Valida y normaliza. Devuelve (columnas editables presentes, filas listas)."""
+    presentes = set().union(*[f.keys() for f in filas]) if filas else set()
+    faltan = [k for k in d["llave"] if k not in presentes]
+    if faltan:
+        raise HTTPException(400, f"Faltan columnas llave: {faltan}. Encabezados: {d['llave'] + list(d['editable'])}")
+    cols = [c for c in d["editable"] if c in presentes]
+    if d["editable"] and not cols:
+        raise HTTPException(400, f"No hay ninguna columna a cargar. Encabezados: {d['llave'] + list(d['editable'])}")
+    malas, out = [], []
+    for n, f in enumerate(filas, start=2):
+        try:
+            llave = {k: _valor_llave(k, f.get(k)) for k in d["llave"]}
+            if not all(llave.values()):
+                raise ValueError("llave vacia")
+            for k in d["llave"]:
+                if TIPO_LLAVE.get(k) == "int":
+                    llave[k] = str(int(float(llave[k])))
+            fila = dict(llave)
+            for c in cols:
+                t = d["editable"][c]
+                fila[c] = _valor_num(f.get(c), t) if t in ("num", "int") else (str(f[c]).strip() if f.get(c) not in (None, "") else None)
+            out.append(fila)
+        except (ValueError, TypeError) as e:
+            malas.append(f"fila {n}: {e}")
+    if malas:
+        raise HTTPException(400, f"{len(malas)} fila(s) invalidas, p.ej.: " + "; ".join(malas[:5]))
+    if len(out) > MAX_FILAS:
+        raise HTTPException(400, f"Maximo {MAX_FILAS:,} filas por carga")
+    return cols, out
+
+
+def _autorizar_lote(user, d: dict, filas: list[dict], conn, reemplazo: bool):
+    if reemplazo and not _puede_global(user):
+        raise HTTPException(403, "Reemplazar un maestro completo requiere admin o permiso de edicion sobre todas las bodegas")
+    if d.get("bodega"):
+        cats: dict[str, str | None] = {}
+        if d.get("producto"):
+            prods = sorted({f[d["producto"]] for f in filas})
+            cats = dict(conn.execute(text("SELECT producto_id, categoria FROM ddmrp.maestro_item WHERE producto_id = ANY(:p)"),
+                                     {"p": prods}).all())
+        asigs = asignaciones(user["id"])
+        pares = {(f[d["bodega"]], cats.get(f[d["producto"]]) if d.get("producto") else None) for f in filas}
+        malos = [p for p in pares if nivel_efectivo(asigs, p[0], p[1]) < NIVELES["edicion"]]
+        if malos:
+            raise HTTPException(403, f"Sin permiso de edicion en {len(malos)} combinacion(es) bodega/laboratorio, p.ej. {malos[:3]}")
+    elif d.get("global_"):
+        if not _puede_global(user):
+            raise HTTPException(403, "Requiere permiso de edicion sobre todas las bodegas")
+    elif not _es_admin(user):
+        raise HTTPException(403, "Solo administradores")
+
+
+def _importar(nombre: str, d: dict, filas: list[dict], modo: str, user) -> dict:
+    try:
+        return _importar_(nombre, d, filas, modo, user)
+    except DBAPIError as e:  # p.ej. NOT NULL o valor fuera de rango: es error del archivo, no del servidor
+        raise HTTPException(400, "El archivo tiene datos que la base rechaza: " + str(e.orig).splitlines()[0][:300])
+
+
+def _importar_(nombre: str, d: dict, filas: list[dict], modo: str, user) -> dict:
+    if modo not in ("actualizar", "reemplazar"):
+        raise HTTPException(400, "modo debe ser 'actualizar' o 'reemplazar'")
+    reemplazo = modo == "reemplazar"
+    if reemplazo and d.get("sin_reemplazo"):
+        raise HTTPException(400, "Este maestro no admite reemplazo total: usa 'actualizar'")
+    cols, filas = _preparar(d, filas)
+    if not filas:
+        raise HTTPException(400, "El archivo no trae filas")
+    llave, tabla = d["llave"], d["tabla"]
+    defecto = d.get("defecto", {})
+    with pg.begin() as c:
+        _autorizar_lote(user, d, filas, c, reemplazo)
+        todas = llave + cols
+        c.execute(text("CREATE TEMP TABLE stg_carga (_n serial, " + ", ".join(f"{k} text" for k in todas) + ") ON COMMIT DROP"))
+        raw = c.connection
+        with raw.cursor() as cur, cur.copy(f"COPY stg_carga ({', '.join(todas)}) FROM STDIN") as cp:
+            for f in filas:
+                cp.write_row([None if f[k] is None else str(f[k]) for k in todas])
+        uniq = (f"(SELECT DISTINCT ON ({', '.join(llave)}) * FROM stg_carga ORDER BY {', '.join(llave)}, _n DESC) s")
+        tipos = {**{k: TIPO_LLAVE.get(k, "txt") for k in llave}, **d["editable"]}
+        def expr(k):
+            e = f"CAST(NULLIF(s.{k}, '') AS {CAST[tipos[k]]})"
+            return f"COALESCE({e}, s.{defecto[k]})" if k in defecto and k in cols else e
+        ins_cols = list(todas) + [k for k in defecto if k not in cols]
+        ins_val = [expr(k) if k in todas else f"s.{defecto[k]}" for k in ins_cols]
+        if d.get("solo_existentes"):
+            sel_where = f"WHERE EXISTS (SELECT 1 FROM {tabla} t WHERE " + " AND ".join(f"t.{k} = s.{k}" for k in llave) + ")"
+        else:
+            sel_where = ""
+        n_unicas = c.execute(text(f"SELECT count(*) FROM {uniq}")).scalar()
+        existentes = c.execute(text(f"SELECT count(*) FROM {uniq} JOIN {tabla} t ON " +
+                                    " AND ".join(f"t.{k} = CAST(s.{k} AS {CAST[tipos[k]]})" for k in llave))).scalar()
+        if reemplazo:
+            c.execute(text(f"DELETE FROM {tabla}"))
+            existentes = 0
+        upd = ", ".join(f"{k} = EXCLUDED.{k}" for k in cols)
+        c.execute(text(f"INSERT INTO {tabla} ({', '.join(ins_cols)}) SELECT {', '.join(ins_val)} FROM {uniq} {sel_where} "
+                       f"ON CONFLICT ({', '.join(llave)}) " + (f"DO UPDATE SET {upd}" if upd else "DO NOTHING")))
+        if d.get("solo_existentes"):
+            ignoradas = n_unicas - existentes
+            creadas = 0
+        else:
+            ignoradas, creadas = 0, n_unicas - existentes
+        c.execute(text("INSERT INTO ddmrp.config_audit (tabla, llave, campo, valor_anterior, valor_nuevo, usuario) "
+                       "VALUES (:t, '*', :m, NULL, :n, :u)"),
+                  {"t": nombre, "m": "carga_" + modo, "n": f"{len(filas)} filas ({creadas} nuevas)", "u": user["nombre"]})
+    return {"ok": True, "modo": modo, "filas": len(filas), "unicas": n_unicas, "creadas": creadas,
+            "actualizadas": 0 if reemplazo else existentes, "ignoradas": ignoradas}
+
+
 class Carga(BaseModel):
     filas: list[dict[str, float | int | str | None]]
+    modo: str = "actualizar"
 
 
 @router.post("/{nombre}/carga")
 def cargar(nombre: str, body: Carga, user=Depends(usuario_actual)):
     """Alta/actualizacion masiva (pegar desde Excel). Cada fila trae las columnas llave y las editables."""
     d = _def(nombre)
-    if nombre in ("factores", "parametros"):
-        raise HTTPException(400, "Use PATCH para factores y parametros")
-    if len(body.filas) > 50_000:
-        raise HTTPException(400, "Maximo 50.000 filas por carga")
+    return _importar(nombre, d, [{str(k).strip().lower(): v for k, v in f.items()} for f in body.filas], body.modo, user)
+
+
+@router.post("/{nombre}/excel")
+async def subir_excel(nombre: str, archivo: UploadFile = File(...), modo: str = Query("actualizar"),
+                      user=Depends(usuario_actual)):
+    """Carga un .xlsx / .csv. modo=actualizar: crea las filas nuevas y actualiza las existentes (solo las columnas
+    que vengan en el archivo). modo=reemplazar: borra el maestro y deja exactamente lo del archivo."""
+    d = _def(nombre)
+    datos = await archivo.read()
+    if len(datos) > 60_000_000:
+        raise HTTPException(400, "Archivo demasiado grande")
+    return _importar(nombre, d, _leer_archivo(archivo.filename or "", datos), modo, user)
+
+
+@router.get("/{nombre}/excel")
+def bajar_excel(nombre: str, user=Depends(usuario_actual)):
+    """Descarga lo que el usuario puede ver, con los mismos encabezados que acepta la carga (sirve de plantilla)."""
+    d = _def(nombre)
     cols = d["llave"] + list(d["editable"])
+    sel = ", ".join(f"t.{c}" for c in cols)
+    join, w, p = "", "TRUE", {}
+    if d.get("bodega"):
+        join = f"LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = t.{d['producto']}" if d.get("producto") else ""
+        w, p = filtro_sql_permisos(user, f"t.{d['bodega']}", "mi.categoria" if d.get("producto") else "'*'")
+    with pg.connect() as c:
+        filas = c.execute(text(f"SELECT {sel} FROM {d['tabla']} t {join} WHERE {w} ORDER BY "
+                               + ", ".join("t." + k for k in d["llave"]) + " LIMIT 1000000"), p).all()
+    wb = Workbook(write_only=True)
+    ws = wb.create_sheet("Datos")
+    ws.append(cols)
+    for r in filas:
+        ws.append([float(v) if hasattr(v, "as_tuple") else v for v in r])
+    ins = wb.create_sheet("Instrucciones")
+    for linea in (
+        [d["label"], "", "Fila 1 = encabezados (no los cambies). Desde la fila 2, los datos.",
+         "Columnas llave (identifican la fila): " + ", ".join(d["llave"]),
+         "Columnas a cargar: " + (", ".join(d["editable"]) or "(ninguna: la existencia de la fila es el dato)"),
+         "Actualizar: crea las filas nuevas y actualiza las existentes; solo toca las columnas que vengan en el archivo.",
+         "Reemplazar: borra el maestro y deja exactamente lo del archivo (solo admin / edicion en todas las bodegas)."]
+        + (["Las referencias van como texto de 6 digitos (ej. 019901)."] if "producto_id" in d["llave"] else [])):
+        ins.append([linea])
+    buf = io.BytesIO(); wb.save(buf)
+    return Response(buf.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{nombre}.xlsx"'})
+
+
+class Eliminar(BaseModel):
+    llaves: list[dict[str, str]]
+
+
+@router.post("/{nombre}/eliminar")
+def eliminar(nombre: str, body: Eliminar, user=Depends(usuario_actual)):
+    """Borra filas por su llave (p.ej. quitar una tienda de un DIA). No aplica a factores ni parametros."""
+    d = _def(nombre)
+    if d.get("sin_reemplazo") or nombre == "factores":
+        raise HTTPException(400, "Este maestro no admite eliminar filas")
+    if len(body.llaves) > 5000:
+        raise HTTPException(400, "Maximo 5.000 filas por eliminacion")
+    n = 0
     with pg.begin() as c:
-        for fila in body.filas:
-            faltan = [k for k in d["llave"] if not fila.get(k)]
-            if faltan:
-                raise HTTPException(400, f"Falta la llave {faltan} en {fila}")
-            llave = {k: str(fila[k]).strip() for k in d["llave"]}
-            _autorizar(user, d, llave, c)
-            vals = {k: llave[k] for k in d["llave"]}
-            for k, tipo in d["editable"].items():
-                vals[k] = fila.get(k)
-            ins = ", ".join(cols)
-            val = ", ".join(f"CAST(:{k} AS {CAST[d['editable'][k]]})" if k in d["editable"] else f":{k}" for k in cols)
-            upd = ", ".join(f"{k} = EXCLUDED.{k}" for k in d["editable"])
-            c.execute(text(f"INSERT INTO {d['tabla']} ({ins}) VALUES ({val}) "
-                           f"ON CONFLICT ({', '.join(d['llave'])}) DO UPDATE SET {upd}"), vals)
+        for ll in body.llaves:
+            if set(ll) != set(d["llave"]):
+                raise HTTPException(400, f"La llave debe ser {d['llave']}")
+            _autorizar(user, d, ll, c)
+            donde = " AND ".join(f"{k} = CAST(:k_{k} AS {CAST[TIPO_LLAVE.get(k, 'txt')]})" for k in d["llave"])
+            n += c.execute(text(f"DELETE FROM {d['tabla']} WHERE {donde}"), {f"k_{k}": ll[k] for k in d["llave"]}).rowcount
         c.execute(text("INSERT INTO ddmrp.config_audit (tabla, llave, campo, valor_anterior, valor_nuevo, usuario) "
-                       "VALUES (:t, '*', 'carga', NULL, :n, :u)"),
-                  {"t": nombre, "n": f"{len(body.filas)} filas", "u": user["nombre"]})
-    return {"ok": True, "filas": len(body.filas)}
+                       "VALUES (:t, '*', 'eliminar', :n, NULL, :u)"), {"t": nombre, "n": f"{n} filas", "u": user["nombre"]})
+    return {"ok": True, "eliminadas": n}

@@ -6,7 +6,7 @@ Implementacion: `core_rust/src/lib.rs` (con pruebas). Columnas del Excel entre p
 ## 1. Entradas
 | Dato | Origen en Postgres |
 |---|---|
-| Ventas mensuales, 7 meses (J..P; el ultimo es el mes en curso) | `abast_ventas` agrupada por `mes` (replica de Abastecimiento_Ventas_Tiendas_Funat) |
+| Ventas mensuales, 7 meses (J..P; el ultimo es el mes en curso) | `ventas_mensual` (mes, bodega, referencia, unidades), traida ya agregada de Siesa (`etl/sql/ventas_siesa.sql`) o cargada por Excel |
 | Lead time (AA), frecuencia (AC) | `abast_bitacora` por bodega |
 | Unidad de despacho (AD) | `abast_unidad_despacho` por referencia |
 | Cotas max / min (AX, AY) | `abast_control_referencias` |
@@ -16,7 +16,7 @@ Implementacion: `core_rust/src/lib.rs` (con pruebas). Columnas del Excel entre p
 | Factores LT / variabilidad (hoja Factores) | `factor_tramo` |
 | Multiplicadores de cota en promocion (1.2 / 1.1), rango ADU bajo (1 a 4) | `parametro` |
 | Inventario | `inventario_actual` (Siesa, por empresa) |
-| Transitos / demanda calificada | `transitos` / `demanda_calificada` (pendiente de fuente) |
+| Transitos / demanda calificada | `transitos`: traslados abiertos de Siesa (`t406_cm_movto_transito`, `f406_ind_estado = 0`, bodega de entrada = tienda, cantidad pendiente); `demanda_calificada`: por Excel |
 
 ## 2. Calculo
 1. **Pronostico ajustado (Q = CB):** `BK = ROUNDUP(BI + BI*BM)` con `BI` = promedio de los 7 meses y `BM` = desv.est./promedio.
@@ -31,11 +31,14 @@ Implementacion: `core_rust/src/lib.rs` (con pruebas). Columnas del Excel entre p
    `TOG aj = ROUNDUP(TOY aj + ZV + TOG*cotaMin)` (en promocion la cota min x 1.1; con promo=2 solo bodegas GN).
    Si W esta entre 1 y 4 y no hay promocion, los ajustados son TOY y TOG. La promocion no aplica a bodegas TC ni DM.
 
-## 3. Lo que el Excel no define (PROPUESTA, confirmar)
-- Flujo neto = inventario + transito - demanda calificada.
+## 3. Regla de pedido (confirmada por Lucas; los parametros se cambian en la pantalla "Reglas de pedido")
+Valores por defecto:
+- Flujo neto = inventario + transito - demanda calificada (`incluir_transito`, `restar_demanda_calificada`).
 - Zona: `<= TOR` roja · `<= TOY aj` amarilla · `<= TOG aj` verde · mayor, exceso. Sin buffer (TOG aj = 0): sin alerta.
-- Se pide cuando el flujo neto es `<= TOY aj`: cantidad = `TOG aj - flujo neto`, redondeada hacia arriba al multiplo de la unidad de despacho.
-- La vectorizacion (derrame) se suma tal cual a la cantidad sugerida.
+- Se pide (`regla_disparo`): 1 = flujo neto `<= TOY aj` · 2 = `<= TOR` · 3 = `< TOG aj`.
+- Cantidad = objetivo - flujo neto (`regla_objetivo`: 1 = TOG aj, 2 = TOY aj), al multiplo de la unidad de despacho
+  (`regla_redondeo`: 1 arriba, 2 cercano, 3 abajo). `cantidad_minima` descarta sugeridos pequenos.
+- La vectorizacion (derrame) se suma tal cual (`sumar_vectorizacion`).
 - El mes en curso entra completo en el promedio aunque este incompleto (como en el Excel): al inicio de mes el ADU sale subestimado.
 
 ## 4. Archivo plano de Siesa (Fase 2)
@@ -46,3 +49,7 @@ Excel que `docs/Abastecimiento día 4_15102026.xlsx`: hojas Inicial · Documento
   Si falta, se deduce con la regla del ejemplo (3 digitos finales del codigo, o `000`) y la respuesta avisa en el encabezado `X-Bodegas-CO-Derivado`.
 - Nota del documento y consecutivo inicial se eligen al exportar. `marcar_enviadas` pasa las filas a estado ENVIADA.
 - Cada usuario solo puede exportar si tiene permiso de aprobacion en todas las bodegas incluidas.
+
+## 5. DIA de abastecimiento
+Maestro `dias-bodega` (bodega, dia). En la matriz de despacho se elige el DIA, se agregan o quitan tiendas de esa corrida y
+el archivo plano se genera solo con ellas; la nota por defecto queda "ABASTECIMIENTO DEL <dia> DE <MES> DÍA <n>".

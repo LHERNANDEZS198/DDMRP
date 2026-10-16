@@ -4,6 +4,7 @@ import { hasToken, login } from './api'
 import Dashboard from './pages/Dashboard'
 import Config from './pages/Config'
 import Despacho from './pages/Despacho'
+import Reglas from './pages/Reglas'
 
 export default function App() {
   const [ok, setOk] = useState(hasToken())
@@ -21,12 +22,14 @@ export default function App() {
       <nav style={{ display: 'flex', gap: 16, padding: 12, borderBottom: '1px solid #ddd' }}>
         <NavLink to="/dashboard">Alertas</NavLink>
         <NavLink to="/despacho">Matriz de despacho</NavLink>
-        <NavLink to="/config">Configuracion</NavLink>
+        <NavLink to="/reglas">Reglas de pedido</NavLink>
+        <NavLink to="/config">Maestros</NavLink>
       </nav>
       <main style={{ flex: 1, padding: 12, minHeight: 0 }}>
         <Routes>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/despacho" element={<Despacho />} />
+          <Route path="/reglas" element={<Reglas />} />
           <Route path="/config" element={<Config />} />
           <Route path="*" element={<Navigate to="/dashboard" />} />
         </Routes>

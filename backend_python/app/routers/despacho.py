@@ -4,18 +4,32 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import text
 from ..db import pg
-from ..plano_siesa import co_derivado, generar_xlsx
+from ..plano_siesa import co_derivado, generar_xlsx, notas_por_defecto
 from ..security import usuario_actual, filtro_sql_permisos, exigir
 
 router = APIRouter(prefix="/despacho", tags=["despacho"])
 ULTIMA = "(SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok')"
 
 
+@router.get("/dias")
+def dias(user=Depends(usuario_actual)):
+    """DIA de abastecimiento de cada tienda (maestro dias-bodega) y todas las bodegas, para armar la corrida."""
+    with pg.connect() as c:
+        por_dia: dict[int, list[str]] = {}
+        for dia, b in c.execute(text("SELECT dia, bodega_id FROM ddmrp.bodega_dia ORDER BY dia, bodega_id")).all():
+            por_dia.setdefault(dia, []).append(b)
+        todas = [r[0] for r in c.execute(text("SELECT bodega_id FROM ddmrp.abast_bitacora ORDER BY bodega_id")).all()]
+    return {"dias": [{"dia": k, "bodegas": v} for k, v in sorted(por_dia.items())], "bodegas": todas}
+
+
 @router.get("/matriz")
-def matriz(bodega_id: str | None = None, solo_pendientes: bool = True, user=Depends(usuario_actual)):
+def matriz(bodega_id: str | None = None, bodegas: str | None = None, solo_pendientes: bool = True,
+           user=Depends(usuario_actual)):
+    """bodegas = lista separada por comas (las tiendas elegidas para la corrida del dia)."""
     w, p = filtro_sql_permisos(user)
     f = f"s.ejecucion_id = {ULTIMA} AND s.cantidad_sugerida > 0 AND {w}"
     if bodega_id: f += " AND s.bodega_id=:b"; p["b"] = bodega_id
+    if bodegas: f += " AND s.bodega_id = ANY(:bs)"; p["bs"] = [x.strip() for x in bodegas.split(",") if x.strip()]
     if solo_pendientes: f += " AND s.estado='PENDIENTE'"
     sql = f"""SELECT s.ejecucion_id, s.empresa, s.producto_id, mi.descripcion, mi.categoria, s.bodega_id, s.zona::text zona,
                      s.inventario, s.en_transito, s.flujo_neto, s.tor, s.toy_aj, s.tog_aj, s.unidad_despacho,
@@ -56,6 +70,8 @@ class PlanoReq(BaseModel):
     consec_inicial: int = 1              # consecutivo del primer documento
     notas: str | None = None             # por defecto "ABASTECIMIENTO DEL <dia> DE <MES>"
     marcar_enviadas: bool = False        # True: las filas exportadas pasan a estado ENVIADA
+    bodegas: list[str] | None = None     # solo estas tiendas (las elegidas para la corrida); None = todas las aprobadas
+    dia: int | None = None               # DIA de abastecimiento: se agrega a la nota por defecto
 
 
 @router.post("/exportar-plano")
@@ -68,8 +84,9 @@ def exportar_plano(req: PlanoReq, user=Depends(usuario_actual)):
                                  FROM ddmrp.sugerencias_envio s
                                  LEFT JOIN ddmrp.bodega_centro_operacion co ON co.bodega_id = s.bodega_id
                                  WHERE s.ejecucion_id = :e AND s.estado = 'APROBADA'
-                                   AND COALESCE(s.cantidad_aprobada, s.cantidad_sugerida) >= 0.5"""),
-                         {"e": eid}).all()
+                                   AND COALESCE(s.cantidad_aprobada, s.cantidad_sugerida) >= 0.5
+                                   AND (CAST(:bs AS text[]) IS NULL OR s.bodega_id = ANY(CAST(:bs AS text[])))"""),
+                         {"e": eid, "bs": req.bodegas or None}).all()
         if not rows:
             raise HTTPException(404, "No hay sugerencias aprobadas para exportar")
         for b in sorted({r[0] for r in rows}):
@@ -77,7 +94,8 @@ def exportar_plano(req: PlanoReq, user=Depends(usuario_actual)):
         derivados = sorted({r[0] for r in rows if not r[3]})
         lineas = [(r[0], r[3] or co_derivado(r[0]), r[1], float(r[2])) for r in rows]
         fecha = req.fecha or date.today()
-        data = generar_xlsx(lineas, fecha=fecha, consec_inicial=req.consec_inicial, notas=req.notas)
+        data = generar_xlsx(lineas, fecha=fecha, consec_inicial=req.consec_inicial,
+                            notas=req.notas or notas_por_defecto(fecha, req.dia))
         if req.marcar_enviadas:
             c.execute(text("""UPDATE ddmrp.sugerencias_envio SET estado = 'ENVIADA'::ddmrp.estado_sugerencia
                               WHERE ejecucion_id = :e AND estado = 'APROBADA'

@@ -22,7 +22,7 @@ v AS (
     COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 4), 0)::float8 AS m4,
     COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 5), 0)::float8 AS m5,
     COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 6), 0)::float8 AS m6
-  FROM ddmrp.abast_ventas a JOIN meses m ON m.mes = a.mes
+  FROM ddmrp.ventas_mensual a JOIN meses m ON m.mes = a.mes
   GROUP BY a.bodega_id, a.producto_id
 ),
 llaves AS (
@@ -97,6 +97,13 @@ fn leer_parametros(client: &mut Client) -> Result<Parametros> {
             "mult_cota_min_promo" => p.mult_cota_min_promo = v,
             "adu_bajo_min" => p.adu_bajo_min = v,
             "adu_bajo_max" => p.adu_bajo_max = v,
+            "regla_disparo" => p.regla_disparo = v as u8,
+            "regla_objetivo" => p.regla_objetivo = v as u8,
+            "regla_redondeo" => p.regla_redondeo = v as u8,
+            "sumar_vectorizacion" => p.sumar_vectorizacion = v != 0.0,
+            "incluir_transito" => p.incluir_transito = v != 0.0,
+            "restar_demanda_calificada" => p.restar_demanda_calificada = v != 0.0,
+            "cantidad_minima" => p.cantidad_minima = v,
             _ => {}
         }
     }
@@ -144,7 +151,7 @@ fn main() -> Result<()> {
         })
         .collect();
     if items.is_empty() {
-        bail!("no hay combinaciones bodega/producto para calcular (abast_ventas / abast_bitacora vacias?)");
+        bail!("no hay combinaciones bodega/producto para calcular (ventas_mensual / abast_bitacora vacias?)");
     }
 
     let res = calcular_lote(&items, &factores, &params);

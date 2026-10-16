@@ -27,8 +27,23 @@ export default function Despacho() {
   const [notas, setNotas] = useState('')
   const [consec, setConsec] = useState(1)
   const [marcar, setMarcar] = useState(false)
-  const cargar = () => api('/despacho/matriz').then(setRows)
-  useEffect(() => { cargar() }, [])
+  // Corrida del dia: DIA de abastecimiento + tiendas elegidas (se pueden poner o quitar antes de generar)
+  const [dias, setDias] = useState<{ dia: number; bodegas: string[] }[]>([])
+  const [todas, setTodas] = useState<string[]>([])
+  const [dia, setDia] = useState('')            // '' = sin DIA
+  const [filtrar, setFiltrar] = useState(false) // false = todas las tiendas
+  const [tiendas, setTiendas] = useState<string[]>([])
+  const [nueva, setNueva] = useState('')
+  useEffect(() => { api('/despacho/dias').then(x => { setDias(x.dias); setTodas(x.bodegas) }) }, [])
+  const elegirDia = (v: string) => {
+    setDia(v)
+    if (v === '') { setFiltrar(false); setTiendas([]); return }
+    setFiltrar(true); setTiendas(dias.find(d => String(d.dia) === v)?.bodegas ?? [])
+  }
+  const quitar = (b: string) => { setFiltrar(true); setTiendas(t => t.filter(x => x !== b)) }
+  const poner = (b: string) => { if (!b) return; setFiltrar(true); setTiendas(t => t.includes(b) ? t : [...t, b].sort()); setNueva('') }
+  const cargar = () => api('/despacho/matriz' + (filtrar ? '?bodegas=' + encodeURIComponent(tiendas.join(',') || '-') : '')).then(setRows)
+  useEffect(() => { cargar() }, [filtrar, tiendas.join(',')])
   const aprobar = async () => {
     const sel = grid?.getSelectedRows() ?? []
     if (!sel.length) { setMsg('Selecciona filas'); return }
@@ -41,16 +56,33 @@ export default function Despacho() {
   }
   const plano = async () => {
     try {
-      const r = await descargar('/despacho/exportar-plano', { notas: notas || null, consec_inicial: consec, marcar_enviadas: marcar })
+      const r = await descargar('/despacho/exportar-plano', { notas: notas || null, consec_inicial: consec, marcar_enviadas: marcar,
+        bodegas: filtrar ? tiendas : null, dia: dia ? Number(dia) : null })
       setMsg(`Descargado ${r.nombre}` + (r.derivado ? ` · centro de operacion deducido para: ${r.derivado}` : ''))
       if (marcar) cargar()
     } catch (x: any) { setMsg('Error: ' + x.message) }
   }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+        <b>Corrida:</b>
+        <select value={dia} onChange={e => elegirDia(e.target.value)}>
+          <option value="">Todas las tiendas</option>
+          {dias.map(d => <option key={d.dia} value={d.dia}>DIA {d.dia} ({d.bodegas.length} tiendas)</option>)}
+        </select>
+        {filtrar && tiendas.map(b => (
+          <span key={b} style={{ background: '#e8f0fe', borderRadius: 10, padding: '1px 8px' }}>
+            {b} <a href="#" style={{ textDecoration: 'none' }} title="Quitar de esta corrida" onClick={e => { e.preventDefault(); quitar(b) }}>×</a>
+          </span>))}
+        <select value={nueva} onChange={e => poner(e.target.value)}>
+          <option value="">+ agregar tienda…</option>
+          {todas.filter(b => !tiendas.includes(b)).map(b => <option key={b} value={b}>{b}</option>)}
+        </select>
+        {filtrar && <button onClick={() => { setDia(''); setFiltrar(false); setTiendas([]) }}>Ver todas</button>}
+      </div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <button onClick={aprobar}>Aprobar seleccionados</button>
-        <input style={{ width: 300 }} placeholder="Nota (ej. ABASTECIMIENTO DEL 15 DE OCTUBRE DÍA 4)" value={notas} onChange={e => setNotas(e.target.value)} />
+        <input style={{ width: 300 }} placeholder={`Nota (por defecto: ABASTECIMIENTO DEL <dia> DE <MES>${dia ? ` DÍA ${dia}` : ''})`} value={notas} onChange={e => setNotas(e.target.value)} />
         <label>Consecutivo inicial <input type="number" style={{ width: 70 }} min={1} value={consec} onChange={e => setConsec(Number(e.target.value))} /></label>
         <label><input type="checkbox" checked={marcar} onChange={e => setMarcar(e.target.checked)} /> marcar como enviadas</label>
         <button onClick={plano}>Generar archivo plano Siesa</button>

@@ -36,3 +36,25 @@ export async function descargar(path: string, body: unknown) {
   const a = document.createElement('a'); a.href = url; a.download = nombre; a.click(); URL.revokeObjectURL(url)
   return { nombre, derivado: r.headers.get('x-bodegas-co-derivado') }
 }
+
+function bajarBlob(blob: Blob, nombre: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a'); a.href = url; a.download = nombre; a.click(); URL.revokeObjectURL(url)
+}
+
+/** GET que devuelve un archivo (p.ej. el Excel de un maestro). */
+export async function bajar(path: string, nombre: string) {
+  const r = await fetch('/api' + path, { headers: { Authorization: `Bearer ${token}` } })
+  if (r.status === 401) { localStorage.removeItem('token'); location.reload() }
+  if (!r.ok) throw new Error((await r.json().catch(() => null))?.detail ?? (await r.text()))
+  bajarBlob(await r.blob(), nombre)
+}
+
+/** POST multipart con un archivo (Excel / CSV). */
+export async function subir<T = any>(path: string, archivo: File): Promise<T> {
+  const fd = new FormData(); fd.append('archivo', archivo)
+  const r = await fetch('/api' + path, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd })
+  if (r.status === 401) { localStorage.removeItem('token'); location.reload() }
+  if (!r.ok) throw new Error((await r.json().catch(() => null))?.detail ?? (await r.text()))
+  return r.json()
+}
