@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { AgGridReact } from 'ag-grid-react'
 import { ColDef, ICellRendererParams } from 'ag-grid-community'
 import { Autocomplete, Box, Button, Card, CardActionArea, Chip, Paper, Tab, Tabs, TextField, Tooltip, Typography } from '@mui/material'
+import { useLocation } from 'react-router-dom'
+import { BufferTrend, ZonaShare, Punto } from '../TrendCharts'
 import { api } from '../api'
 
 const COLOR: Record<string, string> = { ROJA: '#c62828', AMARILLA: '#f9a825', VERDE: '#2e7d32', EXCESO: '#1565c0' }
@@ -62,7 +64,40 @@ const pill = (p: ICellRendererParams) => p.value == null ? '' :
   <Chip size="small" label={p.value} sx={{ bgcolor: COLOR[p.value] ?? '#999', color: '#fff', height: 20, fontSize: 11 }} />
 const pctCell = (p: { value: any }) => p.value == null ? '' : Number(p.value).toFixed(0) + '%'
 
+const hoy = () => new Date().toISOString().slice(0, 10)
+const hace = (d: number) => new Date(Date.now() - d * 86400000).toISOString().slice(0, 10)
+const MOVS = [
+  { k: '', label: 'Todos los cambios' }, { k: 'entraron_rojo', label: 'Entraron a rojo' }, { k: 'salieron_rojo', label: 'Salieron de rojo' },
+  { k: 'empeoraron', label: 'Empeoraron' }, { k: 'mejoraron', label: 'Mejoraron' }, { k: 'entraron_exceso', label: 'Entraron a exceso' },
+]
+const delta = (a: number, b: number, malo: 'sube' | 'baja' | null) => {   // flecha con color segun si subir es bueno o malo
+  const d = b - a; if (!d) return <span style={{ color: '#777' }}>= 0</span>
+  const mal = malo === null ? false : (malo === 'sube') === (d > 0)
+  return <span style={{ color: malo === null ? '#555' : mal ? '#c62828' : '#2e7d32', fontWeight: 600 }}>{d > 0 ? '▲' : '▼'} {Math.abs(d).toLocaleString(undefined, { maximumFractionDigits: 1 })}</span>
+}
+function Antes({ p, ini, fin, malo }: { p: ICellRendererParams; ini: string; fin: string; malo: 'sube' | 'baja' | null }) {
+  const a = +p.data[ini], b = +p.data[fin]
+  return <span>{a.toLocaleString()} → <b>{b.toLocaleString()}</b> {delta(a, b, malo)}</span>
+}
+/** Dos barras finas: zonas al inicio y al final del periodo. */
+function ZonaBar2(p: ICellRendererParams) {
+  const g = p.data; if (!g) return null
+  const una = (suf: string, n: number) => (
+    <Box sx={{ display: 'flex', height: 9, width: '100%', borderRadius: .5, overflow: 'hidden', bgcolor: '#eee' }}>
+      {ZONAS.map(z => g[KEY[z] + suf] > 0 && n > 0 && <Box key={z} sx={{ width: `${(g[KEY[z] + suf] / n) * 100}%`, bgcolor: COLOR[z] }} />)}
+    </Box>)
+  return <Box sx={{ display: 'grid', gap: '3px', alignSelf: 'center', width: '100%', mt: '9px' }}>{una('_ini', g.n_ini)}{una('_fin', g.n_fin)}</Box>
+}
+
 export default function Control() {
+  const ruta = useLocation().pathname
+  const cambiosModo = ruta.startsWith('/control/cambios')
+  const tendModo = ruta.startsWith('/control/tendencia')
+  const [serie, setSerie] = useState<Punto[]>([])
+  const [desde, setDesde] = useState(hace(ruta.startsWith('/control/tendencia') ? 90 : 7)); const [hasta, setHasta] = useState(hoy())
+  const [mov, setMov] = useState('')
+  const [periodo, setPeriodo] = useState<{ desde: string; hasta: string } | null>(null)
+  const [matriz, setMatriz] = useState<{ de: string; a: string; n: number }[]>([])
   const [f, setF] = useState<F>(VACIO)
   const [qTxt, setQTxt] = useState('')
   const [nivel, setNivel] = useState<Nivel>('empresa')
@@ -77,16 +112,26 @@ export default function Control() {
   useEffect(() => { const t = setTimeout(() => setF(x => x.q === qTxt ? x : { ...x, q: qTxt }), 400); return () => clearTimeout(t) }, [qTxt])
 
   const clave = qs(f).toString()
+  const per = `desde=${desde}&hasta=${hasta}`
+  useEffect(() => { setNivel(n => n === 'empresa' ? n : n) }, [cambiosModo])
   useEffect(() => {
     let vivo = true; setCargando(true); setErr('')
-    api('/control/resumen?agrupar=empresa&' + qs(f, true)).then(r => vivo && setKpi(r.total)).catch(e => vivo && setErr(e.message))
-    const p = nivel === 'detalle' ? api('/control/detalle?limit=5000&' + qs(f)).then(r => vivo && setDet(r))
-      : api(`/control/resumen?agrupar=${nivel}&` + qs(f)).then(r => vivo && setGrupos(r.grupos))
+    if (tendModo) {
+      api(`/control/tendencia?${qs(f, true)}&${per}`).then(r => vivo && setSerie(r.serie)).catch(e => vivo && setErr(e.message)).finally(() => vivo && setCargando(false))
+      return () => { vivo = false }
+    }
+    const base = cambiosModo ? '/control/cambios' : '/control/resumen'
+    const extra = cambiosModo ? '&' + per : ''
+    api(`${base}?agrupar=empresa&${qs(f, true)}${extra}`).then(r => { if (!vivo) return; setKpi(r.total); if (cambiosModo) { setPeriodo(r.periodo); setMatriz(r.matriz) } })
+      .catch(e => vivo && setErr(e.message))
+    const p = nivel === 'detalle'
+      ? api(cambiosModo ? `/control/cambios/detalle?limit=5000&mov=${mov}&${qs(f)}&${per}` : '/control/detalle?limit=5000&' + qs(f)).then(r => vivo && setDet(r))
+      : api(`${base}?agrupar=${nivel}&${qs(f)}${extra}`).then(r => vivo && setGrupos(r.grupos))
     p.catch(e => vivo && setErr(e.message)).finally(() => vivo && setCargando(false))
     return () => { vivo = false }
-  }, [clave, nivel])
+  }, [clave, nivel, cambiosModo, tendModo, desde, hasta, mov])
 
-  const total = kpi?.n || 1
+  const total = (cambiosModo ? kpi?.n_fin : kpi?.n) || 1
   const nombreTienda = (id: string) => opc.tiendas.find((t: any) => t.bodega_id === id)?.nombre
   const entrar = (clave: string) => {   // zoom in: aplica el filtro del grupo y baja un nivel
     setF(x => nivel === 'empresa' ? { ...x, empresa: [clave] } : nivel === 'bodega' ? { ...x, bodegas: [clave] }
@@ -113,6 +158,32 @@ export default function Control() {
     { field: 'a_pedir', headerName: 'A pedir', type: 'numericColumn', width: 100 },
     { field: 'unidades', headerName: 'Unidades sug.', type: 'numericColumn', width: 130, valueFormatter: p => Math.round(p.value).toLocaleString() },
   ], [nivel])
+  const colsCambios: ColDef[] = useMemo(() => [
+    { field: 'clave', headerName: NIVELES.find(n => n.k === nivel)?.label, width: 130, pinned: 'left' },
+    { field: 'nombre', headerName: 'Nombre', flex: 1, minWidth: 170 },
+    { headerName: 'Antes / ahora', cellRenderer: ZonaBar2, width: 200, sortable: false },
+    { headerName: 'Rojo', width: 180, cellRenderer: (p: ICellRendererParams) => <Antes p={p} ini="roja_ini" fin="roja_fin" malo="sube" /> },
+    { headerName: 'Amarillo', width: 170, cellRenderer: (p: ICellRendererParams) => <Antes p={p} ini="amarilla_ini" fin="amarilla_fin" malo={null} /> },
+    { headerName: 'Verde', width: 180, cellRenderer: (p: ICellRendererParams) => <Antes p={p} ini="verde_ini" fin="verde_fin" malo="baja" /> },
+    { headerName: 'Exceso', width: 170, cellRenderer: (p: ICellRendererParams) => <Antes p={p} ini="exceso_ini" fin="exceso_fin" malo="sube" /> },
+    { headerName: '% buffer prom.', width: 190, cellRenderer: (p: ICellRendererParams) => <Antes p={p} ini="pct_ini" fin="pct_fin" malo="baja" /> },
+    { field: 'entraron_rojo', headerName: 'Entraron a rojo', type: 'numericColumn', width: 130, cellStyle: { color: COLOR.ROJA, fontWeight: 600 } },
+    { field: 'salieron_rojo', headerName: 'Salieron de rojo', type: 'numericColumn', width: 135, cellStyle: { color: COLOR.VERDE, fontWeight: 600 } },
+    { field: 'empeoraron', headerName: 'Empeoraron', type: 'numericColumn', width: 115 },
+    { field: 'mejoraron', headerName: 'Mejoraron', type: 'numericColumn', width: 110 },
+  ], [nivel])
+  const colsDetCambios: ColDef[] = [
+    { field: 'bodega_id', headerName: 'Tienda', width: 100, pinned: 'left', filter: true },
+    { field: 'bodega_nombre', headerName: 'Nombre tienda', width: 160, filter: true },
+    { field: 'producto_id', headerName: 'Item', width: 100, filter: true },
+    { field: 'descripcion', headerName: 'Descripción', flex: 1, minWidth: 220, filter: true },
+    { field: 'laboratorio', headerName: 'Lab.', width: 90, filter: true },
+    { field: 'zona_ini', headerName: 'Antes', width: 115, cellRenderer: pill, filter: true },
+    { field: 'zona_fin', headerName: 'Ahora', width: 115, cellRenderer: pill, filter: true },
+    { field: 'pct_ini', headerName: '% antes', type: 'numericColumn', width: 95, valueFormatter: pctCell },
+    { field: 'pct_fin', headerName: '% ahora', type: 'numericColumn', width: 95, valueFormatter: pctCell },
+    { field: 'delta', headerName: 'Cambio (pp)', type: 'numericColumn', width: 115, sort: 'asc', valueFormatter: p => p.value == null ? '' : (p.value > 0 ? '+' : '') + Number(p.value).toFixed(0) },
+  ]
   const colsDet: ColDef[] = [
     { field: 'bodega_id', headerName: 'Tienda', width: 100, pinned: 'left', filter: true },
     { field: 'bodega_nombre', headerName: 'Nombre tienda', width: 160, filter: true },
@@ -132,29 +203,32 @@ export default function Control() {
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 1.5, minHeight: 600 }}>
       {/* Indicadores del alcance actual: clic en una zona = filtrar por ella */}
-      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'repeat(2, 1fr)', md: 'repeat(5, 1fr)' }, gap: 1.5 }}>
-        <Card variant="outlined" sx={{ borderLeft: '6px solid #6e8a37' }}>
+      <Typography variant="h6" sx={{ fontWeight: 700 }}>{tendModo ? 'Control DDMRP · tendencia en el tiempo' : cambiosModo ? 'Control DDMRP · cambios en un periodo' : 'Control DDMRP · foto actual'}</Typography>
+      {!tendModo && <Box sx={{ display: 'grid', flexShrink: 0, gridTemplateColumns: { xs: 'repeat(2, 1fr)', md: 'repeat(5, 1fr)' }, gap: 1.5 }}>
+        <Card variant="outlined" sx={{ borderLeft: '6px solid #6e8a37', flexShrink: 0 }}>
           <Box sx={{ p: 1.25 }}>
             <Typography variant="caption" color="text.secondary">Alcance actual</Typography>
-            <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2 }}>{kpi ? kpi.n.toLocaleString() : '…'}</Typography>
-            <Typography variant="caption" color="text.secondary">combinaciones · buffer prom. {kpi?.pct_prom ?? '–'}%</Typography>
+            <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2 }}>{kpi ? (cambiosModo ? kpi.n_fin : kpi.n).toLocaleString() : '…'}</Typography>
+            <Typography variant="caption" color="text.secondary">combinaciones · buffer prom. {cambiosModo ? kpi?.pct_fin : kpi?.pct_prom ?? '–'}%</Typography>
           </Box>
         </Card>
         {ZONAS.map(z => {
-          const n = kpi?.[KEY[z]] ?? 0, activo = f.zonas.includes(z)
+          const n = kpi?.[KEY[z] + (cambiosModo ? '_fin' : '')] ?? 0, activo = f.zonas.includes(z)
+          const n0 = kpi?.[KEY[z] + '_ini'] ?? 0
           return (
             <Card key={z} variant="outlined" sx={{ borderLeft: `6px solid ${COLOR[z]}`, outline: activo ? `2px solid ${COLOR[z]}` : 'none' }}>
               <CardActionArea sx={{ p: 1.25 }} onClick={() => setF(x => ({ ...x, zonas: activo ? x.zonas.filter(y => y !== z) : [...x.zonas, z] }))}>
                 <Typography variant="caption" color="text.secondary">{z === 'ROJA' ? 'Rojo' : z === 'AMARILLA' ? 'Amarillo' : z === 'VERDE' ? 'Verde' : 'Exceso'}</Typography>
                 <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2 }}>{n.toLocaleString()}</Typography>
-                <Typography variant="caption" color="text.secondary">{((n / total) * 100).toFixed(1)}% del alcance</Typography>
+                <Typography variant="caption" color="text.secondary">{((n / total) * 100).toFixed(1)}% del alcance
+                  {cambiosModo && <> · {delta(n0, n, z === 'VERDE' ? 'baja' : z === 'AMARILLA' ? null : 'sube')}</>}</Typography>
               </CardActionArea>
             </Card>)
         })}
-      </Box>
+      </Box>}
 
       {/* Filtros */}
-      <Paper variant="outlined" sx={{ p: 1.25, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
+      <Paper variant="outlined" sx={{ flexShrink: 0, p: 1.25, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
         <Autocomplete multiple size="small" limitTags={1} sx={{ minWidth: 200, flex: '1 1 200px' }} options={opc.empresas} value={f.empresa}
           getOptionLabel={(o: string) => o === '05' ? 'Funat (05)' : o === '21' ? 'Stores (21)' : o}
           onChange={(_, v) => setF(x => ({ ...x, empresa: v }))} renderInput={p => <TextField {...p} label="Empresa" />} />
@@ -172,8 +246,47 @@ export default function Control() {
         {hayFiltros && <Button size="small" onClick={() => { setF(VACIO); setQTxt('') }}>Toda la empresa</Button>}
       </Paper>
 
+      {(cambiosModo || tendModo) && (
+        <Paper variant="outlined" sx={{ flexShrink: 0, p: 1.25, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
+          <Typography sx={{ fontWeight: 700 }}>Periodo</Typography>
+          <TextField size="small" type="date" label="Desde" value={desde} onChange={e => e.target.value && setDesde(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} />
+          <TextField size="small" type="date" label="Hasta" value={hasta} onChange={e => e.target.value && setHasta(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} />
+          {(tendModo ? [['30 días', 30], ['90 días', 90], ['6 meses', 180], ['12 meses', 365]] : [['Ayer', 1], ['7 días', 7], ['30 días', 30], ['90 días', 90]]).map(([l, d]) =>
+            <Button key={l as string} size="small" variant="outlined" onClick={() => { setDesde(hace(d as number)); setHasta(hoy()) }}>{l}</Button>)}
+          <Box sx={{ flex: 1 }} />
+          {cambiosModo && periodo && <Typography variant="caption" color="text.secondary">Comparando la corrida del {periodo.desde} contra la del {periodo.hasta}
+            {periodo.desde === periodo.hasta ? ' (solo hay una corrida guardada en ese rango)' : ''}</Typography>}
+        </Paper>)}
+      {cambiosModo && matriz.length > 0 && (
+        <Paper variant="outlined" sx={{ flexShrink: 0, p: 1.25, overflow: 'auto' }}>
+          <Typography variant="caption" color="text.secondary">Movimientos entre zonas (filas = antes, columnas = ahora)</Typography>
+          <Box component="table" sx={{ borderCollapse: 'collapse', mt: .5, '& td, & th': { border: '1px solid #e0e0e0', px: 1.5, py: .4, textAlign: 'right', fontSize: 13 } }}>
+            <thead><tr><th></th>{ZONAS.map(z => <th key={z} style={{ color: COLOR[z] }}>{z}</th>)}</tr></thead>
+            <tbody>{ZONAS.map(a => (
+              <tr key={a}><th style={{ color: COLOR[a], textAlign: 'left' }}>{a}</th>
+                {ZONAS.map(b => { const n = matriz.find(m => m.de === a && m.a === b)?.n ?? 0
+                  return <td key={b} style={{ background: a === b ? '#f5f5f5' : n ? 'rgba(110,138,55,.12)' : undefined, fontWeight: a !== b && n ? 700 : 400 }}>{n ? n.toLocaleString() : '·'}</td> })}
+              </tr>))}</tbody>
+          </Box>
+        </Paper>)}
+
       {/* Zoom: nivel de agrupación + migas de pan para alejarse */}
-      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
+      {tendModo && (
+        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
+          <Box sx={{ flex: 1 }} />
+          {f.empresa.map(v => <Chip key={'e' + v} size="small" color="primary" label={`Empresa ${v}`} onDelete={() => quitar('empresa', v)} />)}
+          {f.bodegas.map(v => <Chip key={'b' + v} size="small" color="primary" label={`Tienda ${v}`} onDelete={() => quitar('bodegas', v)} />)}
+          {f.labs.map(v => <Chip key={'l' + v} size="small" color="primary" label={`Lab ${v}`} onDelete={() => quitar('labs', v)} />)}
+          {f.q && <Chip size="small" color="primary" label={`Item “${f.q}”`} onDelete={() => quitar('q')} />}
+        </Box>)}
+      {tendModo && (
+        <Paper variant="outlined" sx={{ p: 1.5, flexShrink: 0 }}>
+          <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>Buffer en el tiempo{serie.length ? ` · ${serie[serie.length - 1].n.toLocaleString()} combinación(es)` : ''}</Typography>
+          <Typography variant="caption" color="text.secondary">Para la curva de un solo item en una sola tienda, elige esa tienda y escribe el código del item. Si no, las unidades de todo lo filtrado se suman.</Typography>
+          <BufferTrend serie={serie} />
+          {serie.some(p => p.n > 1) && <><Typography variant="subtitle2" sx={{ fontWeight: 700, mt: 2 }}>Semáforo en el tiempo (% de combinaciones por zona)</Typography><ZonaShare serie={serie} /></>}
+        </Paper>)}
+      {!tendModo && <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
         <Tabs value={nivel} onChange={(_, v) => setNivel(v)} variant="scrollable" sx={{ minHeight: 36, '& .MuiTab-root': { minHeight: 36, textTransform: 'none' } }}>
           {NIVELES.map(n => <Tab key={n.k} value={n.k} label={n.label} />)}
         </Tabs>
@@ -184,18 +297,22 @@ export default function Control() {
         {f.zonas.map(v => <Chip key={'z' + v} size="small" sx={{ bgcolor: COLOR[v], color: '#fff' }} label={v} onDelete={() => quitar('zonas', v)} />)}
         {f.q && <Chip size="small" color="primary" label={`Item “${f.q}”`} onDelete={() => quitar('q')} />}
         {f.dia && <Chip size="small" color="primary" label={`DIA ${f.dia}`} onDelete={() => quitar('dia')} />}
-      </Box>
+      </Box>}
+      {cambiosModo && !tendModo && nivel === 'detalle' && (
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+          {MOVS.map(m => <Chip key={m.k} size="small" label={m.label} color={mov === m.k ? 'primary' : 'default'} variant={mov === m.k ? 'filled' : 'outlined'} onClick={() => setMov(m.k)} />)}
+        </Box>)}
       {err && <Typography color="error" variant="body2">{err}</Typography>}
-      {opc.ejecucion && <Typography variant="caption" color="text.secondary">
+      {!tendModo && opc.ejecucion && <Typography variant="caption" color="text.secondary">
         Corte del motor: {String(opc.ejecucion.fecha_calculo).slice(0, 10)}
         {nivel !== 'detalle' ? ' · clic en una fila para acercarte' : det.truncado ? ` · mostrando ${det.filas.length.toLocaleString()} de ${det.total.toLocaleString()} (las más críticas); filtra para ver el resto` : ` · ${det.total.toLocaleString()} filas`}
       </Typography>}
 
-      <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 320 }}>
+      {!tendModo && <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 320 }}>
         {nivel === 'detalle'
-          ? <AgGridReact key="det" rowData={det.filas} columnDefs={colsDet} rowBuffer={20} loading={cargando} defaultColDef={{ resizable: true, sortable: true }} />
-          : <AgGridReact key={nivel} rowData={grupos} columnDefs={colsGrupo} rowBuffer={20} loading={cargando} defaultColDef={{ resizable: true, sortable: true }}
+          ? <AgGridReact key={'det' + cambiosModo} rowData={det.filas} columnDefs={cambiosModo ? colsDetCambios : colsDet} rowBuffer={20} loading={cargando} defaultColDef={{ resizable: true, sortable: true }} />
+          : <AgGridReact key={nivel + cambiosModo} rowData={grupos} columnDefs={cambiosModo ? colsCambios : colsGrupo} rowBuffer={20} loading={cargando} defaultColDef={{ resizable: true, sortable: true }}
               onRowClicked={e => e.data && entrar(String(e.data.clave))} rowStyle={{ cursor: 'pointer' }} rowHeight={40} />}
-      </Box>
+      </Box>}
     </Box>)
 }

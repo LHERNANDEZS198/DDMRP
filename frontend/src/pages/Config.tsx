@@ -75,13 +75,14 @@ export default function Config() {
     window.confirm(`REEMPLAZAR borra todo “${def?.label}” y deja exactamente lo que cargues. ¿Continuar?`)
 
   const descargar = async () => {
-    try { await bajar(`/maestros/${sel}/excel`, `${sel}.xlsx`); setMsg('Descargado ' + sel + '.xlsx') }
+    try { setMsg(`Preparando ${sel}.xlsx… los maestros grandes tardan un poco`); await bajar(`/maestros/${sel}/excel`, `${sel}.xlsx`); setMsg('Descargado ' + sel + '.xlsx') }
     catch (x: any) { setMsg('Error: ' + x.message) }
   }
   const subirArchivo = async (f: File | undefined) => {
     if (!f) return
     if (!confirmarModo()) { if (fileRef.current) fileRef.current.value = ''; return }
-    try { setMsg('Cargando...'); setMsg(resumen(await subir(`/maestros/${sel}/excel?modo=${modo}&omitir_invalidas=${omitir}`, f))); cargar() }
+    const mb = (f.size / 1048576).toFixed(1)
+    try { setMsg(`Subiendo ${f.name} (${mb} MB) y validando cada fila… con cientos de miles de filas puede tardar varios minutos, no cierres esta pantalla`); setMsg(resumen(await subir(`/maestros/${sel}/excel?modo=${modo}&omitir_invalidas=${omitir}`, f))); cargar() }
     catch (x: any) { setMsg('Error: ' + x.message) }
     if (fileRef.current) fileRef.current.value = ''
   }
@@ -90,12 +91,13 @@ export default function Config() {
     if (!filas.length) { setMsg('Pega encabezados y al menos una fila'); return }
     if (!confirmarModo()) return
     try {
+      setMsg(`Cargando ${filas.length.toLocaleString()} filas pegadas…`)
       const r = await api('/maestros/' + sel + '/carga', { method: 'POST', body: JSON.stringify({ filas, modo, omitir_invalidas: omitir }) })
       setMsg(resumen(r)); setPegar(false); setTxt(''); cargar()
     } catch (x: any) { setMsg('Error: ' + x.message) }
   }
   const traerTiendas = async () => {
-    try { setMsg('Trayendo tiendas de Siesa...'); const r = await api('/admin/sincronizar-bodegas', { method: 'POST' }); setMsg(`Tiendas sincronizadas: ${r.tiendas}`) }
+    try { setMsg('Trayendo las tiendas de Siesa…'); const r = await api('/admin/sincronizar-bodegas', { method: 'POST' }); setMsg(`Tiendas sincronizadas: ${r.tiendas}`) }
     catch (x: any) { setMsg('Error: ' + x.message) }
   }
   const eliminar = async () => {
@@ -103,6 +105,7 @@ export default function Config() {
     if (!def || !s.length) { setMsg('Selecciona filas para eliminar'); return }
     if (!window.confirm(`Eliminar ${s.length} fila(s) de “${def.label}”?`)) return
     try {
+      setMsg(`Eliminando ${s.length.toLocaleString()} fila(s)…`)
       const r = await api(`/maestros/${sel}/eliminar`, { method: 'POST',
         body: JSON.stringify({ llaves: s.map(x => Object.fromEntries(def.llave.map(k => [k, String(x[k])]))) }) })
       setMsg(`Eliminadas ${r.eliminadas}`); cargar()

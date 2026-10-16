@@ -60,6 +60,7 @@ export default function Despacho() {
   }
   const plano = async () => {
     try {
+      setMsg('Generando el archivo plano de Siesa…')
       const r = await descargar('/despacho/exportar-plano', { notas: notas || null, consec_inicial: consec, marcar_enviadas: marcar,
         bodegas: filtrar ? tiendas : null, dia: dia ? Number(dia) : null })
       setMsg(`Descargado ${r.nombre}` + (r.derivado ? ` · centro de operacion deducido para: ${r.derivado}` : ''))

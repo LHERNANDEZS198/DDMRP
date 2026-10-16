@@ -16,6 +16,8 @@ export default function App() {
     <Routes>
       <Route element={<Shell />}>
         <Route path="/control" element={<Control />} />
+        <Route path="/control/cambios" element={<Control />} />
+        <Route path="/control/tendencia" element={<Control />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/despacho" element={<Despacho />} />
         <Route path="/reglas" element={<Reglas />} />

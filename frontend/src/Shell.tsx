@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { AppBar, Avatar, Box, Divider, Drawer, IconButton, List, ListItemButton, ListItemIcon, ListItemText, Menu, MenuItem,
   Toolbar, Typography, useMediaQuery, useTheme, Button } from '@mui/material'
+import ExpandMore from '@mui/icons-material/ExpandMore'
 import MenuIcon from '@mui/icons-material/Menu'
 import LogoutIcon from '@mui/icons-material/Logout'
 import WarningAmber from '@mui/icons-material/WarningAmber'
@@ -11,8 +12,13 @@ import Insights from '@mui/icons-material/Insights'
 import Storage from '@mui/icons-material/Storage'
 import { getUser, logout } from './api'
 
+export const VISTAS = [
+  { to: '/control', label: 'Foto actual', ayuda: 'Estado del buffer hoy' },
+  { to: '/control/cambios', label: 'Cambios en un periodo', ayuda: 'Cómo se movió el semáforo entre dos fechas' },
+  { to: '/control/tendencia', label: 'Tendencia en el tiempo', ayuda: 'Curva del buffer, inventario y flujo neto' },
+]
 export const NAV = [
-  { to: '/control', label: 'Control DDMRP', icon: <Insights /> },
+  { to: '/control', label: 'Control DDMRP', icon: <Insights />, vistas: true },
   { to: '/dashboard', label: 'Alertas', icon: <WarningAmber /> },
   { to: '/despacho', label: 'Matriz de despacho', icon: <LocalShipping /> },
   { to: '/reglas', label: 'Reglas de pedido', icon: <Rule /> },
@@ -22,7 +28,8 @@ export const NAV = [
 export default function Shell() {
   const theme = useTheme(); const movil = useMediaQuery(theme.breakpoints.down('md'))
   const [abierto, setAbierto] = useState(false); const [ancla, setAncla] = useState<HTMLElement | null>(null)
-  const loc = useLocation(); const user = getUser()
+  const loc = useLocation(); const user = getUser(); const nav = useNavigate()
+  const [anclaV, setAnclaV] = useState<HTMLElement | null>(null)
   const titulo = NAV.find(n => loc.pathname.startsWith(n.to))?.label ?? ''
   return (
     <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -31,7 +38,15 @@ export default function Shell() {
           {movil && <IconButton color="inherit" edge="start" onClick={() => setAbierto(true)}><MenuIcon /></IconButton>}
           <Box component="img" src="/logo-sersa.jpeg" alt="" sx={{ height: 30, borderRadius: 1, bgcolor: 'white', p: .3 }} />
           <Typography sx={{ fontWeight: 700, mr: 2 }}>DDMRP</Typography>
-          {!movil ? NAV.map(n => (
+          {!movil ? NAV.map(n => (n as any).vistas ? (
+            <Box key={n.to}>
+              <Button color="inherit" startIcon={n.icon} endIcon={<ExpandMore />} onClick={e => setAnclaV(e.currentTarget)}
+                sx={{ opacity: loc.pathname.startsWith(n.to) ? 1 : .75, borderBottom: loc.pathname.startsWith(n.to) ? '2px solid #fff' : '2px solid transparent', borderRadius: 0 }}>{n.label}</Button>
+              <Menu anchorEl={anclaV} open={!!anclaV} onClose={() => setAnclaV(null)}>
+                {VISTAS.map(v => <MenuItem key={v.to} selected={loc.pathname === v.to} onClick={() => { setAnclaV(null); nav(v.to) }}>
+                  <Box><Box sx={{ fontWeight: 600 }}>{v.label}</Box><Box sx={{ fontSize: 12, color: 'text.secondary' }}>{v.ayuda}</Box></Box></MenuItem>)}
+              </Menu>
+            </Box>) : (
             <Button key={n.to} component={NavLink} to={n.to} color="inherit" startIcon={n.icon}
               sx={{ opacity: loc.pathname.startsWith(n.to) ? 1 : .75, borderBottom: loc.pathname.startsWith(n.to) ? '2px solid #fff' : '2px solid transparent', borderRadius: 0 }}>
               {n.label}</Button>))
@@ -48,8 +63,8 @@ export default function Shell() {
       </AppBar>
       <Drawer open={abierto} onClose={() => setAbierto(false)}>
         <List sx={{ width: 250 }}>
-          {NAV.map(n => (
-            <ListItemButton key={n.to} component={NavLink} to={n.to} onClick={() => setAbierto(false)} selected={loc.pathname.startsWith(n.to)}>
+          {NAV.flatMap(n => (n as any).vistas ? VISTAS.map(v => ({ to: v.to, label: 'Control · ' + v.label, icon: n.icon })) : [n]).map(n => (
+            <ListItemButton key={n.to} component={NavLink} to={n.to} onClick={() => setAbierto(false)} selected={loc.pathname === n.to}>
               <ListItemIcon>{n.icon}</ListItemIcon><ListItemText primary={n.label} /></ListItemButton>))}
         </List>
       </Drawer>

@@ -11,6 +11,7 @@ const grupos: [string, string[]][] = [
   ['Decisión de pedido', ['regla_disparo', 'regla_objetivo', 'regla_redondeo', 'cantidad_minima']],
   ['Qué entra al flujo neto y a lo sugerido', ['incluir_transito', 'restar_demanda_calificada', 'sumar_vectorizacion']],
   ['Parámetros del modelo (hoja Modelo)', ['meses_historia', 'meses_adu', 'mult_cota_max_promo', 'mult_cota_min_promo', 'adu_bajo_min', 'adu_bajo_max']],
+  ['Historial (vistas de cambios y tendencia)', ['retener_dias']],
 ]
 
 export default function Reglas() {
@@ -23,11 +24,11 @@ export default function Reglas() {
     catch (e: any) { setMsg('Error: ' + e.message) }
   }
   const recalcular = async () => {
-    setMsg('Recalculando...')
+    setMsg('Recalculando con el motor Rust…')
     try { const x = await api('/admin/correr-motor', { method: 'POST' }); setMsg(`Listo: ${x.filas} combinaciones calculadas`) } catch (e: any) { setMsg('Error: ' + e.message) }
   }
   const pipeline = async () => {
-    setMsg('Lanzando ETL + motor (tarda unos minutos)...')
+    setMsg('Lanzando ETL + motor…')
     try { await api('/admin/correr-pipeline', { method: 'POST' }); setMsg('Lanzado en segundo plano. Revisa Alertas en unos minutos.') } catch (e: any) { setMsg('Error: ' + e.message) }
   }
   return (
