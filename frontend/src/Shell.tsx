@@ -15,6 +15,7 @@ import History from '@mui/icons-material/History'
 import FactCheck from '@mui/icons-material/FactCheck'
 import { useYo } from './Yo'
 import { BannerSalud } from './Salud'
+import Errores from './Errores'
 import { getUser, logout } from './api'
 
 export const VISTAS = [
@@ -78,6 +79,6 @@ export default function Shell() {
               <ListItemIcon>{n.icon}</ListItemIcon><ListItemText primary={n.label} /></ListItemButton>))}
         </List>
       </Drawer>
-      <Box component="main" sx={{ flex: 1, minHeight: 0, p: { xs: 1, md: 2 }, overflow: 'auto' }}><BannerSalud /><Outlet /></Box>
+      <Box component="main" sx={{ flex: 1, minHeight: 0, p: { xs: 1, md: 2 }, overflow: 'auto' }}><BannerSalud /><Errores clave={loc.pathname}><Outlet /></Errores></Box>
     </Box>)
 }

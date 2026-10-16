@@ -107,9 +107,13 @@ export default function Control() {
   const [qTxt, setQTxt] = useState(itemUrl)
   const [nivel, setNivel] = useState<Nivel>(tiendaUrl || itemUrl ? 'detalle' : 'empresa')
   const [opc, setOpc] = useState<any>({ tiendas: [], laboratorios: [], dias: [], empresas: [], criterios: [], ejecucion: null })
-  const [kpi, setKpi] = useState<any>(null)
-  const [grupos, setGrupos] = useState<any[]>([])
-  const [det, setDet] = useState<{ filas: any[]; total: number; truncado: boolean }>({ filas: [], total: 0, truncado: false })
+  // Cada dato se guarda con el modo (foto / cambios) con que se pidió: si cambias de pestaña no se usa lo de la otra
+  const [kpiRaw, setKpi] = useState<{ m: boolean; v: any } | null>(null)
+  const [gruposRaw, setGrupos] = useState<{ m: boolean; v: any[] } | null>(null)
+  const [detRaw, setDet] = useState<{ m: boolean; v: { filas: any[]; total: number; truncado: boolean } } | null>(null)
+  const kpi = kpiRaw && kpiRaw.m === cambiosModo ? kpiRaw.v : null
+  const grupos = gruposRaw && gruposRaw.m === cambiosModo ? gruposRaw.v : []
+  const det = detRaw && detRaw.m === cambiosModo ? detRaw.v : { filas: [], total: 0, truncado: false }
   const [cargando, setCargando] = useState(false)
   const [err, setErr] = useState('')
 
@@ -127,11 +131,11 @@ export default function Control() {
     }
     const base = cambiosModo ? '/control/cambios' : '/control/resumen'
     const extra = (cambiosModo ? '&' + per : '') + (nivel === 'criterio' ? '&plan=' + encodeURIComponent(f.plan || opc.criterios?.[0]?.plan_id || '') : '')
-    api(`${base}?agrupar=empresa&${qs(f, true)}${extra}`).then(r => { if (!vivo) return; setKpi(r.total); if (cambiosModo) { setPeriodo(r.periodo); setMatriz(r.matriz) } })
+    api(`${base}?agrupar=empresa&${qs(f, true)}${extra}`).then(r => { if (!vivo) return; setKpi({ m: cambiosModo, v: r.total }); if (cambiosModo) { setPeriodo(r.periodo); setMatriz(r.matriz) } })
       .catch(e => vivo && setErr(e.message))
     const p = nivel === 'detalle'
-      ? api(cambiosModo ? `/control/cambios/detalle?limit=5000&mov=${mov}&${qs(f)}&${per}` : '/control/detalle?limit=5000&' + qs(f)).then(r => vivo && setDet(r))
-      : api(`${base}?agrupar=${nivel}&${qs(f)}${extra}`).then(r => vivo && setGrupos(r.grupos))
+      ? api(cambiosModo ? `/control/cambios/detalle?limit=5000&mov=${mov}&${qs(f)}&${per}` : '/control/detalle?limit=5000&' + qs(f)).then(r => vivo && setDet({ m: cambiosModo, v: r }))
+      : api(`${base}?agrupar=${nivel}&${qs(f)}${extra}`).then(r => vivo && setGrupos({ m: cambiosModo, v: r.grupos }))
     p.catch(e => vivo && setErr(e.message)).finally(() => vivo && setCargando(false))
     return () => { vivo = false }
   }, [clave, f.plan, opc.criterios, nivel, cambiosModo, tendModo, desde, hasta, mov])
@@ -219,7 +223,7 @@ export default function Control() {
         <Card variant="outlined" sx={{ borderLeft: '6px solid #6e8a37', flexShrink: 0 }}>
           <Box sx={{ p: 1.25 }}>
             <Typography variant="caption" color="text.secondary">Alcance actual</Typography>
-            <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2 }}>{kpi ? (cambiosModo ? kpi.n_fin : kpi.n).toLocaleString() : '…'}</Typography>
+            <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2 }}>{kpi ? (cambiosModo ? kpi.n_fin : kpi.n)?.toLocaleString() : '…'}</Typography>
             <Typography variant="caption" color="text.secondary" title="Combinación = un item en una tienda (cada fila de buffer que calcula el motor)">combinaciones (tienda × item) · buffer prom. {cambiosModo ? kpi?.pct_fin : kpi?.pct_prom ?? '–'}%{!cambiosModo && kpi?.inventario != null && <> · inventario {Math.round(kpi.inventario).toLocaleString()} u.</>}</Typography>
           </Box>
         </Card>
