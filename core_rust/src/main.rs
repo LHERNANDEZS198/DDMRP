@@ -6,12 +6,12 @@ use ddmrp_core::{calcular_lote, Entrada, Factores, Parametros, Tramo};
 use postgres::{Client, NoTls, Row};
 use std::io::Write;
 
-/// $1 = fecha de calculo (texto YYYY-MM-DD). Ventana: 7 meses calendario terminando en el mes de $1.
+/// $1 = fecha de calculo (texto YYYY-MM-DD). Se leen 12 meses calendario terminando en el mes de $1; el motor usa los ultimos `meses_historia`.
 /// Universo: bodega/producto con ventas en la ventana, vectorizacion, pronostico, inventario o cotas.
 const SQL_ENTRADA: &str = r#"
 WITH meses AS (
-  SELECT n, to_char(date_trunc('month', $1::text::date) - make_interval(months => 6 - n), 'YYYYMM') AS mes
-  FROM generate_series(0, 6) AS n
+  SELECT n, to_char(date_trunc('month', $1::text::date) - make_interval(months => 11 - n), 'YYYYMM') AS mes
+  FROM generate_series(0, 11) AS n
 ),
 v AS (
   SELECT a.bodega_id, a.producto_id,
@@ -21,7 +21,12 @@ v AS (
     COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 3), 0)::float8 AS m3,
     COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 4), 0)::float8 AS m4,
     COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 5), 0)::float8 AS m5,
-    COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 6), 0)::float8 AS m6
+    COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 6), 0)::float8 AS m6,
+    COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 7), 0)::float8 AS m7,
+    COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 8), 0)::float8 AS m8,
+    COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 9), 0)::float8 AS m9,
+    COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 10), 0)::float8 AS m10,
+    COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 11), 0)::float8 AS m11
   FROM ddmrp.ventas_mensual a JOIN meses m ON m.mes = a.mes
   GROUP BY a.bodega_id, a.producto_id
 ),
@@ -33,8 +38,7 @@ llaves AS (
   UNION SELECT bodega_id, producto_id FROM ddmrp.abast_control_referencias
 )
 SELECT b.empresa, k.bodega_id, k.producto_id,
-  COALESCE(v.m0, 0) AS m0, COALESCE(v.m1, 0) AS m1, COALESCE(v.m2, 0) AS m2, COALESCE(v.m3, 0) AS m3,
-  COALESCE(v.m4, 0) AS m4, COALESCE(v.m5, 0) AS m5, COALESCE(v.m6, 0) AS m6,
+  COALESCE(v.m0, 0) AS m0, COALESCE(v.m1, 0) AS m1, COALESCE(v.m2, 0) AS m2, COALESCE(v.m3, 0) AS m3, COALESCE(v.m4, 0) AS m4, COALESCE(v.m5, 0) AS m5, COALESCE(v.m6, 0) AS m6, COALESCE(v.m7, 0) AS m7, COALESCE(v.m8, 0) AS m8, COALESCE(v.m9, 0) AS m9, COALESCE(v.m10, 0) AS m10, COALESCE(v.m11, 0) AS m11,
   COALESCE(p.pronostico, 0)::float8        AS pronostico,
   COALESCE(b.leadtime, 0)::float8          AS lead_time,
   COALESCE(b.frecuencia, 1)::float8        AS frecuencia,
@@ -104,6 +108,8 @@ fn leer_parametros(client: &mut Client) -> Result<Parametros> {
             "incluir_transito" => p.incluir_transito = v != 0.0,
             "restar_demanda_calificada" => p.restar_demanda_calificada = v != 0.0,
             "cantidad_minima" => p.cantidad_minima = v,
+            "meses_historia" => p.meses_historia = (v as usize).clamp(2, 12),
+            "meses_adu" => p.meses_adu = (v as usize).clamp(1, 12),
             _ => {}
         }
     }
@@ -136,7 +142,7 @@ fn main() -> Result<()> {
             bodega_id: r.get("bodega_id"),
             producto_id: r.get("producto_id"),
             // m0 = mes-6 (el mas antiguo) ... m6 = mes actual
-            ventas: [f(r, "m0"), f(r, "m1"), f(r, "m2"), f(r, "m3"), f(r, "m4"), f(r, "m5"), f(r, "m6")],
+            ventas: (0..12).map(|i| f(r, &format!("m{i}"))).collect(),
             pronostico: f(r, "pronostico"),
             lead_time: f(r, "lead_time"),
             frecuencia: f(r, "frecuencia"),

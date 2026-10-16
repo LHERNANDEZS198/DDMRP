@@ -29,7 +29,7 @@ cd core_rust && cargo test        # formulas del modelo
 - [x] Regla de pedido confirmada y configurable (pantalla “Reglas de pedido”)
 - [x] DIA de abastecimiento por tienda, seleccion de tiendas antes de generar el plano
 - [x] Todos los maestros se descargan/cargan por Excel (crear, actualizar, reemplazar)
-- [ ] Ventas por mes desde Siesa: falta la consulta (`backend_python/app/etl/sql/ventas_siesa.sql`; ver `docs/sql/buscar_origen_ventas.sql`)
+- [x] Ventas por mes desde Siesa (`backend_python/app/etl/sql/ventas_siesa.sql`, basada en `Abastecimiento_Consulta_Ventas`): falta probarla contra Siesa
 - [ ] Cargar los maestros iniciales por Excel (bitacora de 135 bodegas, unidad de despacho, vectorizacion, DIA por tienda, items/laboratorio)
 - [x] Fase 2: archivo plano de Siesa (requisicion RIT; formato de `docs/Abastecimiento día 4_15102026.xlsx`)
 - [ ] Consecutivo de los documentos del plano (hoy se digita al exportar)

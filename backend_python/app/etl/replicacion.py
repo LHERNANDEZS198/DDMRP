@@ -23,7 +23,7 @@ from ..db import pg, siesa_engine
 
 log = logging.getLogger("etl")
 CHUNK = 50_000
-MESES_VENTANA = 7  # el motor usa 7 meses calendario terminando en el mes en curso
+MESES_VENTANA = 7  # por defecto; se lee de ddmrp.parametro 'meses_historia' (2 a 12), editable en Reglas de pedido
 
 
 SQL_INVENTARIO = """
@@ -43,6 +43,15 @@ SQL_CO = "SELECT RTRIM(f150_id), RTRIM(f150_id_co) FROM t150_mc_bodegas WHERE f1
 
 SQL_ITEMS = """SELECT RTRIM(f120_referencia), MAX(RTRIM(f120_descripcion)) FROM t120_mc_items
 WHERE f120_id_cia = :cia AND f120_referencia IS NOT NULL AND RTRIM(f120_referencia) <> '' GROUP BY RTRIM(f120_referencia)"""
+
+# Laboratorio (categoria, base de los permisos) = criterio mayor del plan de items (mismo join que MercadoLibre_Items_Funat)
+SQL_LAB = """SELECT RTRIM(i.f120_referencia), MAX(RTRIM(m.f106_id))
+FROM t120_mc_items i
+JOIN t125_mc_items_criterios c ON c.f125_rowid_item = i.f120_rowid AND c.f125_id_cia = i.f120_id_cia
+JOIN t106_mc_criterios_item_mayores m ON m.f106_id_plan = c.f125_id_plan AND m.f106_id = c.f125_id_criterio_mayor
+                                     AND m.f106_id_cia = c.f125_id_cia
+WHERE c.f125_id_plan = :plan AND i.f120_id_cia = :cia AND i.f120_referencia IS NOT NULL
+GROUP BY i.f120_referencia"""
 
 # Traslados abiertos hacia las tiendas (f406_ind_estado = 0). Se agrupan por referencia/bodega destino/bodega origen.
 SQL_TRANSITOS = """
@@ -68,8 +77,8 @@ def _ventas_sql() -> str | None:
     return q.strip() or None
 
 
-def _primer_mes(hoy: date) -> date:
-    m = hoy.year * 12 + hoy.month - 1 - (MESES_VENTANA - 1)
+def _primer_mes(hoy: date, meses: int = MESES_VENTANA) -> date:
+    m = hoy.year * 12 + hoy.month - 1 - (meses - 1)
     return date(m // 12, m % 12 + 1, 1)
 
 
@@ -101,10 +110,12 @@ def _volcar(cur, filas, destino: str, cols: list[str], reemplazar: bool = True) 
 
 def correr_etl() -> dict:
     res: dict = {}
-    desde = _primer_mes(date.today())
     raw = pg.raw_connection()
     try:
         with raw.cursor() as cur:
+            cur.execute("SELECT valor FROM ddmrp.parametro WHERE clave = 'meses_historia'")
+            fila = cur.fetchone()
+            desde = _primer_mes(date.today(), min(max(int(fila[0]), 2), 12) if fila else MESES_VENTANA)
             cur.execute("TRUNCATE ddmrp.maestro_bodega")
             cur.execute("INSERT INTO ddmrp.maestro_bodega (bodega_id, empresa) SELECT bodega_id, empresa FROM ddmrp.abast_bitacora")
             cur.execute("SELECT empresa, bodega_id FROM ddmrp.abast_bitacora")
@@ -155,6 +166,8 @@ def correr_etl() -> dict:
                                    SELECT producto_id, COALESCE(descripcion, producto_id) FROM stg_items
                                    ON CONFLICT (producto_id) DO UPDATE SET descripcion = EXCLUDED.descripcion, actualizado = now()""")
                     cur.execute("DROP TABLE stg_items")
+                    labs = list(_stream(eng, SQL_LAB, {"cia": settings.siesa_cia, "plan": settings.siesa_plan_laboratorio}))
+                    cur.executemany("UPDATE ddmrp.maestro_item SET categoria = %s WHERE producto_id = %s", [(l, r) for r, l in labs])
                     for b, co in _stream(eng, SQL_CO, prm, expanding="bodegas"):
                         cur.execute("INSERT INTO ddmrp.bodega_centro_operacion (bodega_id, id_co) VALUES (%s, %s) "
                                     "ON CONFLICT (bodega_id) DO UPDATE SET id_co = EXCLUDED.id_co", (b, co))

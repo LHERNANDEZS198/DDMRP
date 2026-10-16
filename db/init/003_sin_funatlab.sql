@@ -28,5 +28,7 @@ INSERT INTO parametro (clave, valor, detalle) VALUES
   ('sumar_vectorizacion', 1, 'Sumar la vectorizacion (derrame) a la cantidad sugerida: 1 = si, 0 = no'),
   ('incluir_transito',    1, 'Contar los traslados abiertos en el flujo neto: 1 = si, 0 = no'),
   ('restar_demanda_calificada', 1, 'Restar la demanda calificada del flujo neto: 1 = si, 0 = no'),
+  ('meses_historia',      7, 'Meses de venta (incluye el mes en curso) para el ADU de referencia y la variabilidad: 2 a 12. Excel = 7'),
+  ('meses_adu',           4, 'Ultimos meses (mas el forecast) que entran al ADU: 1 a meses_historia. Excel = 4'),
   ('cantidad_minima',     0, 'No sugerir cantidades menores a esta (0 = sin minimo)')
 ON CONFLICT (clave) DO NOTHING;

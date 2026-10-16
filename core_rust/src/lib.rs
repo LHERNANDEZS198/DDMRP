@@ -84,6 +84,9 @@ pub struct Parametros {
     pub incluir_transito: bool,
     pub restar_demanda_calificada: bool,
     pub cantidad_minima: f64,
+    // --- ventana de historia ---
+    pub meses_historia: usize, // meses de venta para BK/variabilidad (Excel: 7, incluye el mes en curso)
+    pub meses_adu: usize,      // ultimos meses (+ forecast) que entran al ADU (Excel: 4)
 }
 
 impl Default for Parametros {
@@ -92,6 +95,7 @@ impl Default for Parametros {
             mult_cota_max_promo: 1.2, mult_cota_min_promo: 1.1, adu_bajo_min: 1.0, adu_bajo_max: 4.0,
             regla_disparo: 1, regla_objetivo: 1, regla_redondeo: 1,
             sumar_vectorizacion: true, incluir_transito: true, restar_demanda_calificada: true, cantidad_minima: 0.0,
+            meses_historia: 7, meses_adu: 4,
         }
     }
 }
@@ -104,7 +108,7 @@ pub struct Entrada {
     pub bodega_id: String,
     pub producto_id: String,
     /// Ventas mensuales de los ultimos 7 meses: [mes-6, ..., mes-1, mes actual] (columnas J..P).
-    pub ventas: [f64; 7],
+    pub ventas: Vec<f64>, // oldest -> mes en curso; el motor usa los ultimos `meses_historia`
     pub pronostico: f64,
     pub lead_time: f64,       // AA (dias)
     pub frecuencia: f64,      // AC
@@ -208,8 +212,8 @@ pub fn forecast_ajustado(pronostico: f64, bk: f64) -> f64 {
     }
 }
 
-/// ADU de referencia del bloque de pronostico (BK) con las 7 ventas.
-pub fn adu_referencia(ventas: &[f64; 7]) -> f64 {
+/// ADU de referencia del bloque de pronostico (BK) con las ventas de la ventana.
+pub fn adu_referencia(ventas: &[f64]) -> f64 {
     let bi = promedio(ventas);
     let bm = div(desvest_m(ventas), bi);
     roundup(bi + bi * bm)
@@ -217,11 +221,15 @@ pub fn adu_referencia(ventas: &[f64; 7]) -> f64 {
 
 pub fn calcular(e: &Entrada, f: &Factores, p: &Parametros) -> Resultado {
     // Bloque pronostico -> Q
-    let bk = adu_referencia(&e.ventas);
+    let n = p.meses_historia.clamp(2, e.ventas.len().max(2)).min(e.ventas.len());
+    let hist = &e.ventas[e.ventas.len() - n..];
+    let bk = adu_referencia(hist);
     let q = forecast_ajustado(e.pronostico, bk);
 
-    // Bloque principal: ultimos 4 meses (M..P) + forecast
-    let v = [e.ventas[3], e.ventas[4], e.ventas[5], e.ventas[6], q];
+    // Bloque principal: ultimos `meses_adu` meses (Excel: 4, M..P) + forecast
+    let k = p.meses_adu.clamp(1, n);
+    let mut v: Vec<f64> = hist[n - k..].to_vec();
+    v.push(q);
     let u = promedio(&v);
     let y = div(desvest_m(&v), u);
     let w = roundup(u + u * y); // ADU (W)
@@ -350,7 +358,7 @@ mod tests {
             empresa: "05".into(),
             bodega_id: "GN442".into(),
             producto_id: "019901".into(),
-            ventas: [10.0; 7],
+            ventas: vec![10.0; 7],
             pronostico: 0.0,
             lead_time: 3.0,
             frecuencia: 2.0,
@@ -448,7 +456,7 @@ mod tests {
     fn adu_bajo_sin_promo_no_usa_cotas() {
         // ventas muy bajas: ADU entre 1 y 4 -> ZRB=0 y los topes ajustados son los topes
         let mut e = base();
-        e.ventas = [1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0];
+        e.ventas = vec![1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0];
         e.cota_max = 0.5;
         e.cota_min = 0.5;
         let r = calcular(&e, &factores(), &Parametros::default());
@@ -478,7 +486,7 @@ mod tests {
         assert_eq!(r.cantidad_sugerida, 0.0);
 
         let mut vacio = base();
-        vacio.ventas = [0.0; 7];
+        vacio.ventas = vec![0.0; 7];
         let r = calcular(&vacio, &factores(), &Parametros::default());
         assert_eq!(r.zonas.tog, 0.0);
         assert_eq!(r.zona, Zona::Verde); // sin buffer y sin stock: no es alerta
@@ -512,6 +520,26 @@ mod tests {
         assert_eq!(a_multiplo(4.0, 10.0, 2), 0.0);
         assert_eq!(a_multiplo(6.0, 10.0, 2), 10.0);
         assert_eq!(a_multiplo(14.0, 10.0, 3), 10.0);
+    }
+
+    #[test]
+    fn ventana_configurable() {
+        let f = factores();
+        let mut e = base();
+        // 12 meses: los 5 mas viejos en 100, los 7 ultimos en 10
+        e.ventas = [vec![100.0; 5], vec![10.0; 7]].concat();
+        // por defecto solo cuenta la ventana de 7 meses (igual al caso base)
+        assert_eq!(calcular(&e, &f, &Parametros::default()).adu, 13.0);
+        // ventana de 12 meses: el ADU de referencia (BK) sube
+        assert!(adu_referencia(&e.ventas) > adu_referencia(&e.ventas[5..]));
+        // ADU con 1 mes + forecast en vez de 4: cambia el resultado
+        e.ventas[11] = 40.0;
+        let a4 = calcular(&e, &f, &Parametros::default()).adu;
+        let mut p = Parametros::default(); p.meses_adu = 1;
+        assert_ne!(calcular(&e, &f, &p).adu, a4);
+        // parametros absurdos se acotan (no revientan)
+        let mut p = Parametros::default(); p.meses_historia = 99; p.meses_adu = 0;
+        let _ = calcular(&e, &f, &p);
     }
 
     #[test]

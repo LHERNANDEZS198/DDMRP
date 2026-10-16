@@ -30,6 +30,8 @@ REGLAS = [
          ayuda="Pedidos abiertos o picos conocidos restan del flujo neto.", opciones=SI_NO),
     dict(clave="cantidad_minima", titulo="Cantidad minima a sugerir", ayuda="Sugeridos menores a este valor se descartan (0 = sin minimo).",
          opciones=None),
+    dict(clave="meses_historia", titulo="Meses de historia de ventas", ayuda="Incluye el mes en curso. 2 a 12 (Excel: 7).", opciones=None, min=2, max=12, entero=True),
+    dict(clave="meses_adu", titulo="Meses que entran al ADU (+ forecast)", ayuda="1 hasta los meses de historia (Excel: 4).", opciones=None, min=1, max=12, entero=True),
     dict(clave="mult_cota_max_promo", titulo="Multiplicador de cota maxima en promocion", ayuda="Hoja Modelo AZ.", opciones=None),
     dict(clave="mult_cota_min_promo", titulo="Multiplicador de cota minima en promocion", ayuda="Hoja Modelo BA.", opciones=None),
     dict(clave="adu_bajo_min", titulo="ADU bajo: desde", ayuda="Entre desde y hasta, ZRB = 0.", opciones=None),
@@ -58,8 +60,10 @@ def cambiar(clave: str, body: Cambio, user=Depends(usuario_actual)):
         raise HTTPException(403, "Requiere permiso de edicion sobre todas las bodegas")
     if r["opciones"] and body.valor not in {o["valor"] for o in r["opciones"]}:
         raise HTTPException(400, "Valor no permitido")
-    if body.valor < 0:
-        raise HTTPException(400, "No puede ser negativo")
+    if body.valor < r.get("min", 0) or body.valor > r.get("max", 1e12):
+        raise HTTPException(400, f"Debe estar entre {r.get('min', 0)} y {r.get('max', 'sin tope')}")
+    if r.get("entero") and body.valor != int(body.valor):
+        raise HTTPException(400, "Debe ser un numero entero")
     with pg.begin() as c:
         ant = c.execute(text("SELECT valor::text FROM ddmrp.parametro WHERE clave=:c"), {"c": clave}).scalar()
         c.execute(text("INSERT INTO ddmrp.parametro (clave, valor) VALUES (:c, :v) "

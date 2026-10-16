@@ -26,4 +26,4 @@ conviene si se vuelve a escribir la consulta de ventas sobre Siesa.
 - Agrupar por `CONVERT(char(6), fecha, 112)`, bodega y referencia (sin descripcion ni laboratorio; esos van en `maestro_item`).
 - Solo bodegas de tiendas (`IN :bodegas`) y solo documentos de venta/devolucion que cuenten como demanda.
 - Un indice por fecha + bodega + item que cubra la cantidad hace la lectura casi instantanea.
-- Pendiente: la logica que hoy llena `Abastecimiento_Ventas_Tiendas_Funat` (correr `docs/sql/buscar_origen_ventas.sql` en FUNATLAB).
+- Implementado en `ventas_siesa.sql` a partir de `Abastecimiento_Consulta_Ventas` (POS vigente t9820/t9830, POS archivado t9920/t9930 y facturas t350/t470 de las bodegas fuera de POS). Ese procedimiento solo trae los ultimos 7 dias y alguien/algo debia insertarlos en la tabla de FUNATLAB: esa carga quedo detenida el 5 de agosto, por eso la tabla esta desactualizada.
