@@ -53,16 +53,16 @@ WHERE b.f150_id_cia = :cia AND g.f152_id_grupo_bodega = :grupo"""
 # Laboratorio (categoria, base de los permisos) = criterio mayor del plan de items (mismo join que MercadoLibre_Items_Funat)
 SQL_LAB = """SELECT RTRIM(i.f120_referencia), MAX(RTRIM(m.f106_id))
 FROM t120_mc_items i
-JOIN t125_mc_items_criterios c ON c.f125_rowid_item = i.f120_rowid AND c.f125_id_cia = i.f120_id_cia
+JOIN t125_mc_items_criterios c ON c.f125_rowid_item = i.f120_rowid
 JOIN t106_mc_criterios_item_mayores m ON m.f106_id_plan = c.f125_id_plan AND m.f106_id = c.f125_id_criterio_mayor
-                                     AND m.f106_id_cia = c.f125_id_cia
+                                     AND m.f106_id_cia = i.f120_id_cia
 WHERE c.f125_id_plan = :plan AND i.f120_id_cia = :cia AND i.f120_referencia IS NOT NULL
 GROUP BY i.f120_referencia"""
 
 # Todos los criterios de items (cada plan de criterios tiene un criterio mayor por item): linea, marca, categoria, etc.
 SQL_ITEM_CRITERIOS = """SELECT DISTINCT RTRIM(i.f120_referencia), RTRIM(c.f125_id_plan), RTRIM(c.f125_id_criterio_mayor)
 FROM t120_mc_items i
-JOIN t125_mc_items_criterios c ON c.f125_rowid_item = i.f120_rowid AND c.f125_id_cia = i.f120_id_cia
+JOIN t125_mc_items_criterios c ON c.f125_rowid_item = i.f120_rowid
 WHERE i.f120_id_cia = :cia AND i.f120_referencia IS NOT NULL AND RTRIM(i.f120_referencia) <> ''
   AND c.f125_id_criterio_mayor IS NOT NULL"""
 SQL_PLANES_NOMBRES = "SELECT RTRIM(f105_id), RTRIM(f105_descripcion) FROM t105_mc_criterios_item_planes WHERE f105_id_cia = :cia"
@@ -174,9 +174,9 @@ def _items_de_siesa(cur, eng, primera: bool = True) -> dict:
     items = list(_stream(eng, SQL_ITEMS, prm))
     labs = list(_stream(eng, SQL_LAB, {**prm, "plan": settings.siesa_plan_laboratorio}))
     crit = list(_stream(eng, SQL_ITEM_CRITERIOS, prm))
-    permitidos = {p.strip() for p in settings.siesa_planes_items.split(",") if p.strip()}
+    permitidos = {tuple(x.strip().split(":", 1)) for x in settings.siesa_criterios_items.split(",") if ":" in x}
     if permitidos:
-        crit = [c for c in crit if c[1] in permitidos]
+        crit = [c for c in crit if (c[1], c[2]) in permitidos]
     nombres_lab, nombres_plan, nombres_crit = [], [], []
     for sql, destino, aviso in ((SQL_LAB_NOMBRES, nombres_lab, "laboratorios"), (SQL_PLANES_NOMBRES, nombres_plan, "planes"),
                                 (SQL_CRITERIOS_NOMBRES, nombres_crit, "criterios")):
@@ -184,6 +184,9 @@ def _items_de_siesa(cur, eng, primera: bool = True) -> dict:
             destino.extend(_stream(eng, sql, {**prm, "plan": settings.siesa_plan_laboratorio}))
         except Exception as e:
             log.warning("Nombres de %s no leidos: %s", aviso, e)
+    if permitidos:   # los nombres solo de lo que se importa
+        nombres_crit = [n for n in nombres_crit if (n[0], n[1]) in permitidos]
+        nombres_plan = [n for n in nombres_plan if n[0] in {x[0] for x in permitidos}]
     cur.execute("CREATE TEMP TABLE IF NOT EXISTS stg_items (producto_id text, descripcion text)")
     cur.execute("TRUNCATE stg_items")
     with cur.copy("COPY stg_items FROM STDIN") as cp:
