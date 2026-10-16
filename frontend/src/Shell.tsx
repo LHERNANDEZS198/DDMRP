@@ -11,6 +11,7 @@ import Rule from '@mui/icons-material/Rule'
 import Insights from '@mui/icons-material/Insights'
 import Storage from '@mui/icons-material/Storage'
 import ManageAccounts from '@mui/icons-material/ManageAccounts'
+import History from '@mui/icons-material/History'
 import { useYo } from './Yo'
 import { getUser, logout } from './api'
 
@@ -26,6 +27,7 @@ export const NAV = [
   { to: '/reglas', label: 'Reglas de pedido', icon: <Rule />, req: ['editar_reglas', 'correr_motor'] },
   { to: '/config', label: 'Maestros', icon: <Storage />, req: ['ver_maestros', 'cargar_maestros', 'sincronizar_siesa'] },
   { to: '/usuarios', label: 'Usuarios', icon: <ManageAccounts />, req: ['admin_usuarios'] },
+  { to: '/log', label: 'Log', icon: <History />, req: ['ver_log'] },
 ]
 
 export default function Shell() {

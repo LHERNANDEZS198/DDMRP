@@ -6,7 +6,7 @@ from .config import settings
 from .db import pg
 from .etl.replicacion import correr_etl, refrescar_cedi
 from .reparto import aplicar_a_ejecucion
-from . import progreso
+from . import progreso, bitacora
 
 log = logging.getLogger("orq")
 
@@ -40,9 +40,10 @@ def guardar_historia(eid: int):
 DETALLE_DIAS = 7
 
 
-def ejecutar_motor(fecha: date | None = None) -> dict:
-    with progreso.tarea("Motor", "Motor listo"):
-        return _ejecutar_motor(fecha)
+def ejecutar_motor(fecha: date | None = None, origen: str = "manual", usuario: str | None = None) -> dict:
+    with progreso.tarea("Motor", "Motor listo"), bitacora.registrar("motor", origen, usuario) as r:
+        r.resumen = res = _ejecutar_motor(fecha)
+        return res
 
 
 def _ejecutar_motor(fecha: date | None = None) -> dict:
@@ -83,9 +84,10 @@ def _ejecutar_motor(fecha: date | None = None) -> dict:
         raise
 
 
-def pipeline_nocturno():
-    with progreso.tarea("ETL + motor", "ETL y motor listos"):
-        log.info("Pipeline nocturno: ETL")
-        etl = correr_etl()
-        log.info("ETL listo: %s. Pipeline nocturno: motor", etl)
-        return {"etl": etl, **ejecutar_motor()}
+def pipeline_nocturno(origen: str = "auto", usuario: str | None = None):
+    """Programado (origen 'auto') o lanzado a mano desde la pantalla (origen 'manual')."""
+    with progreso.tarea("ETL + motor", "ETL y motor listos"), bitacora.registrar("pipeline", origen, usuario):
+        log.info("Pipeline: ETL")
+        etl = correr_etl(origen, usuario)
+        log.info("ETL listo: %s. Pipeline: motor", etl)
+        return {"etl": etl, **ejecutar_motor(None, origen, usuario)}

@@ -32,6 +32,19 @@ SENTENCIAS = [
            ALTER TABLE ddmrp.abast_control_referencias
              ALTER COLUMN cota_maxima TYPE NUMERIC(12,4), ALTER COLUMN cota_minima TYPE NUMERIC(12,4);
          END IF; END $$""",
+    """CREATE TABLE IF NOT EXISTS ddmrp.bitacora (
+         id        BIGSERIAL PRIMARY KEY,
+         tipo      TEXT NOT NULL,
+         origen    TEXT NOT NULL DEFAULT 'manual' CHECK (origen IN ('manual','auto')),
+         usuario   TEXT,
+         inicio    TIMESTAMPTZ NOT NULL DEFAULT now(),
+         fin       TIMESTAMPTZ,
+         estado    TEXT NOT NULL DEFAULT 'corriendo' CHECK (estado IN ('corriendo','ok','error','interrumpido')),
+         mensaje   TEXT,
+         resumen   JSONB,
+         padre_id  BIGINT)""",
+    "CREATE INDEX IF NOT EXISTS idx_bitacora_inicio ON ddmrp.bitacora (inicio DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_bitacora_tipo ON ddmrp.bitacora (tipo, inicio DESC)",
     """CREATE TABLE IF NOT EXISTS ddmrp.perfil (
          perfil_id   TEXT PRIMARY KEY,
          nombre      TEXT NOT NULL,
@@ -54,7 +67,7 @@ SENTENCIAS = [
          ('maestros', 'Cargador de maestros', 'Carga y corrige maestros y reglas', 'edicion',
             '{ver_control,ver_alertas,ver_maestros,cargar_maestros,editar_reglas}', true),
          ('operador', 'Operador del motor', 'Corre ETL y motor, trae tiendas e items de Siesa', 'lectura',
-            '{ver_control,ver_alertas,ver_maestros,correr_motor,sincronizar_siesa}', true),
+            '{ver_control,ver_alertas,ver_maestros,correr_motor,sincronizar_siesa,ver_log}', true),
          ('logistica', 'Logistica (planos)', 'Ve la matriz y descarga los planos', 'aprobacion',
             '{ver_control,ver_alertas,ver_despacho,descargar_planos}', true),
          ('consulta', 'Consulta', 'Solo ve el control y las alertas', 'lectura', '{ver_control,ver_alertas}', true)

@@ -10,6 +10,7 @@ import Config from './pages/Config'
 import Despacho from './pages/Despacho'
 import Reglas from './pages/Reglas'
 import Usuarios from './pages/Usuarios'
+import Log from './pages/Log'
 import { Yo, YoCtx, useYo } from './Yo'
 
 /** Pantallas y la función que las habilita (basta una). Se usa también en el menú. */
@@ -20,6 +21,7 @@ export const PANTALLAS = [
   { to: '/reglas', req: ['editar_reglas', 'correr_motor'] },
   { to: '/config', req: ['ver_maestros', 'cargar_maestros', 'sincronizar_siesa'] },
   { to: '/usuarios', req: ['admin_usuarios'] },
+  { to: '/log', req: ['ver_log'] },
 ]
 
 function Req({ to, children }: { to: string; children: ReactElement }) {
@@ -58,6 +60,7 @@ export default function App() {
           <Route path="/reglas" element={<Req to="/reglas"><Reglas /></Req>} />
           <Route path="/config" element={<Req to="/config"><Config /></Req>} />
           <Route path="/usuarios" element={<Req to="/usuarios"><Usuarios /></Req>} />
+          <Route path="/log" element={<Req to="/log"><Log /></Req>} />
           <Route path="*" element={<Inicio />} />
         </Route>
       </Routes>

@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from ..db import pg
+from .. import bitacora
 from ..security import usuario_actual, filtro_sql_permisos, exigir, asignaciones, nivel_efectivo, NIVELES, requiere
 
 router = APIRouter(prefix="/maestros", tags=["maestros"])
@@ -368,7 +369,11 @@ def _autorizar_lote(user, d: dict, filas: list[dict], conn, reemplazo: bool):
 
 def _importar(nombre: str, d: dict, filas: list[dict], modo: str, user, omitir: bool = False) -> dict:
     try:
-        return _importar_(nombre, d, filas, modo, user, omitir)
+        res = _importar_(nombre, d, filas, modo, user, omitir)
+        bitacora.evento("carga", bitacora.usuario_de(user), f"{d['label']}: {modo}, {res.get('filas')} filas "
+                        f"({res.get('creadas', 0)} nuevas, {res.get('actualizadas', 0)} actualizadas, {res.get('omitidas', 0)} omitidas)",
+                        {"maestro": nombre, "modo": modo, **{k: res.get(k) for k in ("filas", "unicas", "creadas", "actualizadas", "omitidas")}})
+        return res
     except DBAPIError as e:  # p.ej. NOT NULL o valor fuera de rango: es error del archivo, no del servidor
         raise HTTPException(400, "El archivo tiene datos que la base rechaza: " + str(e.orig).splitlines()[0][:300])
 

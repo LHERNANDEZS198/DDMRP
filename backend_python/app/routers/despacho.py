@@ -4,7 +4,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import text
 from ..db import pg
-from .. import reparto
+from .. import reparto, bitacora
 from ..plano_siesa import co_derivado, generar_xlsx, notas_por_defecto
 from ..security import usuario_actual, filtro_sql_permisos, exigir, requiere
 
@@ -82,6 +82,8 @@ def aprobar(items: list[Aprobacion], user=Depends(requiere("aprobar_despacho")))
                               WHERE ejecucion_id=:e AND producto_id=:p AND bodega_id=:b"""),
                       {"q": it.cantidad_aprobada, "ap": it.aprobar, "u": user["nombre"],
                        "e": it.ejecucion_id, "p": it.producto_id, "b": it.bodega_id})
+    bitacora.evento("aprobacion", bitacora.usuario_de(user),
+                    f"{'Aprobó' if items and items[0].aprobar else 'Guardó cantidades de'} {len(items)} filas", {"filas": len(items), "ejecucion_id": items[0].ejecucion_id if items else None})
     return {"ok": True, "n": len(items)}
 
 
@@ -103,6 +105,7 @@ def desaprobar(items: list[Clave], user=Depends(requiere("aprobar_despacho"))):
                                    aprobado_por=:u, aprobado_en=now()
                                    WHERE ejecucion_id=:e AND producto_id=:p AND bodega_id=:b AND estado='APROBADA'"""),
                            {"u": user["nombre"], "e": it.ejecucion_id, "p": it.producto_id, "b": it.bodega_id}).rowcount
+    bitacora.evento("aprobacion", bitacora.usuario_de(user), f"Devolvió a pendiente {n} filas", {"devueltas": n, "omitidas": len(items) - n})
     return {"ok": True, "devueltas": n, "omitidas": len(items) - n}
 
 
@@ -143,6 +146,10 @@ def exportar_plano(req: PlanoReq, user=Depends(requiere("descargar_planos"))):
                               WHERE ejecucion_id = :e AND estado = 'APROBADA'
                                 AND COALESCE(cantidad_aprobada, cantidad_sugerida) >= 0.5 AND bodega_id = ANY(:b)"""),
                       {"e": eid, "b": sorted({r[0] for r in rows})})
+    bitacora.evento("plano", bitacora.usuario_de(user),
+                    f"Plano del {fecha:%Y-%m-%d}: {len(lineas)} líneas, {len({r[0] for r in rows})} tiendas" + (", marcadas como enviadas" if req.marcar_enviadas else ""),
+                    {"ejecucion_id": eid, "lineas": len(lineas), "tiendas": len({r[0] for r in rows}), "consec_inicial": req.consec_inicial,
+                     "marcar_enviadas": req.marcar_enviadas, "dia": req.dia})
     headers = {"Content-Disposition": f'attachment; filename="Abastecimiento_{fecha:%Y%m%d}.xlsx"'}
     if derivados:  # bodegas sin centro de operacion cargado: se uso la regla observada en el ejemplo
         headers["X-Bodegas-CO-Derivado"] = ",".join(derivados)

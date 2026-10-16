@@ -36,6 +36,7 @@ PERMISOS = [
     ("correr_motor", "Correr motor, ETL y pipeline completo", "Operar"),
     ("sincronizar_siesa", "Traer tiendas e items desde Siesa", "Operar"),
     ("admin_usuarios", "Administrar usuarios y perfiles", "Administrar"),
+    ("ver_log", "Ver el log de operaciones (motor, ETL, cargas, planos)", "Administrar"),
 ]
 CLAVES_PERMISO = [p[0] for p in PERMISOS]
 

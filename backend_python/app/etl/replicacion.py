@@ -19,7 +19,7 @@ from datetime import date
 from pathlib import Path
 from sqlalchemy import bindparam, text
 from ..config import settings
-from .. import progreso
+from .. import progreso, bitacora
 from ..db import pg, siesa_engine
 
 log = logging.getLogger("etl")
@@ -153,7 +153,13 @@ def sincronizar_bodegas(cur) -> int:
     return n
 
 
-def sincronizar_bodegas_ahora() -> int:
+def sincronizar_bodegas_ahora(usuario: str | None = None) -> int:
+    with bitacora.registrar("bodegas", "manual", usuario) as r:
+        r.resumen = {"tiendas": (n := _sincronizar_bodegas_ahora())}
+        return n
+
+
+def _sincronizar_bodegas_ahora() -> int:
     raw = pg.raw_connection()
     try:
         with raw.cursor() as cur:
@@ -219,7 +225,13 @@ def _items_de_siesa(cur, eng, primera: bool = True) -> dict:
     return {"items": len(items), "eliminados": borrados, "con_laboratorio": len(labs), "criterios": len(crit), "planes": len({c[1] for c in crit})}
 
 
-def sincronizar_items_ahora() -> dict:
+def sincronizar_items_ahora(usuario: str | None = None) -> dict:
+    with bitacora.registrar("items", "manual", usuario) as r:
+        r.resumen = res = _sincronizar_items_ahora()
+        return res
+
+
+def _sincronizar_items_ahora() -> dict:
     """Boton "Traer items de Siesa": las dos bases (Funat y Stores) sin correr el ETL completo."""
     if not settings.siesa_host:
         raise RuntimeError("Siesa no esta configurado (SIESA_HOST)")
@@ -278,7 +290,13 @@ def _param(cur, clave: str):
     return float(f[0]) if f else None
 
 
-def sincronizar_ventas() -> dict:
+def sincronizar_ventas(origen: str = "manual", usuario: str | None = None) -> dict:
+    with bitacora.registrar("ventas", origen, usuario) as r:
+        r.resumen = res = _sincronizar_ventas()
+        return res
+
+
+def _sincronizar_ventas() -> dict:
     """Ventas por mes de Siesa -> ddmrp.ventas_mensual. Solo reemplaza la ventana de meses y las bodegas leidas
     (el historico anterior no se toca). Va aparte del ETL porque es la consulta pesada: se lanza a demanda o por parametro."""
     res: dict = {}
@@ -331,12 +349,13 @@ def sincronizar_ventas() -> dict:
     return res
 
 
-def correr_etl() -> dict:
-    with progreso.tarea("ETL", "ETL listo"):
-        return _correr_etl()
+def correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
+    with progreso.tarea("ETL", "ETL listo"), bitacora.registrar("etl", origen, usuario) as r:
+        r.resumen = res = _correr_etl(origen, usuario)
+        return res
 
 
-def _correr_etl() -> dict:
+def _correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
     res: dict = {}
     raw = pg.raw_connection()
     try:
@@ -401,5 +420,5 @@ def _correr_etl() -> dict:
     finally:
         raw.close()
     if traer_ventas:
-        res.update(sincronizar_ventas())
+        res.update(sincronizar_ventas(origen, usuario))
     return res
