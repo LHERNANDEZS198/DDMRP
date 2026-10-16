@@ -5,6 +5,7 @@ import PlayCircle from '@mui/icons-material/PlayCircle'
 import { api, conProgreso, seguirTarea } from '../api'
 import Aviso from '../Aviso'
 import { useYo } from '../Yo'
+import { useSalud } from '../Salud'
 
 type Regla = { clave: string; titulo: string; ayuda: string; opciones: { valor: number; label: string }[] | null; valor: number | null }
 
@@ -19,6 +20,7 @@ const grupos: [string, string[]][] = [
 
 export default function Reglas() {
   const { puede } = useYo(); const editar = puede('editar_reglas'); const motor = puede('correr_motor')
+  const { enCurso, refrescar } = useSalud()
   const [reglas, setReglas] = useState<Regla[]>([])
   const [msg, setMsg] = useState('')
   const cargar = () => api('/reglas').then(setReglas).catch(e => setMsg('Error: ' + e.message))
@@ -34,17 +36,17 @@ export default function Reglas() {
     que === 'motor' ? recalcular() : pipeline()
   }
   const recalcular = async () => {
-    setMsg('Recalculando con el motor Rust…')
-    try { const x = await conProgreso(setMsg, () => api('/admin/correr-motor', { method: 'POST' })); setMsg(`Listo: ${x.filas} combinaciones calculadas`) } catch (e: any) { setMsg('Error: ' + e.message) }
+    setMsg('Recalculando con el motor Rust…'); setTimeout(refrescar, 800)
+    try { const x = await conProgreso(setMsg, () => api('/admin/correr-motor', { method: 'POST' })); setMsg(`Listo: ${x.filas} combinaciones calculadas`) } catch (e: any) { setMsg('Error: ' + e.message) } finally { refrescar() }
   }
   const pipeline = async () => {
     setMsg('Lanzando ETL + motor…')
     try {
       const previo = (await api('/admin/progreso')).inicio ?? null
-      await api('/admin/correr-pipeline', { method: 'POST' })
+      await api('/admin/correr-pipeline', { method: 'POST' }); setTimeout(refrescar, 800)
       const fin = await seguirTarea(setMsg, previo)
       setMsg(fin.estado === 'error' ? fin.mensaje : `Listo: ${fin.mensaje}. Revisa Alertas y Control.`)
-    } catch (e: any) { setMsg('Error: ' + e.message) }
+    } catch (e: any) { setMsg('Error: ' + e.message) } finally { refrescar() }
   }
   return (
     <Box sx={{ maxWidth: 860, mx: 'auto', display: 'grid', gap: 2 }}>
@@ -73,8 +75,8 @@ export default function Reglas() {
       </Dialog>
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ alignItems: { sm: 'center' } }}>
         <Typography variant="h6" sx={{ flex: 1, fontWeight: 700 }}>Reglas de pedido</Typography>
-        {motor && <Button variant="outlined" startIcon={<Calculate />} onClick={() => preguntar('motor')}>Recalcular ahora (solo motor)</Button>}
-        {motor && <Button variant="contained" startIcon={<PlayCircle />} onClick={() => preguntar('pipeline')}>Correr ETL + motor completo</Button>}
+        {motor && <Button variant="outlined" startIcon={<Calculate />} disabled={enCurso} onClick={() => preguntar('motor')}>Recalcular ahora (solo motor)</Button>}
+        {motor && <Button variant="contained" startIcon={<PlayCircle />} disabled={enCurso} onClick={() => preguntar('pipeline')}>Correr ETL + motor completo</Button>}
       </Stack>
       <Typography variant="body2" color="text.secondary">
         Los cambios se aplican en la siguiente corrida del motor (cada noche, o con “Recalcular ahora”). Flujo neto = inventario + tránsito − demanda calificada.

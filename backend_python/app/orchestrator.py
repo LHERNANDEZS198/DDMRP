@@ -86,8 +86,12 @@ def _ejecutar_motor(fecha: date | None = None) -> dict:
 
 def pipeline_nocturno(origen: str = "auto", usuario: str | None = None):
     """Programado (origen 'auto') o lanzado a mano desde la pantalla (origen 'manual')."""
-    with progreso.tarea("ETL + motor", "ETL y motor listos"), bitacora.registrar("pipeline", origen, usuario):
-        log.info("Pipeline: ETL")
-        etl = correr_etl(origen, usuario)
-        log.info("ETL listo: %s. Pipeline: motor", etl)
-        return {"etl": etl, **ejecutar_motor(None, origen, usuario)}
+    try:
+        with progreso.tarea("ETL + motor", "ETL y motor listos"), bitacora.registrar("pipeline", origen, usuario):
+            log.info("Pipeline: ETL")
+            etl = correr_etl(origen, usuario)
+            log.info("ETL listo: %s. Pipeline: motor", etl)
+            return {"etl": etl, **ejecutar_motor(None, origen, usuario)}
+    except progreso.Ocupado as e:   # otra corrida en curso: no se pisa, y queda anotado en el Log
+        log.warning("Pipeline omitido: %s", e)
+        bitacora.omitida("pipeline", origen, usuario, str(e))

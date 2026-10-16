@@ -12,6 +12,7 @@ import Reglas from './pages/Reglas'
 import Usuarios from './pages/Usuarios'
 import Log from './pages/Log'
 import Auditoria from './pages/Auditoria'
+import { SaludProvider } from './Salud'
 import { Yo, YoCtx, useYo } from './Yo'
 
 /** Pantallas y la función que las habilita (basta una). Se usa también en el menú. */
@@ -53,7 +54,7 @@ export default function App() {
   return (
     <YoCtx.Provider value={yo}>
       <Routes>
-        <Route element={<Shell />}>
+        <Route element={<SaludProvider><Shell /></SaludProvider>}>
           <Route path="/control" element={<Req to="/control"><Control /></Req>} />
           <Route path="/control/cambios" element={<Req to="/control"><Control /></Req>} />
           <Route path="/control/tendencia" element={<Req to="/control"><Control /></Req>} />

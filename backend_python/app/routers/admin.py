@@ -12,6 +12,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 @router.post("/correr-pipeline")
 def pipeline(bg: BackgroundTasks, user=Depends(requiere("correr_motor"))):
     """ETL + motor completo, en segundo plano."""
+    progreso.exigir_libre()
     bg.add_task(pipeline_nocturno, "manual", usuario_de(user)); return {"estado": "lanzado"}
 
 
@@ -57,14 +58,39 @@ def ventas(user=Depends(requiere("sincronizar_siesa"))):
 def motor_hoy(user=Depends(requiere("correr_motor"))):
     """Para advertir antes de volver a correr el motor el mismo dia: cada corrida nueva crea una ejecucion y la matriz solo
     muestra la ultima, asi que lo aprobado/enviado de la anterior deja de verse y el plano solo exporta la ultima."""
+    from datetime import date
     from sqlalchemy import text
     from ..db import pg
     with pg.connect() as c:
-        hoy = c.execute(text("SELECT count(*), max(id), max(inicio) FROM ddmrp.ejecucion_motor WHERE fecha_calculo = current_date AND estado = 'ok'")).one()
+        hoy = c.execute(text("SELECT count(*), max(id), max(inicio) FROM ddmrp.ejecucion_motor WHERE fecha_calculo = :f AND estado = 'ok'"), {"f": date.today()}).one()
         est = {}
         if hoy[1]:
             est = dict(c.execute(text("SELECT estado::text, count(*) FROM ddmrp.sugerencias_envio WHERE ejecucion_id = :e GROUP BY 1"), {"e": hoy[1]}).all())
     return {"corrio_hoy": hoy[0] > 0, "corridas": hoy[0], "ultima": hoy[2], "aprobadas": est.get("APROBADA", 0), "enviadas": est.get("ENVIADA", 0)}
+
+
+@router.get("/salud")
+def salud(user=Depends(usuario_actual)):
+    """Estado para el aviso de arriba: lo que corre ahora y si la ultima corrida de cada tipo quedo a medias o fallo
+    (reinicio del servidor, red, error de Siesa...), para invitar a correr de nuevo."""
+    from datetime import datetime, timezone
+    from sqlalchemy import text
+    from ..db import pg
+    est = progreso.estado()
+    problemas = []
+    with pg.connect() as c:
+        for tipo in ("etl", "motor"):
+            r = c.execute(text("SELECT estado, mensaje, inicio, origen, usuario FROM ddmrp.bitacora WHERE tipo = :t "
+                               "ORDER BY inicio DESC, id DESC LIMIT 1"), {"t": tipo}).mappings().first()
+            if r and r["estado"] in ("error", "interrumpido"):
+                problemas.append({"tipo": tipo, **dict(r)})
+        ok = c.execute(text("SELECT id, fecha_calculo, fin FROM ddmrp.ejecucion_motor WHERE estado = 'ok' ORDER BY id DESC LIMIT 1")).mappings().first()
+    horas = None
+    if ok and ok["fin"]:
+        horas = round((datetime.now(timezone.utc) - ok["fin"]).total_seconds() / 3600, 1)
+    return {"en_curso": est if est["estado"] == "corriendo" else None, "problemas": problemas,
+            "ultimo_motor_ok": {"fecha": ok["fecha_calculo"], "fin": ok["fin"]} if ok else None,
+            "horas_sin_motor": horas, "sin_corridas": ok is None}
 
 
 @router.get("/progreso")

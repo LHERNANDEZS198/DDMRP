@@ -75,12 +75,21 @@ def evento(tipo: str, usuario: str | None, mensaje: str, resumen=None, origen: s
     _cerrar(i, "ok", resumen)
 
 
+def omitida(tipo: str, origen: str, usuario: str | None, mensaje: str):
+    """Una corrida que no arranco (p.ej. el cron de la noche con otra corrida en curso): queda como error con el motivo."""
+    i = _abrir(tipo, origen, usuario, "Omitida: " + mensaje)
+    _cerrar(i, "error")
+
+
 def cerrar_huerfanas():
     """Al arrancar: lo que quedo 'corriendo' murio con el reinicio del servidor."""
     try:
         with pg.begin() as c:
             n = c.execute(text("UPDATE ddmrp.bitacora SET fin = now(), estado = 'interrumpido', "
                                "mensaje = 'El servidor se reinicio mientras corria' WHERE estado = 'corriendo'")).rowcount
+        with pg.begin() as c:   # corridas del motor que quedaron a medias: nunca se usan (la matriz toma la ultima en estado ok)
+            c.execute(text("UPDATE ddmrp.ejecucion_motor SET fin = now(), estado = 'error', "
+                           "detalle = 'Interrumpida: el servidor se reinicio mientras corria' WHERE estado = 'corriendo'"))
         if n:
             log.warning("Bitacora: %s operaciones quedaron interrumpidas por el reinicio", n)
     except Exception:
