@@ -184,9 +184,40 @@ def diagnostico_inventario(bodega: str, producto: str) -> dict:
                     out["siesa"].append({"empresa": empresa, "base": db, "columnas": {
                         k: (float(v) if hasattr(v, "as_tuple") else v if isinstance(v, (int, float, str)) else str(v))
                         for k, v in r.items() if v not in (None, "", 0, 0.0)}})
+            _otras_tablas_costo(out["siesa"][-1] if out["siesa"] and out["siesa"][-1].get("empresa") == empresa else None, db, bodega, producto)
         except Exception as e:
             out["siesa"].append({"empresa": empresa, "base": db, "error": str(e)[:300]})
     return out
+
+
+def _otras_tablas_costo(destino: dict | None, db: str, bodega: str, producto: str) -> None:
+    """Busca en Siesa otras tablas t4xx con columnas de costo (p.ej. costo por instalacion) y trae, para ese item, las filas que
+    tengan dato. Es para ubicar de donde sale un costo que no esta en t400. Un fallo aqui no tumba el diagnostico."""
+    if destino is None:
+        return
+    try:
+        with siesa_engine(db).connect() as cn:
+            cols = cn.execute(text("SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+                                   "WHERE TABLE_NAME LIKE 't4%' AND TABLE_NAME <> 't400_cm_existencia' AND COLUMN_NAME LIKE '%costo%'")).all()
+            por: dict[str, list[str]] = {}
+            for t, c in cols:
+                if re.fullmatch(r"[A-Za-z0-9_]+", t) and re.fullmatch(r"[A-Za-z0-9_]+", c):
+                    por.setdefault(t, []).append(c)
+            rowid = cn.execute(text("SELECT TOP 1 x.f121_rowid FROM t121_mc_items_extensiones x JOIN t120_mc_items i ON i.f120_rowid = x.f121_rowid_item "
+                                    "WHERE i.f120_id_cia = :cia AND RTRIM(i.f120_referencia) = :p"), {"cia": settings.siesa_cia, "p": producto}).scalar()
+            hallado = []
+            for t, cs in sorted(por.items())[:15]:
+                clave = cn.execute(text("SELECT TOP 1 COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = :t AND COLUMN_NAME LIKE '%rowid_item_ext%'"), {"t": t}).scalar()
+                if not clave or rowid is None:
+                    hallado.append({"tabla": t, "columnas_costo": cs, "filas": []}); continue
+                filas = []
+                for r in cn.execute(text(f"SELECT TOP 5 * FROM {t} WHERE {clave} = :r"), {"r": rowid}).mappings():
+                    filas.append({k: (float(v) if hasattr(v, "as_tuple") else v if isinstance(v, (int, float, str)) else str(v))
+                                  for k, v in r.items() if v not in (None, "", 0, 0.0) and ("costo" in k or "instal" in k or "bodega" in k or "cia" in k)})
+                hallado.append({"tabla": t, "columnas_costo": cs, "filas": filas})
+            destino["otras_tablas_costo"] = hallado
+    except Exception as e:
+        destino["otras_tablas_costo"] = [{"tabla": "(error)", "columnas_costo": [str(e)[:200]], "filas": []}]
 
 
 def sincronizar_bodegas(cur) -> int:
