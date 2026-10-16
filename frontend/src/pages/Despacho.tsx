@@ -7,6 +7,7 @@ import Download from '@mui/icons-material/Download'
 import Undo from '@mui/icons-material/Undo'
 import { api, descargar } from '../api'
 import Aviso from '../Aviso'
+import { ayudar } from '../ayuda'
 import { useYo } from '../Yo'
 
 const cols: ColDef[] = [
@@ -109,7 +110,7 @@ export default function Despacho() {
         <Button disabled title="Fase 3">Enviar a Siesa (web service)</Button></>}
       </Paper>
       <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 300 }}>
-        <AgGridReact rowData={rows} columnDefs={cols} rowSelection="multiple" rowBuffer={20}
+        <AgGridReact rowData={rows} columnDefs={ayudar(cols)} tooltipShowDelay={300} rowSelection="multiple" rowBuffer={20}
           context={{ aprobar: pAprobar }} onGridReady={e => setGrid(e.api)} defaultColDef={{ resizable: true, sortable: true }} />
       </Box>
       <Aviso msg={msg} onClose={() => setMsg('')} />

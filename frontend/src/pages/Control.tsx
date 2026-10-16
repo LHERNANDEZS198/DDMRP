@@ -5,6 +5,7 @@ import { Autocomplete, Box, Button, Card, CardActionArea, Chip, MenuItem, Paper,
 import { useLocation } from 'react-router-dom'
 import { BufferTrend, ZonaShare, Punto } from '../TrendCharts'
 import { api } from '../api'
+import { AYUDA, ayudar } from '../ayuda'
 
 const COLOR: Record<string, string> = { ROJA: '#c62828', AMARILLA: '#f9a825', VERDE: '#2e7d32', EXCESO: '#1565c0' }
 const ZONAS = ['ROJA', 'AMARILLA', 'VERDE', 'EXCESO']
@@ -223,14 +224,14 @@ export default function Control() {
           const n = kpi?.[KEY[z] + (cambiosModo ? '_fin' : '')] ?? 0, activo = f.zonas.includes(z)
           const n0 = kpi?.[KEY[z] + '_ini'] ?? 0
           return (
-            <Card key={z} variant="outlined" sx={{ borderLeft: `6px solid ${COLOR[z]}`, outline: activo ? `2px solid ${COLOR[z]}` : 'none' }}>
+            <Tooltip key={z} title={AYUDA[z === 'ROJA' ? 'Rojo' : z === 'AMARILLA' ? 'Amarillo' : z === 'VERDE' ? 'Verde' : 'Exceso']} placement="top"><Card variant="outlined" sx={{ borderLeft: `6px solid ${COLOR[z]}`, outline: activo ? `2px solid ${COLOR[z]}` : 'none' }}>
               <CardActionArea sx={{ p: 1.25 }} onClick={() => setF(x => ({ ...x, zonas: activo ? x.zonas.filter(y => y !== z) : [...x.zonas, z] }))}>
                 <Typography variant="caption" color="text.secondary">{z === 'ROJA' ? 'Rojo' : z === 'AMARILLA' ? 'Amarillo' : z === 'VERDE' ? 'Verde' : 'Exceso'}</Typography>
                 <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2 }}>{n.toLocaleString()}</Typography>
                 <Typography variant="caption" color="text.secondary">{((n / total) * 100).toFixed(1)}% del alcance
                   {cambiosModo && <> · {delta(n0, n, z === 'VERDE' ? 'baja' : z === 'AMARILLA' ? null : 'sube')}</>}</Typography>
               </CardActionArea>
-            </Card>)
+            </Card></Tooltip>)
         })}
       </Box>}
 
@@ -308,7 +309,7 @@ export default function Control() {
         </Paper>)}
       {!tendModo && <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
         <Tabs value={nivel} onChange={(_, v) => setNivel(v)} variant="scrollable" sx={{ minHeight: 36, '& .MuiTab-root': { minHeight: 36, textTransform: 'none' } }}>
-          {NIVELES.map(n => <Tab key={n.k} value={n.k} label={n.label} />)}
+          {NIVELES.map(n => <Tab key={n.k} value={n.k} label={<Tooltip title={AYUDA[n.label] ?? ''} placement="top"><span>{n.label}</span></Tooltip>} />)}
         </Tabs>
         <Box sx={{ flex: 1 }} />
         {f.empresa.map(v => <Chip key={'e' + v} size="small" color="primary" label={`Empresa ${v}`} onDelete={() => quitar('empresa', v)} />)}
@@ -331,8 +332,8 @@ export default function Control() {
 
       {!tendModo && <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 320 }}>
         {nivel === 'detalle'
-          ? <AgGridReact key={'det' + cambiosModo} rowData={det.filas} columnDefs={cambiosModo ? colsDetCambios : colsDet} rowBuffer={20} loading={cargando} defaultColDef={{ resizable: true, sortable: true }} />
-          : <AgGridReact key={nivel + cambiosModo} rowData={grupos} columnDefs={cambiosModo ? colsCambios : colsGrupo} rowBuffer={20} loading={cargando} defaultColDef={{ resizable: true, sortable: true }}
+          ? <AgGridReact key={'det' + cambiosModo} rowData={det.filas} columnDefs={ayudar(cambiosModo ? colsDetCambios : colsDet)} tooltipShowDelay={300} rowBuffer={20} loading={cargando} defaultColDef={{ resizable: true, sortable: true }} />
+          : <AgGridReact key={nivel + cambiosModo} rowData={grupos} columnDefs={ayudar(cambiosModo ? colsCambios : colsGrupo)} tooltipShowDelay={300} rowBuffer={20} loading={cargando} defaultColDef={{ resizable: true, sortable: true }}
               onRowClicked={e => e.data && entrar(String(e.data.clave))} rowStyle={{ cursor: 'pointer' }} rowHeight={40} />}
       </Box>}
     </Box>)
