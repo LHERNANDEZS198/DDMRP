@@ -21,8 +21,8 @@ def resumen(user=Depends(usuario_actual)):
 @router.get("/zona-roja")
 def zona_roja(limit: int = 5000, user=Depends(usuario_actual)):
     w, p = filtro_sql_permisos(user)
-    sql = f"""SELECT s.producto_id, mi.descripcion, s.bodega_id, s.inventario, s.flujo_neto, s.tor, s.tog,
-                     s.pct_buffer, s.cantidad_sugerida
+    sql = f"""SELECT s.empresa, s.producto_id, mi.descripcion, s.bodega_id, s.inventario, s.en_transito,
+                     s.flujo_neto, s.tor, s.tog_aj, s.pct_buffer, s.cantidad_sugerida
               FROM ddmrp.sugerencias_envio s LEFT JOIN ddmrp.maestro_item mi USING (producto_id)
               WHERE s.ejecucion_id = {ULTIMA} AND s.zona='ROJA' AND {w}
               ORDER BY s.pct_buffer LIMIT :lim"""

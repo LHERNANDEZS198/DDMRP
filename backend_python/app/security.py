@@ -27,7 +27,7 @@ def asignaciones(usuario_id: str) -> list[dict]:
     if usuario_id in {x.strip() for x in settings.admin_bootstrap.split(",") if x.strip()}:
         return [{"bodega_id": "*", "categoria": "*", "nivel": "aprobacion", "es_admin": True}]
     with pg.connect() as c:
-        r = c.execute(text("SELECT bodega_id, categoria, nivel, es_admin FROM ddmrp.rbac_asignacion "
+        r = c.execute(text("SELECT bodega_id, categoria, nivel::text AS nivel, es_admin FROM ddmrp.rbac_asignacion "
                            "WHERE usuario_id = :u"), {"u": usuario_id})
         return [dict(x) for x in r.mappings()]
 

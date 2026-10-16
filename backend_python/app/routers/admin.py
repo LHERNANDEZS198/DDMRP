@@ -1,5 +1,6 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from ..orchestrator import pipeline_nocturno, ejecutar_motor
+from ..etl.replicacion import correr_etl
 from ..security import usuario_actual, asignaciones
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -11,9 +12,14 @@ def _solo_admin(user):
 
 
 @router.post("/correr-pipeline")
-def pipeline(bg: BackgroundTasks, dias_ventas: int = 7, user=Depends(usuario_actual)):
-    """Primera carga: dias_ventas=365 (o mas) para poblar el historico."""
-    _solo_admin(user); bg.add_task(pipeline_nocturno, dias_ventas); return {"estado": "lanzado"}
+def pipeline(bg: BackgroundTasks, user=Depends(usuario_actual)):
+    """ETL + motor completo, en segundo plano."""
+    _solo_admin(user); bg.add_task(pipeline_nocturno); return {"estado": "lanzado"}
+
+
+@router.post("/correr-etl")
+def etl(user=Depends(usuario_actual)):
+    _solo_admin(user); return correr_etl()
 
 
 @router.post("/correr-motor")

@@ -21,3 +21,18 @@ export async function login(usuario: string, clave: string) {
   if (!r.ok) throw new Error('Credenciales invalidas')
   setToken((await r.json()).access_token)
 }
+
+/** POST que devuelve un archivo: lo descarga en el navegador. Devuelve el nombre y los avisos del servidor. */
+export async function descargar(path: string, body: unknown) {
+  const r = await fetch('/api' + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  })
+  if (r.status === 401) { localStorage.removeItem('token'); location.reload() }
+  if (!r.ok) throw new Error((await r.json().catch(() => null))?.detail ?? (await r.text()))
+  const nombre = /filename="([^"]+)"/.exec(r.headers.get('content-disposition') ?? '')?.[1] ?? 'archivo.xlsx'
+  const url = URL.createObjectURL(await r.blob())
+  const a = document.createElement('a'); a.href = url; a.download = nombre; a.click(); URL.revokeObjectURL(url)
+  return { nombre, derivado: r.headers.get('x-bodegas-co-derivado') }
+}

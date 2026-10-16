@@ -1,7 +1,10 @@
+from datetime import date
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import text
 from ..db import pg
+from ..plano_siesa import co_derivado, generar_xlsx
 from ..security import usuario_actual, filtro_sql_permisos, exigir
 
 router = APIRouter(prefix="/despacho", tags=["despacho"])
@@ -14,9 +17,9 @@ def matriz(bodega_id: str | None = None, solo_pendientes: bool = True, user=Depe
     f = f"s.ejecucion_id = {ULTIMA} AND s.cantidad_sugerida > 0 AND {w}"
     if bodega_id: f += " AND s.bodega_id=:b"; p["b"] = bodega_id
     if solo_pendientes: f += " AND s.estado='PENDIENTE'"
-    sql = f"""SELECT s.ejecucion_id, s.producto_id, mi.descripcion, mi.categoria, s.bodega_id, s.zona::text zona,
-                     s.inventario, s.en_transito, s.flujo_neto, s.tog, s.cantidad_sugerida, s.cantidad_aprobada,
-                     s.estado::text estado
+    sql = f"""SELECT s.ejecucion_id, s.empresa, s.producto_id, mi.descripcion, mi.categoria, s.bodega_id, s.zona::text zona,
+                     s.inventario, s.en_transito, s.flujo_neto, s.tor, s.toy_aj, s.tog_aj, s.unidad_despacho,
+                     s.vectorizacion, s.cantidad_sugerida, s.cantidad_aprobada, s.estado::text estado
               FROM ddmrp.sugerencias_envio s LEFT JOIN ddmrp.maestro_item mi USING (producto_id)
               WHERE {f} ORDER BY s.bodega_id, s.pct_buffer"""
     with pg.connect() as c:
@@ -39,7 +42,7 @@ def aprobar(items: list[Aprobacion], user=Depends(usuario_actual)):
                             {"p": it.producto_id}).scalar()
             exigir(user, it.bodega_id, cat, "aprobacion" if it.aprobar else "edicion")
             c.execute(text("""UPDATE ddmrp.sugerencias_envio SET cantidad_aprobada=:q,
-                              estado = CASE WHEN :ap THEN 'APROBADA'::estado_sugerencia ELSE estado END,
+                              estado = CASE WHEN :ap THEN 'APROBADA'::ddmrp.estado_sugerencia ELSE estado END,
                               aprobado_por=:u, aprobado_en=now()
                               WHERE ejecucion_id=:e AND producto_id=:p AND bodega_id=:b"""),
                       {"q": it.cantidad_aprobada, "ap": it.aprobar, "u": user["nombre"],
@@ -47,10 +50,43 @@ def aprobar(items: list[Aprobacion], user=Depends(usuario_actual)):
     return {"ok": True, "n": len(items)}
 
 
-@router.get("/exportar-plano")
-def exportar_plano(user=Depends(usuario_actual)):
-    """FASE 2: generar archivo plano para cargar a Siesa (formato por definir)."""
-    raise HTTPException(501, "Pendiente: formato del archivo plano de Siesa")
+class PlanoReq(BaseModel):
+    ejecucion_id: int | None = None      # por defecto, la ultima ejecucion ok
+    fecha: date | None = None            # fecha del documento (por defecto hoy)
+    consec_inicial: int = 1              # consecutivo del primer documento
+    notas: str | None = None             # por defecto "ABASTECIMIENTO DEL <dia> DE <MES>"
+    marcar_enviadas: bool = False        # True: las filas exportadas pasan a estado ENVIADA
+
+
+@router.post("/exportar-plano")
+def exportar_plano(req: PlanoReq, user=Depends(usuario_actual)):
+    """FASE 2: archivo plano para Siesa con las sugerencias APROBADAS (una requisicion RIT por bodega)."""
+    with pg.begin() as c:
+        eid = req.ejecucion_id or c.execute(text("SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok'")).scalar()
+        rows = c.execute(text("""SELECT s.bodega_id, s.producto_id, COALESCE(s.cantidad_aprobada, s.cantidad_sugerida) AS q,
+                                        co.id_co
+                                 FROM ddmrp.sugerencias_envio s
+                                 LEFT JOIN ddmrp.bodega_centro_operacion co ON co.bodega_id = s.bodega_id
+                                 WHERE s.ejecucion_id = :e AND s.estado = 'APROBADA'
+                                   AND COALESCE(s.cantidad_aprobada, s.cantidad_sugerida) >= 0.5"""),
+                         {"e": eid}).all()
+        if not rows:
+            raise HTTPException(404, "No hay sugerencias aprobadas para exportar")
+        for b in sorted({r[0] for r in rows}):
+            exigir(user, b, None, "aprobacion")
+        derivados = sorted({r[0] for r in rows if not r[3]})
+        lineas = [(r[0], r[3] or co_derivado(r[0]), r[1], float(r[2])) for r in rows]
+        fecha = req.fecha or date.today()
+        data = generar_xlsx(lineas, fecha=fecha, consec_inicial=req.consec_inicial, notas=req.notas)
+        if req.marcar_enviadas:
+            c.execute(text("""UPDATE ddmrp.sugerencias_envio SET estado = 'ENVIADA'::ddmrp.estado_sugerencia
+                              WHERE ejecucion_id = :e AND estado = 'APROBADA'
+                                AND COALESCE(cantidad_aprobada, cantidad_sugerida) >= 0.5 AND bodega_id = ANY(:b)"""),
+                      {"e": eid, "b": sorted({r[0] for r in rows})})
+    headers = {"Content-Disposition": f'attachment; filename="Abastecimiento_{fecha:%Y%m%d}.xlsx"'}
+    if derivados:  # bodegas sin centro de operacion cargado: se uso la regla observada en el ejemplo
+        headers["X-Bodegas-CO-Derivado"] = ",".join(derivados)
+    return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers=headers)
 
 
 @router.post("/enviar-siesa")

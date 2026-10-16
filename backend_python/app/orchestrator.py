@@ -4,7 +4,7 @@ from datetime import date
 from sqlalchemy import text
 from .config import settings
 from .db import pg
-from .etl.siesa_to_pg import correr_etl
+from .etl.replicacion import correr_etl
 
 log = logging.getLogger("orq")
 
@@ -32,8 +32,8 @@ def ejecutar_motor(fecha: date | None = None) -> dict:
         raise
 
 
-def pipeline_nocturno(dias_ventas: int = 7):
+def pipeline_nocturno():
     log.info("Pipeline nocturno: ETL")
-    correr_etl(dias_ventas)
-    log.info("Pipeline nocturno: motor")
-    return ejecutar_motor()
+    etl = correr_etl()
+    log.info("ETL listo: %s. Pipeline nocturno: motor", etl)
+    return {"etl": etl, **ejecutar_motor()}

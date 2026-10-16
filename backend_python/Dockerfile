@@ -1,9 +1,9 @@
 # Contexto de build: raiz del monorrepo  (docker compose lo configura asi)
-# --- Etapa 1: compilar motor Rust ---
-FROM rust:1.82-bookworm AS rust
+# --- Etapa 1: compilar motor Rust (ultima estable: las dependencias exigen un rustc reciente) ---
+FROM rust:1-bookworm AS rust
 WORKDIR /src
 COPY core_rust/ .
-RUN cargo build --release
+RUN cargo build --release --locked
 
 # --- Etapa 2: backend Python + driver ODBC para MSSQL ---
 FROM python:3.12-slim-bookworm

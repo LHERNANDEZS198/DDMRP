@@ -4,11 +4,14 @@ import { ColDef } from 'ag-grid-community'
 import { api } from '../api'
 
 const cols: ColDef[] = [
+  { field: 'bodega_id', headerName: 'Bodega', filter: true },
   { field: 'producto_id', headerName: 'Producto', filter: true },
   { field: 'descripcion', headerName: 'Descripcion', filter: true, flex: 1 },
-  { field: 'bodega_id', headerName: 'Bodega', filter: true },
   { field: 'inventario', type: 'numericColumn' },
-  { field: 'flujo_neto', type: 'numericColumn' },
+  { field: 'en_transito', headerName: 'Transito', type: 'numericColumn' },
+  { field: 'flujo_neto', headerName: 'Flujo neto', type: 'numericColumn' },
+  { field: 'tor', headerName: 'TOR', type: 'numericColumn' },
+  { field: 'tog_aj', headerName: 'TOG aj.', type: 'numericColumn' },
   { field: 'pct_buffer', headerName: '% buffer', type: 'numericColumn', sort: 'asc' },
   { field: 'cantidad_sugerida', headerName: 'Sugerido', type: 'numericColumn' },
 ]

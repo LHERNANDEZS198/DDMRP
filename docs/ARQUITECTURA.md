@@ -1,50 +1,57 @@
 # Arquitectura DDMRP – Abastecimiento diario a tiendas
 
-Escala: ~2.500 productos x 135 bodegas = ~337.500 combinaciones item/bodega por corrida.
+Escala: ~2.500 productos x 135 bodegas = ~337.500 combinaciones empresa/bodega/referencia por corrida.
 
 ## Diagrama de bloques
 
 ```mermaid
 flowchart LR
   subgraph Origen
-    SIESA[(Siesa ERP\nMSSQL)]
+    LAB[(FUNATLAB\ndbGTIntegrationIntermediaReal\nAbastecimiento_*)]
+    SIESA[(Siesa MSSQL\nBD por compania)]
   end
   subgraph Backend["Backend (contenedor)"]
     ETL["ETL nocturno\nPython: SQLAlchemy + COPY"]
     ORQ["Orquestador\nFastAPI + scheduler"]
-    CORE["Motor DDMRP\nRust: rayon / Polars"]
+    CORE["Motor DDMRP\nRust: rayon"]
     API["API REST\nFastAPI"]
   end
-  PG[(PostgreSQL\nanalitico)]
-  MY[(MySQL reloj\nautenticacion)]
+  PG[(PostgreSQL\nanalitico local)]
+  MY[(MySQL reloj\nusuario y clave)]
   subgraph Web["Frontend (contenedor Nginx)"]
-    UI["React + AG Grid\nDashboard / Config / Matriz despacho"]
+    UI["React + AG Grid\nAlertas / Matriz de despacho / Maestros"]
   end
-  SIESA -- "1. extraccion masiva (chunks)" --> ETL
-  ETL -- "2. COPY a staging + upsert" --> PG
-  ORQ -- "3. dispara tras ETL" --> CORE
-  PG -- "4. lee ventas, inventario, transitos, config" --> CORE
-  CORE -- "5. escribe sugerencias_envio" --> PG
+  LAB -- "ventas, bitacora, cotas, unidad despacho, vectorizacion" --> ETL
+  SIESA -- "inventario por bodega" --> ETL
+  ETL -- "COPY + volcado en 1 transaccion" --> PG
+  ORQ -- "dispara tras el ETL" --> CORE
+  PG -- "lee ventas 7 meses + maestros" --> CORE
+  CORE -- "escribe sugerencias_envio" --> PG
   UI <-- "HTTPS /api (JWT)" --> API
   API <--> PG
-  API -- "login" --> MY
+  API -- "login (usuario/clave)" --> MY
   API -. "Fase 2: archivo plano" .-> SIESA
   API -. "Fase 3: web service" .-> SIESA
 ```
 
 ## Flujo diario
-1. 02:00 el orquestador lanza el ETL (Siesa -> Postgres): ventas incrementales, inventario y transitos (snapshot), maestro de items.
-2. Al terminar, ejecuta el binario `ddmrp_core` (subproceso con argumentos fijos, sin shell). Meta: < 60 s.
-3. El motor lee de Postgres, calcula ADU, zonas, flujo neto y sugerido, y escribe `sugerencias_envio` (COPY).
-4. Los analistas revisan la **Matriz de despacho** (editar cantidad, aprobar), segun permisos.
-5. Fase 2: generar archivo plano para Siesa. Fase 3: envio directo por web service.
+1. 02:00 el orquestador lanza el ETL: replica a Postgres las tablas `Abastecimiento_*` de FUNATLAB y el inventario de Siesa
+   (una BD por empresa). El motor ya no consulta los servidores de origen.
+2. Corre el binario `ddmrp_core` (subproceso con argumentos fijos, sin shell). Meta < 60 s; en pruebas con 337.448 combinaciones
+   y 1,5 M de lineas de venta sinteticas tardo ~9 s.
+3. El motor aplica el modelo de `docs/MODELO_DDMRP.md` y escribe `sugerencias_envio` (COPY).
+4. Los analistas revisan la **Matriz de despacho** (editar cantidad, aprobar) segun sus permisos.
+5. Fase 2: archivo plano para Siesa. Fase 3: envio directo por web service.
 
 ## Decisiones clave
-- **Rust como binario independiente** (no PyO3) en esta fase: aislamiento, deploy simple, se puede correr/probar solo. PyO3 queda como opcion si se necesita llamarlo in-process.
-- **Datos de lectura** del motor: SELECT por rango; indice compuesto (producto_id, bodega_id).
-- **Autenticacion** contra MySQL `reloj`; **autorizacion** (RBAC por bodega/categoria) vive en Postgres (`rbac_asignacion`), no se toca el MySQL.
-- **Escrituras** de la UI sobre `maestro_item_bodega_config` quedan auditadas (`config_audit`).
+- **Rust como binario independiente** (no PyO3): aislamiento, despliegue simple y se puede correr/probar solo.
+- **Maestros replicados y editables:** bitacora, cotas, unidad de despacho y vectorizacion se replican desde FUNATLAB. Con
+  `SYNC_MAESTROS=true` el ETL los vuelve a cargar cada noche (pisa lo editado en la app); con `false` la app pasa a ser el maestro.
+  `pronostico`, `promocion`, `factor_tramo` y `parametro` solo existen en la app.
+- **Autenticacion** contra MySQL reloj (tabla USUARIOS, clave md5/bcrypt, solo lectura); **autorizacion** (perfiles por
+  bodega/laboratorio) en Postgres (`rbac_asignacion`).
+- Toda edicion de maestros queda en `config_audit`.
 
 ## Permisos (matriz)
-Niveles: `lectura` < `edicion` < `aprobacion`. Una asignacion = (usuario, bodega|*, categoria|*, nivel).
-El nivel efectivo para (bodega, categoria) es el maximo de las asignaciones que aplican.
+Niveles: `lectura` < `edicion` < `aprobacion`. Una asignacion = (usuario, bodega|*, laboratorio|*, nivel).
+El nivel efectivo para (bodega, laboratorio) es el maximo de las asignaciones que aplican. `ADMIN_BOOTSTRAP` define los primeros administradores.
