@@ -151,7 +151,10 @@ export default function Control() {
   const colsGrupo: ColDef[] = useMemo(() => [
     { field: 'clave', headerName: NIVELES.find(n => n.k === nivel)?.label, width: 130, pinned: 'left' },
     { field: 'nombre', headerName: 'Nombre', flex: 1, minWidth: 180 },
-    { field: 'n', headerName: 'Combinaciones', type: 'numericColumn', width: 130 },
+    { field: 'n', headerName: 'Combinaciones', type: 'numericColumn', width: 130, headerTooltip: 'Pares tienda × item que tiene el motor en este grupo: cada fila de buffer que calcula' },
+    { field: 'inventario', headerName: 'Inventario', type: 'numericColumn', width: 115, valueFormatter: p => Math.round(p.value ?? 0).toLocaleString(), headerTooltip: 'Unidades en inventario hoy (suma de lo filtrado)' },
+    { field: 'en_transito', headerName: 'Tránsito', type: 'numericColumn', width: 100, valueFormatter: p => Math.round(p.value ?? 0).toLocaleString() },
+    { field: 'tog_aj', headerName: 'Buffer (TOG)', type: 'numericColumn', width: 120, valueFormatter: p => Math.round(p.value ?? 0).toLocaleString(), headerTooltip: 'Tope verde ajustado: hasta donde se repone' },
     { headerName: 'Zonas del buffer', cellRenderer: ZonaBar, width: 260, sortable: false },
     { field: 'roja', headerName: 'Rojo', type: 'numericColumn', width: 85, cellStyle: { color: COLOR.ROJA, fontWeight: 600 } },
     { field: 'amarilla', headerName: 'Amarillo', type: 'numericColumn', width: 95 },
@@ -213,7 +216,7 @@ export default function Control() {
           <Box sx={{ p: 1.25 }}>
             <Typography variant="caption" color="text.secondary">Alcance actual</Typography>
             <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2 }}>{kpi ? (cambiosModo ? kpi.n_fin : kpi.n).toLocaleString() : '…'}</Typography>
-            <Typography variant="caption" color="text.secondary">combinaciones · buffer prom. {cambiosModo ? kpi?.pct_fin : kpi?.pct_prom ?? '–'}%</Typography>
+            <Typography variant="caption" color="text.secondary" title="Combinación = un item en una tienda (cada fila de buffer que calcula el motor)">combinaciones (tienda × item) · buffer prom. {cambiosModo ? kpi?.pct_fin : kpi?.pct_prom ?? '–'}%{!cambiosModo && kpi?.inventario != null && <> · inventario {Math.round(kpi.inventario).toLocaleString()} u.</>}</Typography>
           </Box>
         </Card>
         {ZONAS.map(z => {

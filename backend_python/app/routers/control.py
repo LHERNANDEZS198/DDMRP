@@ -103,12 +103,16 @@ def resumen(agrupar: str = "bodega", bodegas: str | None = None, labs: str | Non
                      count(*) FILTER (WHERE s.zona = 'VERDE') AS verde, count(*) FILTER (WHERE s.zona = 'EXCESO') AS exceso,
                      round(avg(LEAST(COALESCE(s.pct_buffer, 0), 200)), 1) AS pct_prom,
                      count(*) FILTER (WHERE s.cantidad_sugerida > 0) AS a_pedir,
-                     COALESCE(sum(s.cantidad_sugerida), 0) AS unidades
+                     COALESCE(sum(s.cantidad_sugerida), 0) AS unidades,
+                     COALESCE(sum(s.inventario), 0) AS inventario, COALESCE(sum(s.en_transito), 0) AS en_transito,
+                     COALESCE(sum(s.flujo_neto), 0) AS flujo_neto, COALESCE(sum(s.tog_aj), 0) AS tog_aj
               {frm} WHERE {w} GROUP BY 1 ORDER BY (count(*) FILTER (WHERE s.zona = 'ROJA'))::float / count(*) DESC, 1 LIMIT :lim"""
     tot = f"""SELECT count(*) AS n, count(*) FILTER (WHERE s.zona = 'ROJA') AS roja, count(*) FILTER (WHERE s.zona = 'AMARILLA') AS amarilla,
                      count(*) FILTER (WHERE s.zona = 'VERDE') AS verde, count(*) FILTER (WHERE s.zona = 'EXCESO') AS exceso,
                      round(avg(LEAST(COALESCE(s.pct_buffer, 0), 200)), 1) AS pct_prom,
-                     COALESCE(sum(s.cantidad_sugerida), 0) AS unidades {FROM} WHERE {w}"""
+                     COALESCE(sum(s.cantidad_sugerida), 0) AS unidades,
+                     COALESCE(sum(s.inventario), 0) AS inventario, COALESCE(sum(s.en_transito), 0) AS en_transito,
+                     COALESCE(sum(s.tog_aj), 0) AS tog_aj {FROM} WHERE {w}"""
     with pg.connect() as c:
         filas = [dict(r) for r in c.execute(text(sql), {**p, "lim": limit}).mappings()]
         total = dict(c.execute(text(tot), p).mappings().first())
