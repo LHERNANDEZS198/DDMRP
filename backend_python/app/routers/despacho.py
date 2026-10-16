@@ -28,7 +28,7 @@ def matriz(bodega_id: str | None = None, bodegas: str | None = None, solo_pendie
            estado: str | None = None, user=Depends(requiere("ver_despacho"))):
     """bodegas = lista separada por comas (las tiendas elegidas para la corrida del dia)."""
     w, p = filtro_sql_permisos(user)
-    f = f"s.ejecucion_id = {ULTIMA} AND s.cantidad_sugerida > 0 AND {w}"
+    f = f"s.ejecucion_id = {ULTIMA} AND (s.cantidad_sugerida > 0 OR s.cantidad_necesaria > 0) AND {w}"
     if bodega_id: f += " AND s.bodega_id=:b"; p["b"] = bodega_id
     if bodegas: f += " AND s.bodega_id = ANY(:bs)"; p["bs"] = [x.strip() for x in bodegas.split(",") if x.strip()]
     if estado is None:
@@ -37,17 +37,14 @@ def matriz(bodega_id: str | None = None, bodegas: str | None = None, solo_pendie
         f += f" AND s.estado='{estado.upper()}'"
     sql = f"""SELECT s.ejecucion_id, s.empresa, s.producto_id, mi.descripcion, mi.categoria, s.bodega_id, s.zona::text zona,
                      s.inventario, s.en_transito, s.flujo_neto, s.tor, s.toy_aj, s.tog_aj, s.unidad_despacho,
-                     s.vectorizacion, s.cantidad_sugerida::float8 cantidad_sugerida, s.cantidad_aprobada, s.estado::text estado, s.pct_buffer
+                     s.vectorizacion, s.cantidad_sugerida::float8 cantidad_sugerida, s.cantidad_aprobada, s.estado::text estado, s.cantidad_necesaria::float8 cantidad_necesaria, s.stock_cedi::float8 stock_cedi
               FROM ddmrp.sugerencias_envio s LEFT JOIN ddmrp.maestro_item mi USING (producto_id)
               WHERE {f} ORDER BY s.bodega_id, s.pct_buffer"""
     with pg.connect() as c:
         filas = [dict(r) for r in c.execute(text(sql), p).mappings()]
-        if estado.lower() == "pendiente" and filas:
-            # el inventario del CEDI es finito: lo asignado entre las tiendas de la corrida puede ser menos que lo necesario
-            filas = reparto.aplicar(c, filas, filas[0]["ejecucion_id"])
-        else:
-            for f in filas:
-                f["cantidad_necesaria"] = float(f["cantidad_sugerida"]); f["stock_cedi"] = None; f["limitado"] = False
+        for f in filas:   # lo asignado ya viene repartido por el motor (cantidad_sugerida); necesario = lo que pedia el buffer
+            f["cantidad_necesaria"] = float(f["cantidad_necesaria"] if f["cantidad_necesaria"] is not None else f["cantidad_sugerida"])
+            f["limitado"] = f["cantidad_sugerida"] + 1e-9 < f["cantidad_necesaria"]
         return filas
 
 
@@ -58,9 +55,10 @@ def cedi(user=Depends(requiere("ver_despacho"))):
     with pg.connect() as c:
         n, con, corte = c.execute(text("SELECT count(*), count(*) FILTER (WHERE disponible > 0), max(fecha_corte) FROM ddmrp.inventario_cedi")).first()
         regla = reparto.regla_actual(c)
+        ult = c.execute(text(f"SELECT count(*) FILTER (WHERE cantidad_necesaria > cantidad_sugerida) FROM ddmrp.sugerencias_envio WHERE ejecucion_id = {ULTIMA}")).scalar()
         res = c.execute(text("SELECT count(*) FROM ddmrp.reserva_cedi WHERE porcentaje > 0")).scalar()
     return {"bodega": settings.siesa_cedi_bodega, "productos": n, "con_stock": con, "corte": corte, "regla": regla,
-            "regla_nombre": reparto.REGLAS.get(regla, "?"), "items_con_reserva": res, "activo": regla != 0 and n > 0}
+            "regla_nombre": reparto.REGLAS.get(regla, "?"), "items_con_reserva": res, "limitadas": ult, "activo": regla != 0 and n > 0}
 
 
 class Aprobacion(BaseModel):

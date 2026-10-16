@@ -7,7 +7,7 @@ Monorrepo: `core_rust/` (motor de calculo), `backend_python/` (FastAPI + ETL + o
 ```bash
 cp .env.example .env     # completar credenciales (el .env NO se sube a git)
 docker compose up --build
-# UI:  http://localhost:8080     API docs: http://localhost:8000/docs
+# UI:  http://localhost:8095 (cambialo con FRONTEND_PORT en el .env)     API docs: http://localhost:8000/docs
 ```
 FUNATLAB ya no se usa. Variables a tener en el `.env`: `SIESA_DB` (empresa 05), `SIESA_DB_S` (empresa 21, `Stores`), `ADMIN_BOOTSTRAP`.
 Las variables `LAB_*` y `SYNC_MAESTROS` ya no existen (se pueden borrar).

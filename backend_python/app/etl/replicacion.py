@@ -253,6 +253,25 @@ def _cedi_de_siesa(cur) -> dict:
     return {"bodega": bod, "productos": len(datos), "con_stock": sum(1 for d in datos.values() if d[1] > 0)}
 
 
+def refrescar_cedi() -> dict:
+    """Lee de Siesa el inventario FRESCO del CEDI, para que el reparto del motor no dependa de cuando corrio el ETL.
+    Si Siesa no responde se sigue con el ultimo corte y se avisa."""
+    if not (settings.siesa_host and settings.siesa_db and settings.siesa_cedi_bodega):
+        return {"fresco": False, "motivo": "Siesa no configurado"}
+    raw = pg.raw_connection()
+    try:
+        with raw.cursor() as cur:
+            r = _cedi_de_siesa(cur)
+        raw.commit()
+        return {"fresco": True, **r}
+    except Exception as e:
+        raw.rollback()
+        log.warning("Inventario fresco del CEDI no leido, se usa el ultimo corte: %s", e)
+        return {"fresco": False, "motivo": str(e)[:200]}
+    finally:
+        raw.close()
+
+
 def _param(cur, clave: str):
     cur.execute("SELECT valor FROM ddmrp.parametro WHERE clave = %s", (clave,))
     f = cur.fetchone()

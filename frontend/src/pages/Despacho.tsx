@@ -111,6 +111,7 @@ export default function Despacho() {
           {cedi.regla === 0 ? 'El reparto del inventario del CEDI está apagado: se sugiere todo lo que pide el buffer.'
             : cedi.productos === 0 ? `Sin inventario del CEDI (${cedi.bodega}): corre el ETL para traerlo. Mientras tanto no se limita lo sugerido.`
             : `CEDI ${cedi.bodega}: ${cedi.con_stock.toLocaleString()} items con stock (corte ${cedi.corte}) · si no alcanza: ${cedi.regla_nombre.toLowerCase()}`
+              + (cedi.limitadas ? ` · ${cedi.limitadas.toLocaleString()} combinaciones con menos de lo necesario` : '')
               + (cedi.items_con_reserva ? ` · ${cedi.items_con_reserva} items con reserva` : '')}
         </Alert>)}
       <Paper variant="outlined" sx={{ p: 1.5, display: 'flex', flexWrap: 'wrap', gap: 1.5, alignItems: 'center' }}>

@@ -52,7 +52,7 @@ services:
     depends_on:
       - backend
     ports:
-      - "8080:80"
+      - "${FRONTEND_PORT:-8095}:80"   # puerto de la UI; cambialo con FRONTEND_PORT en .env
 
 volumes:
   pgdata:

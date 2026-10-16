@@ -4,7 +4,8 @@ from datetime import date
 from sqlalchemy import text
 from .config import settings
 from .db import pg
-from .etl.replicacion import correr_etl
+from .etl.replicacion import correr_etl, refrescar_cedi
+from .reparto import aplicar_a_ejecucion
 from . import progreso
 
 log = logging.getLogger("orq")
@@ -46,6 +47,8 @@ def ejecutar_motor(fecha: date | None = None) -> dict:
 
 def _ejecutar_motor(fecha: date | None = None) -> dict:
     fecha = fecha or date.today()
+    progreso.avance("Leyendo el inventario fresco del CEDI…")
+    cedi = refrescar_cedi()
     progreso.avance("Calculando buffers con el motor Rust (varios minutos con todas las tiendas)…")
     with pg.begin() as c:
         eid = c.execute(text("INSERT INTO ddmrp.ejecucion_motor (fecha_calculo) VALUES (:f) RETURNING id"),
@@ -59,12 +62,19 @@ def _ejecutar_motor(fecha: date | None = None) -> dict:
         with pg.begin() as c:
             c.execute(text("UPDATE ddmrp.ejecucion_motor SET fin=now(), estado='ok', filas=:n WHERE id=:i"),
                       {"n": res["filas"], "i": eid})
+        progreso.avance("Repartiendo el inventario del CEDI entre las tiendas…")
+        try:
+            with pg.begin() as c:
+                reparto = aplicar_a_ejecucion(c, eid)
+        except Exception as e:
+            log.exception("No se pudo repartir el inventario del CEDI")
+            reparto = {"aplicado": False, "error": str(e)[:200]}
         progreso.avance("Guardando la foto diaria para las vistas de cambios y tendencia…")
         try:
             guardar_historia(eid)
         except Exception:
             log.exception("No se pudo guardar la historia del buffer")
-        return {"ejecucion_id": eid, **res}
+        return {"ejecucion_id": eid, **res, "cedi": cedi, "reparto": reparto}
     except Exception as e:
         detalle = getattr(e, "stderr", None) or str(e)
         with pg.begin() as c:
