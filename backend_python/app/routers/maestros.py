@@ -171,7 +171,7 @@ def editar(nombre: str, cambios: list[Cambio], user=Depends(usuario_actual)):
 # ---------------------------------------------------------------------------------------------------------
 # Carga masiva (pegar / Excel / CSV) y descarga a Excel
 # ---------------------------------------------------------------------------------------------------------
-MAX_FILAS = 400_000
+MAX_FILAS = 1_000_000
 
 
 def _valor_llave(col: str, v) -> str:
