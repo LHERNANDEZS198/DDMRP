@@ -89,20 +89,6 @@ function Diagnostico() {
                     <TableRow key={k} sx={/exist|compr|costo/i.test(k) ? { bgcolor: '#fff8e1' } : undefined}>
                       <TableCell sx={{ fontFamily: 'monospace', py: 0.3 }}>{k}</TableCell><TableCell sx={{ py: 0.3 }}>{String(v)}</TableCell></TableRow>))}
                 </TableBody></Table>}
-            {s.sp_costo && <Box sx={{ mt: 1 }}>
-              <Typography variant="subtitle2">Dónde lee el costo (ins) el reporte de Siesa (sp_cons_inv_exitencias)</Typography>
-              <Box component="pre" sx={{ m: 0, p: 1, bgcolor: '#f5f5f5', fontSize: 11, overflow: 'auto', maxHeight: 260 }}>{s.sp_costo}</Box>
-            </Box>}
-            {s.otras_tablas_costo?.length > 0 && <Box sx={{ mt: 1 }}>
-              <Typography variant="subtitle2">Otras tablas de Siesa con columnas de costo (p. ej. costo por instalación)</Typography>
-              {s.otras_tablas_costo.map((t: any) => (
-                <Box key={t.tabla} sx={{ mb: 0.5 }}>
-                  <Typography variant="caption" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>{t.tabla}</Typography>
-                  <Typography variant="caption" color="text.secondary"> · columnas: {t.columnas_costo.join(', ')}</Typography>
-                  {t.filas.map((f: any, j: number) => <Typography key={j} variant="caption" sx={{ display: 'block', fontFamily: 'monospace', pl: 2 }}>
-                    {Object.entries(f).map(([k, v]) => `${k}=${v}`).join(' · ') || '(sin datos para este ítem)'}</Typography>)}
-                </Box>))}
-            </Box>}
           </Box>))}
         {!res.siesa.length && !res.aviso && <Alert severity="warning" sx={{ py: 0 }}>Siesa no devolvió filas de existencia para esa tienda y referencia.</Alert>}
       </Box>)}

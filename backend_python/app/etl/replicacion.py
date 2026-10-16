@@ -191,56 +191,9 @@ def diagnostico_inventario(bodega: str, producto: str) -> dict:
                     out["siesa"].append({"empresa": empresa, "base": db, "columnas": {
                         k: (float(v) if hasattr(v, "as_tuple") else v if isinstance(v, (int, float, str)) else str(v))
                         for k, v in r.items() if v not in (None, "", 0, 0.0)}})
-            _otras_tablas_costo(out["siesa"][-1] if out["siesa"] and out["siesa"][-1].get("empresa") == empresa else None, db, bodega, producto)
         except Exception as e:
             out["siesa"].append({"empresa": empresa, "base": db, "error": str(e)[:300]})
     return out
-
-
-def _otras_tablas_costo(destino: dict | None, db: str, bodega: str, producto: str) -> None:
-    """Busca en Siesa otras tablas (que se unan por item) con columnas de costo (p.ej. costo por instalacion) y trae, para ese item, las filas que
-    tengan dato. Es para ubicar de donde sale un costo que no esta en t400. Un fallo aqui no tumba el diagnostico."""
-    if destino is None:
-        return
-    try:
-        with siesa_engine(db).connect() as cn:
-            cols = cn.execute(text("SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
-                                   "WHERE TABLE_NAME LIKE 't%' AND TABLE_NAME <> 't400_cm_existencia' AND COLUMN_NAME LIKE '%costo%' "
-                                   "AND TABLE_NAME IN (SELECT TABLE_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE COLUMN_NAME LIKE '%rowid_item_ext%')")).all()
-            por: dict[str, list[str]] = {}
-            for t, c in cols:
-                if re.fullmatch(r"[A-Za-z0-9_]+", t) and re.fullmatch(r"[A-Za-z0-9_]+", c):
-                    por.setdefault(t, []).append(c)
-            rowid = cn.execute(text("SELECT TOP 1 x.f121_rowid FROM t121_mc_items_extensiones x JOIN t120_mc_items i ON i.f120_rowid = x.f121_rowid_item "
-                                    "WHERE i.f120_id_cia = :cia AND RTRIM(i.f120_referencia) = :p"), {"cia": settings.siesa_cia, "p": producto}).scalar()
-            hallado = []
-            for t, cs in sorted(por.items())[:30]:
-                clave = cn.execute(text("SELECT TOP 1 COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = :t AND COLUMN_NAME LIKE '%rowid_item_ext%'"), {"t": t}).scalar()
-                if not clave or rowid is None:
-                    hallado.append({"tabla": t, "columnas_costo": cs, "filas": []}); continue
-                filas = []
-                for r in cn.execute(text(f"SELECT TOP 300 * FROM {t} WHERE {clave} = :r"), {"r": rowid}).mappings():
-                    f = {k: (float(v) if hasattr(v, "as_tuple") else v if isinstance(v, (int, float, str)) else str(v))
-                         for k, v in r.items() if v not in (None, "", 0, 0.0) and ("costo" in k or "instal" in k or "bodega" in k or "cia" in k)}
-                    # solo filas con algun costo numerico distinto de 0 (las demas no ayudan a ubicar el costo)
-                    if any("costo" in k and isinstance(v, float | int) and "fecha" not in k and "abc" not in k and "ind_" not in k and "id_" not in k for k, v in f.items()):
-                        filas.append(f)
-                    if len(filas) >= 6:
-                        break
-                hallado.append({"tabla": t, "columnas_costo": cs, "filas": filas})
-            destino["otras_tablas_costo"] = hallado
-            # el reporte "Existencia a la fecha por bodega" saca el costo (ins) de este SP: mostramos de donde lo lee
-            try:
-                d = cn.execute(text("SELECT OBJECT_DEFINITION(OBJECT_ID('dbo.sp_cons_inv_exitencias'))")).scalar() or ""
-                ls = d.splitlines(); sal = []
-                for i, l in enumerate(ls):
-                    if "costo_prom_unit_ins" in l.lower():
-                        sal += [x.rstrip() for x in ls[max(0, i - 3):i + 4]] + ["-----"]
-                destino["sp_costo"] = "\n".join(sal[:80]) if sal else ("(el SP no menciona costo_prom_unit_ins; puede llamar a otro SP) EXECs: " + "; ".join(l.strip() for l in ls if "exec" in l.lower())[:600] if d else "(no se pudo leer la definición del SP)")
-            except Exception as e:
-                destino["sp_costo"] = "(no se pudo leer la definición del SP: " + str(e)[:150] + ")"
-    except Exception as e:
-        destino["otras_tablas_costo"] = [{"tabla": "(error)", "columnas_costo": [str(e)[:200]], "filas": []}]
 
 
 def sincronizar_bodegas(cur) -> int:
