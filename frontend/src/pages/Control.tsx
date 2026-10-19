@@ -212,6 +212,7 @@ export default function Control() {
     { field: 'flujo_neto', headerName: 'Flujo neto', type: 'numericColumn', width: 105 },
     { field: 'adu', headerName: 'ADU', type: 'numericColumn', width: 90 },
     { field: 'cantidad_sugerida', headerName: 'Sugerido', type: 'numericColumn', width: 100 },
+    { field: 'costo', headerName: 'Costo prom.', type: 'numericColumn', width: 115, headerTooltip: 'Costo promedio por instalación (Siesa)', valueFormatter: p => p.value == null ? '' : '$' + Math.round(p.value).toLocaleString('es-CO') },
     { field: 'condenado', headerName: 'Condenado', width: 110, cellRenderer: (p: ICellRendererParams) => p.value ? <Chip size="small" label="NxP" sx={{ height: 20, fontSize: 11, bgcolor: '#424242', color: '#fff' }} /> : '' },
   ]
 
@@ -304,15 +305,16 @@ export default function Control() {
           {f.bodegas.map(v => <Chip key={'b' + v} size="small" color="primary" label={`Tienda ${v}`} onDelete={() => quitar('bodegas', v)} />)}
           {f.labs.map(v => <Chip key={'l' + v} size="small" color="primary" label={`Lab ${v}`} onDelete={() => quitar('labs', v)} />)}
           {f.crit.map(v => <Chip key={'c' + v} size="small" color="primary" label={`${planNombre(f.plan)}: ${critNombre(f.plan, v)}`} onDelete={() => quitar('crit', v)} />)}
-        {f.crit.map(v => <Chip key={'c' + v} size="small" color="primary" label={`${planNombre(f.plan)}: ${critNombre(f.plan, v)}`} onDelete={() => quitar('crit', v)} />)}
           {f.q && <Chip size="small" color="primary" label={`Item “${f.q}”`} onDelete={() => quitar('q')} />}
         </Box>)}
       {tendModo && (
         <Paper variant="outlined" sx={{ p: 1.5, flexShrink: 0 }}>
-          <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>Buffer en el tiempo{serie.length ? ` · ${serie[serie.length - 1].n.toLocaleString()} combinación(es)` : ''}</Typography>
+          <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>Semáforo en el tiempo (% de combinaciones por zona){serie.length ? ` · ${serie[serie.length - 1].n.toLocaleString()} combinación(es)` : ''}</Typography>
+          <Typography variant="caption" color="text.secondary">Cada día es la foto de la corrida del motor; la línea punteada es el % de combinaciones con inventario. Necesitas al menos 2 días de historia para ver la curva.</Typography>
+          <ZonaShare serie={serie} />
+          <Typography variant="subtitle2" sx={{ fontWeight: 700, mt: 2 }}>Buffer en el tiempo (unidades)</Typography>
           <Typography variant="caption" color="text.secondary">Para la curva de un solo item en una sola tienda, elige esa tienda y escribe el código del item. Si no, las unidades de todo lo filtrado se suman.</Typography>
           <BufferTrend serie={serie} />
-          {serie.some(p => p.n > 1) && <><Typography variant="subtitle2" sx={{ fontWeight: 700, mt: 2 }}>Semáforo en el tiempo (% de combinaciones por zona)</Typography><ZonaShare serie={serie} /></>}
         </Paper>)}
       {!tendModo && <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
         <Tabs value={nivel} onChange={(_, v) => setNivel(v)} variant="scrollable" sx={{ minHeight: 36, '& .MuiTab-root': { minHeight: 36, textTransform: 'none' } }}>

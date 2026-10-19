@@ -84,10 +84,11 @@ def repartir(filas: list[tuple], disponible: float, regla: int) -> dict:
 
 # ---- datos ----
 def datos_cedi(c) -> dict:
-    """{producto: (stock, reserva_fraccion)} y si hay datos del CEDI. Sin filas en inventario_cedi no se limita nada."""
-    stock = {p: float(d) for p, d in c.execute(text("SELECT producto_id, disponible FROM ddmrp.inventario_cedi")).all()}
+    """{(empresa, producto): stock} y {producto: reserva_fraccion}. El inventario del CEDI es de cada empresa: solo se reparte
+    entre las tiendas de esa empresa. Sin filas de una empresa en inventario_cedi no se limita nada de esa empresa."""
+    stock = {(e, p): float(d) for e, p, d in c.execute(text("SELECT empresa, producto_id, disponible FROM ddmrp.inventario_cedi")).all()}
     res = {p: float(r) for p, r in c.execute(text("SELECT producto_id, porcentaje FROM ddmrp.reserva_cedi")).all()}
-    return {"stock": stock, "reserva": res}
+    return {"stock": stock, "reserva": res, "empresas": sorted({e for e, _ in stock})}
 
 
 def regla_actual(c) -> int:
@@ -101,37 +102,40 @@ def dias_alcance(c) -> list[int]:
 
 
 def aplicar_a_ejecucion(c, eid: int) -> dict:
-    """Reparte el inventario del CEDI entre las tiendas de cada referencia de la ejecucion del motor: todas, o solo las de los
-    DIAs elegidos (ddmrp.reparto_dia). Las tiendas fuera del alcance no compiten por el stock y quedan con lo que pide su buffer.
-    Deja en sugerencias_envio: cantidad_necesaria (lo que pide el buffer), cantidad_sugerida (lo asignado) y stock_cedi
-    (lo disponible de la referencia: inventario del CEDI menos la reserva). Sin inventario del CEDI no se limita nada."""
+    """Reparte el inventario del CEDI de cada empresa entre las tiendas de ESA empresa, por referencia: todas las tiendas, o solo
+    las de los DIAs elegidos (ddmrp.reparto_dia). Las tiendas fuera del alcance no compiten por el stock y quedan con lo que pide
+    su buffer. Deja en sugerencias_envio: cantidad_necesaria (lo que pide el buffer), cantidad_sugerida (lo asignado) y stock_cedi
+    (lo disponible de la referencia en el CEDI de su empresa: inventario menos la reserva; 0 si el CEDI no la tiene).
+    Una empresa sin inventario del CEDI no se limita. Los laboratorios sin envio no compiten por el stock."""
     regla = regla_actual(c)
     c.execute(text("UPDATE ddmrp.sugerencias_envio SET cantidad_necesaria = cantidad_sugerida, stock_cedi = NULL WHERE ejecucion_id = :e"), {"e": eid})
     d = datos_cedi(c)
     if regla == 0 or not d["stock"]:
         return {"limitadas": 0, "regla": regla, "aplicado": False}
     dias = dias_alcance(c)
-    filas = c.execute(text("SELECT producto_id, bodega_id, cantidad_sugerida::float8, unidad_despacho::float8, "
-                           "COALESCE(pct_buffer::float8, 1e9), COALESCE(adu::float8, 0) FROM ddmrp.sugerencias_envio "
-                           "WHERE ejecucion_id = :e AND cantidad_sugerida > 0 AND NOT condenado "
-                           "AND (cardinality(CAST(:d AS int[])) = 0 OR bodega_id IN (SELECT bodega_id FROM ddmrp.bodega_dia WHERE dia = ANY(CAST(:d AS int[]))))"),
-                     {"e": eid, "d": dias}).all()
+    filas = c.execute(text("SELECT s.empresa, s.producto_id, s.bodega_id, s.cantidad_sugerida::float8, s.unidad_despacho::float8, "
+                           "COALESCE(s.pct_buffer::float8, 1e9), COALESCE(s.adu::float8, 0) FROM ddmrp.sugerencias_envio s "
+                           "WHERE s.ejecucion_id = :e AND s.cantidad_sugerida > 0 AND NOT s.condenado AND s.empresa = ANY(CAST(:em AS text[])) "
+                           "AND NOT EXISTS (SELECT 1 FROM ddmrp.maestro_item mi JOIN ddmrp.laboratorio_sin_envio ls ON ls.laboratorio = mi.categoria "
+                           "                WHERE mi.producto_id = s.producto_id) "
+                           "AND (cardinality(CAST(:d AS int[])) = 0 OR s.bodega_id IN (SELECT bodega_id FROM ddmrp.bodega_dia WHERE dia = ANY(CAST(:d AS int[]))))"),
+                     {"e": eid, "d": dias, "em": d["empresas"]}).all()
     por_item: dict = {}
-    for prod, bod, q, ud, pct, adu in filas:
-        por_item.setdefault(prod, []).append((bod, q, ud, pct, adu))
-    cambios, stocks = [], []
-    for prod, grupo in por_item.items():
-        util = float(max(0, math.floor(d["stock"].get(prod, 0.0) * (1 - d["reserva"].get(prod, 0.0)) + EPS)))
+    for emp, prod, bod, q, ud, pct, adu in filas:
+        por_item.setdefault((emp, prod), []).append((bod, q, ud, pct, adu))
+    cambios = []
+    for (emp, prod), grupo in por_item.items():
+        util = float(max(0, math.floor(d["stock"].get((emp, prod), 0.0) * (1 - d["reserva"].get(prod, 0.0)) + EPS)))
         asign = repartir(grupo, util, regla)
-        stocks.append((eid, prod, util))
         for bod, q, *_ in grupo:
             if asign[bod] + EPS < q:
                 cambios.append((eid, prod, bod, asign[bod]))
-    if stocks:
-        c.execute(text("CREATE TEMP TABLE IF NOT EXISTS stg_cedi (e bigint, p text, util numeric) ON COMMIT DROP"))
-        c.execute(text("TRUNCATE stg_cedi"))
-        c.execute(text("INSERT INTO stg_cedi VALUES (:e, :p, :u)"), [{"e": a, "p": b, "u": u} for a, b, u in stocks])
-        c.execute(text("UPDATE ddmrp.sugerencias_envio s SET stock_cedi = t.util FROM stg_cedi t WHERE s.ejecucion_id = t.e AND s.producto_id = t.p"))
+    # stock del CEDI de TODAS las filas de las empresas con inventario (tambien las de tiendas fuera del alcance o sin competir)
+    c.execute(text("""UPDATE ddmrp.sugerencias_envio s
+                      SET stock_cedi = GREATEST(0, FLOOR(COALESCE((SELECT ic.disponible FROM ddmrp.inventario_cedi ic
+                                                                   WHERE ic.empresa = s.empresa AND ic.producto_id = s.producto_id), 0)
+                                                         * (1 - COALESCE((SELECT r.porcentaje FROM ddmrp.reserva_cedi r WHERE r.producto_id = s.producto_id), 0)) + 1e-9))
+                      WHERE s.ejecucion_id = :e AND s.empresa = ANY(CAST(:em AS text[]))"""), {"e": eid, "em": d["empresas"]})
     if cambios:
         c.execute(text("CREATE TEMP TABLE IF NOT EXISTS stg_asig (e bigint, p text, b text, q numeric) ON COMMIT DROP"))
         c.execute(text("TRUNCATE stg_asig"))
@@ -139,4 +143,4 @@ def aplicar_a_ejecucion(c, eid: int) -> dict:
         c.execute(text("UPDATE ddmrp.sugerencias_envio s SET cantidad_sugerida = t.q FROM stg_asig t "
                        "WHERE s.ejecucion_id = t.e AND s.producto_id = t.p AND s.bodega_id = t.b"))
     return {"limitadas": len(cambios), "items_sin_alcanzar": len({x[1] for x in cambios}), "regla": regla, "aplicado": True,
-            "dias": dias, "tiendas_en_reparto": len({f[1] for f in filas})}
+            "dias": dias, "tiendas_en_reparto": len({f[2] for f in filas}), "empresas": d["empresas"]}

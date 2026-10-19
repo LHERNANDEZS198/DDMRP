@@ -35,9 +35,11 @@ const cols: ColDef[] = [
   { field: 'unidad_despacho', headerName: 'Und. desp.', type: 'numericColumn' },
   { field: 'vectorizacion', headerName: 'Derrame', type: 'numericColumn' },
   { field: 'cantidad_necesaria', headerName: 'Necesario', type: 'numericColumn' },
-  { field: 'stock_cedi', headerName: 'Stock CEDI', type: 'numericColumn', valueFormatter: p => p.value == null ? '' : Math.round(p.value).toLocaleString() },
+  { field: 'stock_cedi', headerName: 'CEDI antes', type: 'numericColumn', headerTooltip: 'Stock del CEDI de la empresa para este ítem (menos la reserva), antes de repartir', valueFormatter: p => p.value == null ? '' : Math.round(p.value).toLocaleString() },
   { field: 'cantidad_sugerida', headerName: 'Asignado', type: 'numericColumn',
     cellStyle: p => p.data?.limitado ? { color: '#c62828', fontWeight: 700 } : null },
+  { field: 'cedi_despues', headerName: 'CEDI después', type: 'numericColumn', headerTooltip: 'Lo que queda en el CEDI de este ítem después de enviar todo lo asignado a las tiendas de la empresa',
+    valueFormatter: p => p.value == null ? '' : Math.round(p.value).toLocaleString() },
   { field: 'cantidad_aprobada', headerName: 'A enviar', editable: (p: any) => !!p.context?.aprobar, type: 'numericColumn',
     valueGetter: p => p.data.cantidad_aprobada ?? p.data.cantidad_sugerida,
     valueSetter: p => { p.data.cantidad_aprobada = Number(p.newValue); return true } },
@@ -56,6 +58,9 @@ export default function Despacho() {
   const [consec, setConsec] = useState(1)
   const [marcar, setMarcar] = useState(false)
   const [cedi, setCedi] = useState<any>(null)
+  // empresa obligatoria (05 Funat / 21 Stores): cada una tiene su CEDI, su matriz y su plano
+  const [empresa, setEmpresa] = useState<string>(() => { try { return localStorage.getItem('despacho_empresa') ?? '' } catch { return '' } })
+  const elegirEmpresa = (v: string) => { setEmpresa(v); setDia(''); setFiltrar(false); setTiendas([]); try { localStorage.setItem('despacho_empresa', v) } catch { /* sin almacenamiento */ } }
   // filtros de la lista (en pantalla): texto, laboratorio, zona, solo lo limitado por el CEDI
   const [fTexto, setFTexto] = useState(''); const [fLab, setFLab] = useState(''); const [fZona, setFZona] = useState(''); const [fLim, setFLim] = useState(false)
   const [porTienda, setPorTienda] = useState(false)
@@ -64,16 +69,19 @@ export default function Despacho() {
   const [ver, setVer] = useState<'pendiente' | 'aprobada' | 'enviada'>('pendiente')
   // Corrida del dia: DIA de abastecimiento + tiendas elegidas (se pueden poner o quitar antes de generar)
   const [dias, setDias] = useState<{ dia: number; bodegas: string[] }[]>([])
-  const [todas, setTodas] = useState<string[]>([])
+  const [todasBod, setTodas] = useState<string[]>([])
+  const [empDe, setEmpDe] = useState<Record<string, string>>({})
   const [dia, setDia] = useState('')            // '' = sin DIA
   const [filtrar, setFiltrar] = useState(false) // false = todas las tiendas
   const [tiendas, setTiendas] = useState<string[]>([])
   const [nueva, setNueva] = useState('')
-  useEffect(() => { api('/despacho/dias').then(x => { setDias(x.dias); setTodas(x.bodegas) }) }, [])
+  useEffect(() => { api('/despacho/dias').then(x => { setDias(x.dias); setTodas(x.bodegas); setEmpDe(x.empresa_de ?? {}) }) }, [])
+  const diasEmp = useMemo(() => dias.map(d => ({ ...d, bodegas: d.bodegas.filter(b => empDe[b] === empresa) })).filter(d => d.bodegas.length), [dias, empDe, empresa])
+  const todas = useMemo(() => todasBod.filter(b => empDe[b] === empresa), [todasBod, empDe, empresa])
   const elegirDia = (v: string) => {
     setDia(v)
     if (v === '') { setFiltrar(false); setTiendas([]); return }
-    setFiltrar(true); setTiendas(dias.find(d => String(d.dia) === v)?.bodegas ?? [])
+    setFiltrar(true); setTiendas(diasEmp.find(d => String(d.dia) === v)?.bodegas ?? [])
   }
   const quitar = (b: string) => { setFiltrar(true); setTiendas(t => t.filter(x => x !== b)) }
   const poner = (b: string) => { if (!b) return; setFiltrar(true); setTiendas(t => t.includes(b) ? t : [...t, b].sort()); setNueva('') }
@@ -81,11 +89,12 @@ export default function Despacho() {
   const peticion = useRef(0)
   const cargar = () => {
     const n = ++peticion.current
-    return api('/despacho/matriz?estado=' + ver + (filtrar ? '&bodegas=' + encodeURIComponent(tiendas.join(',') || '-') : ''))
+    if (!empresa) { setRows([]); setCargando(false); return Promise.resolve() }
+    return api('/despacho/matriz?empresa=' + empresa + '&estado=' + ver + (filtrar ? '&bodegas=' + encodeURIComponent(tiendas.join(',') || '-') : ''))
       .then(r => { if (n === peticion.current) setRows(r) })
       .finally(() => { if (n === peticion.current) setCargando(false) })
   }
-  useEffect(() => { setRows([]); setCargando(true); cargar() }, [filtrar, tiendas.join(','), ver])
+  useEffect(() => { setRows([]); setCargando(true); cargar() }, [filtrar, tiendas.join(','), ver, empresa])
   const labs = useMemo(() => [...new Set(rows.map(r => r.categoria).filter(Boolean))].sort() as string[], [rows])
   const vista = useMemo(() => {
     const t = fTexto.trim().toLowerCase()
@@ -133,7 +142,7 @@ export default function Despacho() {
     try {
       setMsg('Generando el archivo plano de Siesa…')
       const r = await descargar('/despacho/exportar-plano', { notas: notas || null, consec_inicial: consec, marcar_enviadas: marcar,
-        bodegas: filtrar ? tiendas : null, dia: dia ? Number(dia) : null })
+        bodegas: filtrar ? tiendas : null, dia: dia ? Number(dia) : null, empresa })
       setMsg(`Descargado ${r.nombre}` + (r.derivado ? ` · centro de operacion deducido para: ${r.derivado}` : '')
         + (r.bajoMinimo ? ` · NO se incluyeron por estar bajo el mínimo de ${cop(minimo)}: ${r.bajoMinimo.split(',').map((x: string) => { const [b, v] = x.split(':'); return `${b} (${cop(Number(v))})` }).join(', ')}` : ''))
       if (marcar) cargar()
@@ -145,7 +154,7 @@ export default function Despacho() {
     const n = bodegas ? bodegas.length : tot.lista.length
     if (!window.confirm(`Marcar como ENVIADAS las aprobadas de ${bodegas ? n : 'todas las'} tienda(s)?` + (regla ? ` Las que valgan menos de ${cop(minimo)} no se envían.` : ''))) return
     try {
-      const r = await api('/despacho/marcar-enviadas', { method: 'POST', body: JSON.stringify({ bodegas }) })
+      const r = await api('/despacho/marcar-enviadas', { method: 'POST', body: JSON.stringify({ bodegas, empresa }) })
       setMsg(`Marcadas como enviadas: ${r.enviadas} filas de ${r.tiendas} tienda(s)`
         + (r.bloqueadas?.length ? ` · NO se enviaron por estar bajo el mínimo de ${cop(r.minimo)}: ${r.bloqueadas.map((b: any) => `${b.bodega_id} (${cop(b.valor)})`).join(', ')}` : ''))
       grid?.deselectAll(); cargar()
@@ -154,10 +163,12 @@ export default function Despacho() {
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 1.5, minHeight: 500 }}>
       <Paper variant="outlined" sx={{ p: 1.5, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
+        <TextField select size="small" required label="Empresa" value={empresa} onChange={e => elegirEmpresa(e.target.value)} error={!empresa} sx={{ minWidth: 170 }}>
+          <MenuItem value="05">05 · Funat</MenuItem><MenuItem value="21">21 · Stores</MenuItem></TextField>
         <Typography sx={{ fontWeight: 700 }}>Corrida</Typography>
         <TextField select size="small" value={dia} onChange={e => elegirDia(e.target.value)} sx={{ minWidth: 220 }} slotProps={{ select: { displayEmpty: true } }}>
           <MenuItem value="">Todas las tiendas</MenuItem>
-          {dias.map(d => <MenuItem key={d.dia} value={String(d.dia)}>DIA {d.dia} ({d.bodegas.length} tiendas)</MenuItem>)}
+          {diasEmp.map(d => <MenuItem key={d.dia} value={String(d.dia)}>DIA {d.dia} ({d.bodegas.length} tiendas)</MenuItem>)}
         </TextField>
         {filtrar && tiendas.map(b => <Chip key={b} label={b} size="small" color="primary" variant="outlined" onDelete={() => quitar(b)} />)}
         <TextField select size="small" value={nueva} onChange={e => poner(e.target.value)} sx={{ minWidth: 170 }} label="+ agregar tienda">
@@ -169,7 +180,7 @@ export default function Despacho() {
         <Alert severity={cedi.activo ? 'info' : 'warning'} sx={{ py: 0 }}>
           {cedi.regla === 0 ? 'El reparto del inventario del CEDI está apagado: se sugiere todo lo que pide el buffer.'
             : cedi.productos === 0 ? `Sin inventario del CEDI (${cedi.bodega}): corre el ETL para traerlo. Mientras tanto no se limita lo sugerido.`
-            : `CEDI ${cedi.bodega}: ${cedi.con_stock.toLocaleString()} items con stock (corte ${cedi.corte}) · si no alcanza: ${cedi.regla_nombre.toLowerCase()}`
+            : `CEDI ${cedi.bodega}${empresa ? ` (empresa ${empresa})` : ''}: ${(cedi.por_empresa?.find((x: any) => x.empresa === empresa)?.con_stock ?? cedi.con_stock).toLocaleString()} items con stock (corte ${cedi.por_empresa?.find((x: any) => x.empresa === empresa)?.corte ?? cedi.corte}) · si no alcanza se reparte solo entre las tiendas de esa empresa: ${cedi.regla_nombre.toLowerCase()}`
               + (cedi.limitadas ? ` · ${cedi.limitadas.toLocaleString()} combinaciones con menos de lo necesario` : '')
               + (cedi.items_con_reserva ? ` · ${cedi.items_con_reserva} items con reserva` : '')}
         </Alert>)}
@@ -206,10 +217,10 @@ export default function Despacho() {
         <Chip label={`${tot.lista.length} tiendas`} size="small" />
         {bajoMin.size > 0 && <Tooltip title={`En gris: ${[...bajoMin].join(', ')}. No salen en el plano ni se marcan como enviadas.`}><Chip label={`${bajoMin.size} tiendas bajo el mínimo`} size="small" /></Tooltip>}
         {tot.sinCosto > 0 && <Chip label={`${tot.sinCosto} filas sin costo`} size="small" color="warning" />}
-        <Button size="small" endIcon={<ExpandMore sx={{ transform: porTienda ? 'rotate(180deg)' : 'none' }} />} onClick={() => setPorTienda(!porTienda)}>Por tienda</Button>
+        <Button size="small" variant={porTienda ? 'contained' : 'outlined'} endIcon={<ExpandMore sx={{ transform: porTienda ? 'rotate(180deg)' : 'none' }} />} onClick={() => setPorTienda(!porTienda)}>{porTienda ? 'Volver a la vista por ítem' : 'Por tienda'}</Button>
       </Paper>
-      <Collapse in={porTienda} unmountOnExit>
-        <Paper variant="outlined" sx={{ maxHeight: 260, overflow: 'auto' }}>
+      {porTienda && (
+        <Paper variant="outlined" sx={{ flex: 1, minHeight: 300, overflow: 'auto' }}>
           <Table size="small" stickyHeader>
             <TableHead><TableRow><TableCell>Tienda</TableCell><TableCell align="right">Filas</TableCell><TableCell align="right">Unidades</TableCell>
               <TableCell align="right">Costo</TableCell><TableCell>{regla ? `Mínimo ${cop(minimo)}` : 'Mínimo'}</TableCell></TableRow></TableHead>
@@ -224,9 +235,9 @@ export default function Despacho() {
               {!tot.lista.length && <TableRow><TableCell colSpan={5} align="center" sx={{ color: 'text.secondary' }}>Sin filas</TableCell></TableRow>}
             </TableBody>
           </Table>
-        </Paper>
-      </Collapse>
-      <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 300 }}>
+        </Paper>)}
+      <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 300, display: porTienda ? 'none' : 'block' }}>
+        {!empresa && <Alert severity="warning" sx={{ mb: 1 }}>Elige la empresa (05 Funat o 21 Stores) para ver la matriz: cada una tiene su CEDI y su plano.</Alert>}
         <Tabla cargando={cargando} textoCargando="Cargando la matriz…" vacio="No hay filas con este filtro" rowData={vista} columnDefs={ayudar(cols)} tooltipShowDelay={300} rowSelection="multiple" rowBuffer={20}
           getRowStyle={(p: any) => bajoMin.has(p.data?.bodega_id) ? { color: '#9e9e9e', background: 'rgba(158,158,158,0.12)' } : undefined}
           context={{ aprobar: pAprobar }} onCellValueChanged={() => setEdiciones(n => n + 1)} onGridReady={e => setGrid(e.api)} defaultColDef={{ resizable: true, sortable: true }} />

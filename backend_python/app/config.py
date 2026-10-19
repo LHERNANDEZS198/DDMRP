@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     siesa_port: int = 1433
     siesa_db: str = ""        # empresa '05' (Funat)
     siesa_db_s: str = ""      # empresa '21' (Store); vacio = no se consulta
+    siesa_cedi_bodega_s: str = "PT001"   # bodega del CEDI en la base Stores (empresa 21)
     siesa_cedi_bodega: str = "PT001"   # bodega del CEDI (de donde sale lo que se despacha a las tiendas), empresa 05
     siesa_cia: int = 1        # f120_id_cia
     siesa_grupo_bodegas_tienda: str = "025"   # grupo de bodegas (t152) que son tiendas
@@ -47,7 +48,7 @@ class Settings(BaseSettings):
 
     # --- App ---
     jwt_secret: str = "dev"
-    jwt_expire_minutes: int = 480
+    jwt_expire_minutes: int = 10080   # 7 dias (JWT_EXPIRE_MINUTES en el .env)
     core_bin: str = "/usr/local/bin/ddmrp_core"
     etl_cron_hour: int = 2
 

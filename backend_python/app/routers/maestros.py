@@ -76,6 +76,9 @@ MAESTROS = {
     "reposicion-item": dict(
         label="Hasta donde se repone, por item (1 TOG aj · 2 TOY aj · 3 TOY aj + mitad de la zona verde)", tabla="ddmrp.reposicion_item",
         llave=["producto_id"], editable={"regla": "int"}, bodega=None, producto="producto_id", global_=True),
+    "laboratorio-sin-envio": dict(
+        label="Laboratorios que NO se envian (no se sugieren, no compiten por el CEDI ni salen en el plano)", tabla="ddmrp.laboratorio_sin_envio",
+        llave=["laboratorio"], editable={"motivo": "txt"}, bodega=None, producto=None, global_=True),
     "demanda-calificada": dict(
         label="Demanda calificada (pedidos abiertos / picos)", tabla="ddmrp.demanda_calificada",
         llave=["bodega_id", "producto_id"], editable={"cantidad": "num"},
@@ -105,6 +108,8 @@ AYUDA = {
     "factores": "Tablas de tramos del modelo. LT: factor de la zona roja base según el lead time. VAR: factor de la zona roja de seguridad según la variabilidad de la demanda. Cambian los buffers de todos los productos.",
     "parametros": "Parámetros del modelo: multiplicadores de cota en promoción y rango de venta diaria baja (ADU). Solo se editan los que ya existen. Las reglas de pedido están en la pantalla Reglas de pedido.",
     "dias-bodega": "DÍA(S) de abastecimiento de cada tienda. Sirve para armar la corrida del día en la Matriz de despacho y, si lo eliges en Reglas de pedido, para repartir el inventario del CEDI solo entre las tiendas de esos días.",
+    "laboratorio-sin-envio": "Laboratorios (el código de la columna Laboratorio del maestro de items, ej. 1781 o 181) que no se envían: sus items no se sugieren en la Matriz de despacho, "
+                             "no compiten por el stock del CEDI y no salen en el plano de Siesa. Se aplica en la próxima corrida del motor (la matriz y el plano lo respetan de inmediato).",
     "items": "Descripción y laboratorio de cada item; los demás criterios vienen de Siesa con 'Traer items'. El laboratorio define los permisos por categoría y los filtros del Control.",
     "centro-operacion": "Centro de operación de cada tienda para el archivo plano de Siesa. Si falta, se deduce con la regla observada en el ejemplo.",
     "demanda-calificada": "Pedidos abiertos o picos conocidos por tienda y referencia. Se restan del flujo neto cuando la regla 'Restar demanda calificada' está en Sí.",
@@ -153,11 +158,13 @@ def listar_maestros(user=Depends(requiere("ver_maestros", "cargar_maestros"))):
              "tipos": v["editable"], "sin_reemplazo": bool(v.get("sin_reemplazo")), "todas": bool(v.get("todas")),
              "ayuda": AYUDA.get(k, ""),
              "filtros": {"tienda": bool(v.get("bodega")), "item": bool(v.get("producto")) or k == "items",
-                         "lab": bool(v.get("producto")) or k in ("items", "reposicion-laboratorio"), "texto": True}}
+                         "lab": bool(v.get("producto")) or k in ("items", "reposicion-laboratorio", "laboratorio-sin-envio"), "texto": True,
+                         "empresa": k == "items", "mes": k == "ventas-mensual"}}
             for k, v in MAESTROS.items()]
 
 
-def _filtros_maestro(nombre: str, d: dict, bodega_id: str | None, q: str | None, lab: str | None) -> tuple[str, dict]:
+def _filtros_maestro(nombre: str, d: dict, bodega_id: str | None, q: str | None, lab: str | None,
+                     empresa: str | None = None, mes: str | None = None) -> tuple[str, dict]:
     """Filtros de pantalla y de descarga. Supone el alias t (tabla) y mi (maestro_item) cuando el maestro tiene producto."""
     w, p = "", {}
     bod, prod = d.get("bodega"), d.get("producto")
@@ -178,14 +185,22 @@ def _filtros_maestro(nombre: str, d: dict, bodega_id: str | None, q: str | None,
             w += " AND mi.categoria = :lab"
         elif nombre == "items":
             w += " AND t.categoria = :lab"
-        elif nombre == "reposicion-laboratorio":
+        elif nombre in ("reposicion-laboratorio", "laboratorio-sin-envio"):
             w += " AND t.laboratorio = :lab"
+    if nombre == "items":   # items de una sola empresa (las dos bases tienen catalogos distintos)
+        if empresa not in ("05", "21"):
+            raise HTTPException(400, "Elige la empresa (05 o 21) para ver los items")
+        w += " AND EXISTS (SELECT 1 FROM ddmrp.item_empresa ie WHERE ie.producto_id = t.producto_id AND ie.empresa = :emp)"; p["emp"] = empresa
+    if nombre == "ventas-mensual" and mes and mes.strip():   # filtro de mes en el servidor (no solo sobre las filas ya cargadas)
+        p["mes"] = mes.strip().replace("-", "")[:6]
+        w += " AND t.mes = :mes"
     return w, p
 
 
 @router.get("/{nombre}")
 def leer(nombre: str, response: Response, bodega_id: str | None = None, producto_id: str | None = None, q: str | None = None,
-         lab: str | None = None, limit: int = 20000, user=Depends(requiere("ver_maestros", "cargar_maestros"))):
+         lab: str | None = None, empresa: str | None = None, mes: str | None = None, limit: int = 20000,
+         user=Depends(requiere("ver_maestros", "cargar_maestros"))):
     d = _def(nombre)
     cols = d["llave"] + [c for c in d["editable"] if c not in d["llave"]]
     sel = ", ".join(f"t.{c}" for c in cols)
@@ -201,8 +216,11 @@ def leer(nombre: str, response: Response, bodega_id: str | None = None, producto
         sel += ", mi.descripcion"
     if producto_id and d.get("producto"):
         w += f" AND t.{d['producto']} = :pr"; p["pr"] = producto_id
-    wf, pf = _filtros_maestro(nombre, d, bodega_id, q, lab)
+    wf, pf = _filtros_maestro(nombre, d, bodega_id, q, lab, empresa, mes)
     w, p = w + wf, {**p, **pf}
+    if nombre == "items":   # costo promedio por instalacion (lo trae el ETL): solo lectura
+        join += " LEFT JOIN ddmrp.costo_item ci ON ci.producto_id = t.producto_id"
+        sel += ", ci.costo::float8 AS costo"
     sql = f"SELECT {sel} FROM {d['tabla']} t {join} WHERE {w} ORDER BY {', '.join('t.' + c for c in d['llave'])} LIMIT :lim"
     with pg.connect() as c:
         filas = [dict(r) for r in c.execute(text(sql), {**p, "lim": limit}).mappings()]
@@ -531,7 +549,7 @@ async def subir_excel(nombre: str, archivo: UploadFile = File(...), modo: str = 
 
 @router.get("/{nombre}/excel")
 def bajar_excel(nombre: str, bodega_id: str | None = None, q: str | None = None, lab: str | None = None,
-                user=Depends(requiere("ver_maestros", "cargar_maestros"))):
+                empresa: str | None = None, mes: str | None = None, user=Depends(requiere("ver_maestros", "cargar_maestros"))):
     """Descarga lo que el usuario puede ver, con los mismos encabezados que acepta la carga (sirve de plantilla).
     Maestros por tienda: la tienda va con su codigo y su nombre (la empresa se deduce) y, si el maestro es solo por
     tienda (bitacora, centro de operacion), vienen todas las tiendas aunque aun no tengan datos."""
@@ -543,7 +561,7 @@ def bajar_excel(nombre: str, bodega_id: str | None = None, q: str | None = None,
     sel = ", ".join(f"t.{c}" for c in cols_t + list(d["editable"]))
     join, w, p = "", "TRUE", {}
     solo_tienda = bool(bod) and not llave_xl and not d.get("producto")
-    wf, pf = _filtros_maestro(nombre, d, bodega_id, q, lab)   # los mismos filtros de la pantalla: se baja lo que se ve (sin tope de 20.000)
+    wf, pf = _filtros_maestro(nombre, d, bodega_id, q, lab, empresa, mes)   # los mismos filtros de la pantalla: se baja lo que se ve (sin tope de 20.000)
     if d.get("producto"):
         join = f"LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = t.{d['producto']}"
     if bod:
@@ -555,6 +573,9 @@ def bajar_excel(nombre: str, bodega_id: str | None = None, q: str | None = None,
         cab = [bod, "bodega_nombre"] + (["empresa"] if con_emp else []) + [c for c in cols_t if c != bod] + list(d["editable"])
     else:
         cab = cols_t + list(d["editable"])
+    if nombre == "items":   # costo promedio: columna informativa (la carga la ignora)
+        join += " LEFT JOIN ddmrp.costo_item ci ON ci.producto_id = t.producto_id"
+        sel += ", ci.costo::float8 AS costo"; cab = cab + ["costo"]
     with pg.connect() as c:
         if solo_tienda:   # plantilla con todas las tiendas del maestro de bodegas
             w2, p2 = filtro_sql_permisos(user, "mb.bodega_id", "'*'")

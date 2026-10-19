@@ -126,7 +126,8 @@ def detalle(bodegas: str | None = None, labs: str | None = None, q: str | None =
     w, p = _donde(user, bodegas, labs, q, zonas, dia, empresa, crit)
     sql = f"""SELECT s.bodega_id, mb.descripcion AS bodega_nombre, s.producto_id, mi.descripcion,
                      COALESCE(mi.categoria, '(sin laboratorio)') AS laboratorio, s.zona::text AS zona, s.pct_buffer,
-                     s.inventario, s.en_transito, s.flujo_neto, s.tor, s.toy_aj, s.tog_aj, s.adu, s.cantidad_sugerida, s.condenado
+                     s.inventario, s.en_transito, s.flujo_neto, s.tor, s.toy_aj, s.tog_aj, s.adu, s.cantidad_sugerida, s.condenado,
+                     (SELECT ci.costo::float8 FROM ddmrp.costo_item ci WHERE ci.producto_id = s.producto_id) AS costo
               {FROM} WHERE {w} ORDER BY s.pct_buffer NULLS FIRST, s.bodega_id, s.producto_id LIMIT :lim"""
     with pg.connect() as c:
         filas = [dict(r) for r in c.execute(text(sql), {**p, "lim": limit}).mappings()]
@@ -257,6 +258,7 @@ def tendencia(desde: date | None = None, hasta: date | None = None, bodegas: str
     cond.append("h.fecha BETWEEN :d AND :h")
     sql = f"""SELECT h.fecha, count(*) AS n, sum(h.tor) AS tor, sum(h.toy_aj) AS toy_aj, sum(h.tog_aj) AS tog_aj,
                      sum(h.inventario) AS inventario, sum(h.flujo_neto) AS flujo_neto,
+                     count(*) FILTER (WHERE h.inventario > 0) AS con_stock,
                      count(*) FILTER (WHERE h.zona = 'ROJA') AS roja, count(*) FILTER (WHERE h.zona = 'AMARILLA') AS amarilla,
                      count(*) FILTER (WHERE h.zona = 'VERDE') AS verde, count(*) FILTER (WHERE h.zona = 'EXCESO') AS exceso
               FROM ddmrp.buffer_historia h

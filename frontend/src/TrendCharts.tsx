@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Box, Typography } from '@mui/material'
 
 export type Punto = { fecha: string; n: number; tor: number; toy_aj: number; tog_aj: number; inventario: number; flujo_neto: number
-  roja: number; amarilla: number; verde: number; exceso: number }
+  roja: number; amarilla: number; verde: number; exceso: number; con_stock?: number }
 const C = { roja: '#e0584d', amarilla: '#f4d03f', verde: '#7bbf5a', exceso: '#1565c0', inv: '#111', nfp: '#d500f9' }
 const fmt = (v: number) => Math.abs(v) >= 1000 ? (v / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 }) + 'k' : String(Math.round(v))
 const dm = (s: string) => `${s.slice(8, 10)}/${s.slice(5, 7)}`
@@ -74,31 +74,49 @@ export function BufferTrend({ serie }: { serie: Punto[] }) {
     </Box>)
 }
 
-/** % de combinaciones en cada zona por dia (semáforo en el tiempo). */
+/** Semáforo en el tiempo: % de combinaciones en cada zona por día, como áreas apiladas al 100% (rojo abajo, azul/exceso arriba),
+ *  y la línea punteada "Disponible" = % de combinaciones con inventario > 0. */
 export function ZonaShare({ serie }: { serie: Punto[] }) {
   const [ref, W] = useAncho(); const [hover, setHover] = useState<number | null>(null)
-  const H = 190, M = { l: 52, r: 14, t: 8, b: 40 }
+  const H = 300, M = { l: 52, r: 14, t: 8, b: 48 }
   if (serie.length < 1) return null
-  const n = serie.length, pw = W - M.l - M.r, ph = H - M.t - M.b, bw = pw / n
-  const x = (i: number) => M.l + bw * (i + .5)
+  const n = serie.length, pw = W - M.l - M.r, ph = H - M.t - M.b
+  const bw = pw / n, x = (i: number) => (n === 1 ? M.l + pw / 2 : M.l + (pw * i) / (n - 1)), ypc = (f: number) => H - M.b - f * ph
+  const zonas = ['roja', 'amarilla', 'verde', 'exceso'] as const
   const paso = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(pw / 70))))
   const h = hover != null ? serie[hover] : null
+  // frontera acumulada de cada zona por dia (0..1)
+  const acum = serie.map(p => { let a = 0; return zonas.map(z => (a += p[z] / (p.n || 1))) })
+  const area = (k: number) => {
+    const sup = serie.map((_, i) => `${x(i)},${ypc(acum[i][k])}`)
+    const inf = serie.map((_, i) => `${x(i)},${ypc(k === 0 ? 0 : acum[i][k - 1])}`).reverse()
+    return [...sup, ...inf].join(' ')
+  }
+  const hayDisp = serie.some(p => p.con_stock != null)
+  const disp = serie.map((p, i) => `${x(i)},${ypc((p.con_stock ?? 0) / (p.n || 1))}`).join(' ')
   return (
     <Box ref={ref} sx={{ width: '100%', position: 'relative' }}>
       <svg width={W} height={H} onMouseLeave={() => setHover(null)}
-        onMouseMove={e => { const r = (e.currentTarget as SVGElement).getBoundingClientRect(); const i = Math.floor((e.clientX - r.left - M.l) / bw); setHover(i >= 0 && i < n ? i : null) }}>
-        {[0, 25, 50, 75, 100].map(t => { const y = H - M.b - (t / 100) * ph
+        onMouseMove={e => { const r = (e.currentTarget as SVGElement).getBoundingClientRect(); const f = (e.clientX - r.left - M.l) / (n === 1 ? pw : pw / (n - 1)); const i = Math.round(f); setHover(i >= 0 && i < n && e.clientX - r.left > M.l - 6 ? i : null) }}>
+        {[0, 20, 40, 60, 80, 100].map(t => { const y = ypc(t / 100)
           return <g key={t}><line x1={M.l} x2={W - M.r} y1={y} y2={y} stroke="#e0e0e0" /><text x={M.l - 6} y={y + 4} fontSize="11" textAnchor="end" fill="#555">{t}%</text></g> })}
-        {serie.map((p, i) => { let acc = 0; const w = Math.max(bw * .92, 1)
-          return <g key={p.fecha}>{(['roja', 'amarilla', 'verde', 'exceso'] as const).map(z => {
-            const hh = (p[z] / (p.n || 1)) * ph, yy = H - M.b - acc - hh; acc += hh
-            return <rect key={z} x={x(i) - w / 2} y={yy} width={w} height={hh} fill={C[z]} /> })}</g> })}
+        {n === 1
+          ? zonas.map((z, k) => { const lo = k === 0 ? 0 : acum[0][k - 1], hi = acum[0][k]
+              return <rect key={z} x={M.l} width={pw} y={ypc(hi)} height={Math.max(ypc(lo) - ypc(hi), 0)} fill={C[z]} /> })
+          : zonas.map((z, k) => <polygon key={z} points={area(k)} fill={C[z]} />)}
+        {hayDisp && n > 1 && <polyline points={disp} fill="none" stroke="#000" strokeWidth="2" strokeDasharray="6 4" />}
+        {hayDisp && n === 1 && <line x1={M.l} x2={W - M.r} y1={ypc((serie[0].con_stock ?? 0) / (serie[0].n || 1))} y2={ypc((serie[0].con_stock ?? 0) / (serie[0].n || 1))} stroke="#000" strokeWidth="2" strokeDasharray="6 4" />}
         {serie.map((p, i) => i % paso === 0 && <text key={p.fecha} transform={`translate(${x(i)},${H - M.b + 12}) rotate(-45)`} fontSize="11" textAnchor="end" fill="#555">{dm(p.fecha)}</text>)}
         {hover != null && <line x1={x(hover)} x2={x(hover)} y1={M.t} y2={H - M.b} stroke="#000" strokeDasharray="3 3" />}
       </svg>
-      {h && <Box sx={{ position: 'absolute', top: 4, left: Math.min(Math.max(x(hover!) + 10, 8), W - 190), bgcolor: 'rgba(255,255,255,.96)', border: '1px solid #bbb', borderRadius: 1, p: 1, fontSize: 12, pointerEvents: 'none', boxShadow: 2 }}>
-        <b>{h.fecha}</b> · {h.n.toLocaleString()}
-        {(['roja', 'amarilla', 'verde', 'exceso'] as const).map(z => <div key={z} style={{ color: z === 'amarilla' ? '#b8860b' : C[z] }}>{z.toUpperCase()}: {h[z].toLocaleString()} ({((h[z] / (h.n || 1)) * 100).toFixed(1)}%)</div>)}
+      {h && <Box sx={{ position: 'absolute', top: 4, left: Math.min(Math.max(x(hover!) + 10, 8), W - 210), bgcolor: 'rgba(255,255,255,.96)', border: '1px solid #bbb', borderRadius: 1, p: 1, fontSize: 12, pointerEvents: 'none', boxShadow: 2, minWidth: 190 }}>
+        <b>{h.fecha}</b> · {h.n.toLocaleString()} combinaciones
+        {(['exceso', 'verde', 'amarilla', 'roja'] as const).map(z => <div key={z} style={{ color: z === 'amarilla' ? '#b8860b' : C[z] }}>{z === 'exceso' ? 'AZUL (exceso)' : z.toUpperCase()}: {h[z].toLocaleString()} ({((h[z] / (h.n || 1)) * 100).toFixed(1)}%)</div>)}
+        {h.con_stock != null && <div><b>Disponible:</b> {((h.con_stock / (h.n || 1)) * 100).toFixed(1)}% con inventario</div>}
       </Box>}
+      <Box sx={{ display: 'flex', gap: 2, justifyContent: 'center', flexWrap: 'wrap', fontSize: 12, mt: .5 }}>
+        {[['Rojo', C.roja], ['Amarillo', C.amarilla], ['Verde', C.verde], ['Azul (exceso)', C.exceso]].map(([l, c]) => <span key={l}><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, background: c, marginRight: 4 }} />{l}</span>)}
+        {hayDisp && <span><span style={{ display: 'inline-block', width: 18, borderTop: '2px dashed #000', marginRight: 4, verticalAlign: 'middle' }} />Disponible (% con inventario &gt; 0)</span>}
+      </Box>
     </Box>)
 }

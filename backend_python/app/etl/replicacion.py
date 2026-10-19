@@ -50,15 +50,21 @@ def _sql_costo() -> str:
     union = (f"JOIN {tabla} c ON c.{pref}_id_cia = e.f400_id_cia AND c.{pref}_rowid_item_ext = e.f400_rowid_item_ext "
              f"AND c.{pref}_id_instalacion = e.f400_id_instalacion") if tabla else ""
     origen = "c" if tabla else "e"
+    # Una referencia puede tener varias extensiones (unidad, caja...) con costos distintos: se toma el de la extension que tiene el
+    # inventario en esas bodegas (la que se maneja como unidad), no el maximo de todas (la caja saldria 12 veces mas cara).
     return f"""
-SELECT RTRIM(i.f120_referencia), CONVERT(float, MAX({origen}.{col}))
-FROM t400_cm_existencia e
-JOIN t150_mc_bodegas b ON b.f150_rowid = e.f400_rowid_bodega
-JOIN t121_mc_items_extensiones x ON x.f121_rowid = e.f400_rowid_item_ext
-JOIN t120_mc_items i ON i.f120_rowid = x.f121_rowid_item
-{union}
-WHERE i.f120_id_cia = :cia AND b.f150_id IN :bodegas AND {origen}.{col} > 0
-GROUP BY i.f120_referencia"""
+SELECT referencia, costo FROM (
+  SELECT RTRIM(i.f120_referencia) AS referencia, CONVERT(float, MAX({origen}.{col})) AS costo,
+         ROW_NUMBER() OVER (PARTITION BY RTRIM(i.f120_referencia)
+                            ORDER BY SUM(e.f400_cant_existencia_1) DESC, MAX({origen}.{col})) AS rn
+  FROM t400_cm_existencia e
+  JOIN t150_mc_bodegas b ON b.f150_rowid = e.f400_rowid_bodega
+  JOIN t121_mc_items_extensiones x ON x.f121_rowid = e.f400_rowid_item_ext
+  JOIN t120_mc_items i ON i.f120_rowid = x.f121_rowid_item
+  {union}
+  WHERE i.f120_id_cia = :cia AND b.f150_id IN :bodegas AND {origen}.{col} > 0
+  GROUP BY RTRIM(i.f120_referencia), e.f400_rowid_item_ext) q
+WHERE rn = 1"""
 
 
 SQL_CO = "SELECT RTRIM(f150_id), RTRIM(f150_id_co) FROM t150_mc_bodegas WHERE f150_id_cia = :cia AND f150_id IN :bodegas"
@@ -242,7 +248,7 @@ def _sincronizar_bodegas_ahora() -> int:
         raw.close()
 
 
-def _items_de_siesa(cur, eng, primera: bool = True) -> dict:
+def _items_de_siesa(cur, eng, primera: bool = True, empresa: str | None = None) -> dict:
     """Descripcion, laboratorio (plan 006) y TODOS los criterios de items de una base de Siesa.
     Primero se lee todo del origen y solo despues se escribe, para que un fallo de Siesa no deje la tabla a medias.
     Si hay dos bases (Funat y Stores), la primera manda y la segunda solo agrega lo que falte."""
@@ -275,6 +281,9 @@ def _items_de_siesa(cur, eng, primera: bool = True) -> dict:
     if primera and items:   # espejo de Siesa: se van los items viejos que ya no estan en la seleccion (los de Stores se agregan despues)
         cur.execute("DELETE FROM ddmrp.maestro_item m WHERE NOT EXISTS (SELECT 1 FROM stg_items s WHERE s.producto_id = m.producto_id)")
         borrados = cur.rowcount
+    if empresa:   # a que empresa pertenece cada item (filtro por empresa de Maestros)
+        cur.execute("DELETE FROM ddmrp.item_empresa WHERE empresa = %s", (empresa,))
+        cur.execute("INSERT INTO ddmrp.item_empresa (empresa, producto_id) SELECT DISTINCT %s, producto_id FROM stg_items ON CONFLICT DO NOTHING", (empresa,))
     cur.execute("DROP TABLE stg_items")
     cur.executemany("UPDATE ddmrp.maestro_item SET categoria = %s WHERE producto_id = %s", [(l, p) for p, l in labs])
     for cod, nom in nombres_lab:
@@ -310,7 +319,7 @@ def _sincronizar_items_ahora() -> dict:
         with raw.cursor() as cur:
             for empresa, db in (("05", settings.siesa_db), ("21", settings.siesa_db_s)):
                 if db:
-                    out[empresa] = _items_de_siesa(cur, siesa_engine(db), primera=(empresa == "05"))
+                    out[empresa] = _items_de_siesa(cur, siesa_engine(db), primera=(empresa == "05"), empresa=empresa)
         raw.commit()
         return out
     except Exception:
@@ -321,19 +330,37 @@ def _sincronizar_items_ahora() -> dict:
 
 
 def _cedi_de_siesa(cur) -> dict:
-    """Inventario disponible del CEDI (bodega SIESA_CEDI_BODEGA, empresa 05). Se lee todo antes de escribir."""
-    bod = settings.siesa_cedi_bodega
-    eng = siesa_engine(settings.siesa_db)
-    filas = list(_stream(eng, SQL_INVENTARIO, {"cia": settings.siesa_cia, "bodegas": [bod], "resta": 1, "resta_sa": 0}, expanding="bodegas"))   # el CEDI siempre descuenta lo comprometido; las ventas sin acumular no aplican
-    costos = _costos(cur, eng, [bod], pisar=True)
-    cur.execute("TRUNCATE ddmrp.inventario_cedi")
-    datos = {}
-    for prod, _b, fecha, disp in filas:
-        d = datos.setdefault(prod, [fecha, 0.0])
-        d[1] += float(disp or 0)
-    for prod, (fecha, disp) in datos.items():
-        cur.execute("INSERT INTO ddmrp.inventario_cedi (producto_id, disponible, fecha_corte) VALUES (%s, %s, %s)", (prod, max(disp, 0.0), fecha))
-    return {"bodega": bod, "productos": len(datos), "con_stock": sum(1 for d in datos.values() if d[1] > 0), "costos": costos}
+    """Inventario disponible del CEDI de cada empresa (05: SIESA_CEDI_BODEGA en la base Funat; 21: SIESA_CEDI_BODEGA_S en Stores).
+    Se lee todo antes de escribir; si una empresa falla se conserva el ultimo corte de esa empresa y se avisa."""
+    leidos: dict[str, tuple] = {}
+    errores: dict[str, str] = {}
+    for emp, db, bod in (("05", settings.siesa_db, settings.siesa_cedi_bodega), ("21", settings.siesa_db_s, settings.siesa_cedi_bodega_s)):
+        if not (db and bod):
+            continue
+        try:
+            eng = siesa_engine(db)
+            filas = list(_stream(eng, SQL_INVENTARIO, {"cia": settings.siesa_cia, "bodegas": [bod], "resta": 1, "resta_sa": 0}, expanding="bodegas"))   # el CEDI siempre descuenta lo comprometido; las ventas sin acumular no aplican
+            leidos[emp] = (bod, eng, filas)
+        except Exception as e:
+            if emp == "05":
+                raise
+            log.warning("Inventario del CEDI de la empresa %s no leido: %s", emp, e); errores[emp] = str(e)[:200]
+    out: dict = {}
+    for emp, (bod, eng, filas) in leidos.items():
+        costos = _costos(cur, eng, [bod], pisar=(emp == "05"))   # el costo del CEDI de Funat manda; el de Stores solo llena lo que falte
+        cur.execute("DELETE FROM ddmrp.inventario_cedi WHERE empresa = %s", (emp,))
+        datos: dict = {}
+        for prod, _b, fecha, disp in filas:
+            d = datos.setdefault(prod, [fecha, 0.0])
+            d[1] += float(disp or 0)
+        for prod, (fecha, disp) in datos.items():
+            cur.execute("INSERT INTO ddmrp.inventario_cedi (empresa, producto_id, disponible, fecha_corte) VALUES (%s, %s, %s, %s)", (emp, prod, max(disp, 0.0), fecha))
+        out[emp] = {"bodega": bod, "productos": len(datos), "con_stock": sum(1 for d in datos.values() if d[1] > 0), "costos": costos}
+    res = {**out["05"]} if "05" in out else {}
+    res["por_empresa"] = out
+    if errores:
+        res["errores"] = errores
+    return res
 
 
 def refrescar_cedi() -> dict:
@@ -472,7 +499,7 @@ def _correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
                     ["producto_id", "bodega_id", "documento", "cantidad"], reemplazar=False)
                 progreso.avance(f"Leyendo items, criterios y centros de operación ({db})…")
                 try:  # descripciones, laboratorio, criterios y centro de operacion: utiles pero no criticos
-                    res[f"items_{empresa}"] = _items_de_siesa(cur, eng, primera=(empresa == "05"))
+                    res[f"items_{empresa}"] = _items_de_siesa(cur, eng, primera=(empresa == "05"), empresa=empresa)
                     for b, co in _stream(eng, SQL_CO, prm, expanding="bodegas"):
                         cur.execute("INSERT INTO ddmrp.bodega_centro_operacion (bodega_id, id_co) VALUES (%s, %s) "
                                     "ON CONFLICT (bodega_id) DO UPDATE SET id_co = EXCLUDED.id_co", (b, co))

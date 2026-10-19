@@ -32,6 +32,20 @@ SENTENCIAS = [
     "INSERT INTO ddmrp.parametro VALUES ('valor_minimo_envio', 350000, 'Valor minimo (a costo promedio) del despacho a una tienda: por debajo no se deja enviar. 0 = sin minimo') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('inv_tiendas_resta_comprometido', 0, 'Inventario de las tiendas: 0 = existencia (como el reporte de Siesa), 1 = existencia menos cantidad comprometida') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('inv_tiendas_resta_sin_acumular', 1, 'Inventario de las tiendas: 1 = resta las ventas del POS aun sin acumular (salida sin confirmar), como el disponible de Siesa; 0 = no') ON CONFLICT DO NOTHING",
+    # CEDI por empresa: el inventario del CEDI se guarda por (empresa, item) y solo se reparte entre las tiendas de esa empresa
+    "ALTER TABLE ddmrp.inventario_cedi ADD COLUMN IF NOT EXISTS empresa TEXT NOT NULL DEFAULT '05'",
+    """DO $$ BEGIN
+         IF NOT EXISTS (SELECT 1 FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+                        WHERE i.indrelid = 'ddmrp.inventario_cedi'::regclass AND i.indisprimary AND a.attname = 'empresa') THEN
+           ALTER TABLE ddmrp.inventario_cedi DROP CONSTRAINT IF EXISTS inventario_cedi_pkey;
+           ALTER TABLE ddmrp.inventario_cedi ADD PRIMARY KEY (empresa, producto_id);
+         END IF;
+       END $$""",
+    # a que empresa(s) pertenece cada item (lo llena "Traer items"); sirve al filtro por empresa de Maestros
+    "CREATE TABLE IF NOT EXISTS ddmrp.item_empresa (empresa TEXT NOT NULL, producto_id TEXT NOT NULL, PRIMARY KEY (empresa, producto_id))",
+    "INSERT INTO ddmrp.item_empresa SELECT DISTINCT empresa, producto_id FROM ddmrp.sugerencias_envio WHERE NOT EXISTS (SELECT 1 FROM ddmrp.item_empresa) ON CONFLICT DO NOTHING",
+    # laboratorios (categoria de maestro_item) que no se envian: no se sugieren, no compiten por el CEDI ni salen en el plano
+    "CREATE TABLE IF NOT EXISTS ddmrp.laboratorio_sin_envio (laboratorio TEXT PRIMARY KEY, motivo TEXT)",
     "CREATE TABLE IF NOT EXISTS ddmrp.laboratorio (codigo TEXT PRIMARY KEY, nombre TEXT)",
     "ALTER TABLE ddmrp.maestro_bodega ADD COLUMN IF NOT EXISTS descripcion TEXT",
     # cotas como fraccion (0.125 = 12,5%): 4 decimales en vez de 2
