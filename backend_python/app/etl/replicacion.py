@@ -146,14 +146,34 @@ def _col_estado() -> str:
     return col
 
 
+def _cond_criterios(i: str) -> str:
+    """Condicion de ITEM DEL MAESTRO sobre el alias `i` (t120): tiene alguno de los criterios de SIESA_CRITERIOS_ITEMS ("plan:criterio", los mismos
+    con que se arma maestro_item) o es un REC (se suma a su original). Asi lo que no es del maestro (materia prima...) ni se trae de Siesa.
+    Sin criterios configurados no filtra."""
+    pares = [tuple(x.strip().split(":", 1)) for x in settings.siesa_criterios_items.split(",") if ":" in x]
+    for plan, crit in pares:
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", plan) or not re.fullmatch(r"[A-Za-z0-9_.-]+", crit):
+            raise ValueError(f"SIESA_CRITERIOS_ITEMS invalido: {plan}:{crit}")
+    if not pares:
+        return ""
+    por_plan: dict[str, list[str]] = {}
+    for plan, crit in pares:
+        por_plan.setdefault(plan, []).append(crit)
+    alguno = " OR ".join(f"(cm.f125_id_plan = '{pl}' AND cm.f125_id_criterio_mayor IN ({', '.join(repr(c) for c in cs)}))" for pl, cs in por_plan.items())
+    return (f"AND (EXISTS (SELECT 1 FROM t125_mc_items_criterios cm WHERE cm.f125_rowid_item = {i}.f120_rowid AND ({alguno})) "
+            f"OR {i}.f120_descripcion LIKE 'REC[ .-]%')")
+
+
 def _con_estado(sql: str, activo: bool) -> str:
-    """Cada /*ACTIVO:ext,item*/ de la consulta se reemplaza por la condicion de extension ACTIVA (alias de t121) o item REC (alias de t120: los REC
-    se suman a su original y su estado no importa); con activo=False por nada. Asi inventario, transitos, costos y ventas solo traen items activos."""
+    """Cada /*ACTIVO:ext,item*/ de la consulta se reemplaza por (1) la condicion de item del MAESTRO (criterios de SIESA_CRITERIOS_ITEMS; siempre) y
+    (2) la de extension ACTIVA (alias de t121) o item REC (alias de t120: los REC se suman a su original y su estado no importa); (2) con
+    activo=False por nada. Asi inventario, transitos, costos y ventas solo traen items del maestro y activos."""
     def cond(m):
-        if not activo:
-            return ""
         x, i = m.group(1), m.group(2)
-        return f"AND ({x}.{_col_estado()} = {int(settings.siesa_item_estado_activo)} OR {i}.f120_descripcion LIKE 'REC[ .-]%')"
+        crit = _cond_criterios(i)
+        if not activo:
+            return crit
+        return f"{crit} AND ({x}.{_col_estado()} = {int(settings.siesa_item_estado_activo)} OR {i}.f120_descripcion LIKE 'REC[ .-]%')"
     return ACTIVO_RE.sub(cond, sql)
 
 

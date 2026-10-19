@@ -7,9 +7,9 @@
 -- Origen: misma logica del procedimiento Abastecimiento_Consulta_Ventas (el que alimentaba FUNATLAB), con estos cambios:
 --   * agrega por mes en vez de traer lineas; filtra por la fecha del documento >= :desde
 --   * solo bodegas de la empresa (:bodegas) y compania (:cia)
---   * NO exige criterios de laboratorio/categoria (un item vendido sin criterio tambien es demanda)
+--   * solo items del maestro: los que tienen alguno de los criterios de SIESA_CRITERIOS_ITEMS (o son REC); lo demas (materia prima...) no se trae
 --   * solo extensiones ACTIVAS de Siesa (t121.f121_ind_estado) y los REC, que se suman a su original: el ETL reemplaza cada marcador ACTIVO por la condicion
---     de estado, o por nada si la regla solo_items_activos esta en No o la columna de estado no existe
+--     de criterios del maestro y la de estado (esta, por nada si la regla solo_items_activos esta en No o la columna de estado no existe)
 --   * incluye el tipo NCP (nota credito) en los POS archivados; el original solo lo tenia en los POS vigentes
 -- Tres ramas, sin traslape: POS vigente (t9820/t9830), POS archivado (t9920/t9930) y facturas de las bodegas que no pasan
 -- por POS (t350/t470).
