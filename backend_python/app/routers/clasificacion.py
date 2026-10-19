@@ -145,7 +145,7 @@ METODOLOGIA = [
     ("Margen $", "Venta neta - costo de lo vendido. Margen % = margen / venta neta."),
     ("Criterio del ABC", "{criterio}. Se ordena de mayor a menor y se acumula: A hasta el {corte_a}% del total, B hasta el {corte_b}%, C el resto. El item que cruza el corte queda en la clase mejor. Lo que no suma (margen <= 0) es C."),
     ("XYZ", "Por el indice de variabilidad (IV) del motor: X = IV < {c1}, Y = {c1} a {c2}, Z = IV > {c2} (cortes de la tabla de factores VAR). A nivel item es el IV de sus tiendas ponderado por la venta diaria (ADU)."),
-    ("D", "Sin venta en la ventana (pero puede tener inventario: ver Inventario a costo)."),
+    ("D", "Sin venta en las tiendas en la ventana (no cuenta lo que el CEDI vende a wholesale o digital; puede tener inventario: ver Inventario a costo)."),
     ("N", "Producto nuevo: su primera venta es de {nuevo_desde} en adelante; aun no tiene historia para clasificarlo. Solo se aplica con ventanas de 6 meses o mas."),
     ("S", "Sin costo conocido en Siesa: no se puede calcular margen ni consumo a costo."),
     ("GMROI", "Margen anualizado / inventario a costo de hoy. Cuantos pesos de margen deja cada peso invertido en inventario al año."),

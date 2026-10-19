@@ -9,7 +9,7 @@ import { GuiaClasificacion } from '../guias'
 const COLOR_ABC: Record<string, string> = { A: '#2e7d32', B: '#f9a825', C: '#9e9e9e', N: '#1565c0', D: '#6d4c41', S: '#8e24aa' }
 const NOMBRE_ABC: Record<string, string> = {
   A: 'Importantes: juntan el primer 80 % del criterio', B: 'Intermedios: hasta el 95 %', C: 'Cola: el resto (incluye margen ≤ 0)',
-  N: 'Nuevos: primera venta reciente, aún sin historia', D: 'Sin venta en la ventana (mira su inventario a costo)', S: 'Sin costo en Siesa: no se puede calcular margen',
+  N: 'Nuevos: primera venta reciente, aún sin historia', D: 'Sin venta en las tiendas en la ventana (lo que el CEDI vende a wholesale o canales digitales no cuenta aquí). Mira su inventario a costo', S: 'Sin costo en Siesa: no se puede calcular margen',
 }
 const COP = (v: any) => v == null ? '' : '$' + Math.round(v).toLocaleString('es-CO')
 const NUM = (v: any) => v == null ? '' : Math.round(v).toLocaleString('es-CO')
@@ -57,7 +57,7 @@ export default function Clasificacion() {
   const [cx, cy] = d?.meta.cortes_iv ?? [0.5, 0.8]
   const cols: ColDef[] = useMemo(() => [
     { field: 'puesto', headerName: '#', width: 75, pinned: 'left', type: 'numericColumn', headerTooltip: 'Puesto en el ranking ABC según el criterio elegido (1 = el que más aporta). Los apartes D, N y S no tienen puesto.' },
-    { field: 'clase', headerName: 'Clase', width: 90, pinned: 'left', cellRenderer: pill, filter: true, headerTooltip: 'ABC (cuánto aporta, según el criterio elegido) + XYZ (qué tan predecible es su venta). Ej.: AX = importante y estable. Sin letra XYZ = aún sin IV. Apartes: N nuevo, D sin venta, S sin costo.' },
+    { field: 'clase', headerName: 'Clase', width: 90, pinned: 'left', cellRenderer: pill, filter: true, headerTooltip: 'ABC (cuánto aporta, según el criterio elegido) + XYZ (qué tan predecible es su venta). Ej.: AX = importante y estable. Sin letra XYZ = aún sin IV. Apartes: N nuevo, D sin venta en tiendas (no cuenta lo que vende el CEDI a wholesale/digital), S sin costo.' },
     { field: 'clase_global', headerName: 'Clase global', width: 115, cellRenderer: pill, filter: true, headerTooltip: 'La clase que tendría con todo lo que puedes ver, sin los filtros de pantalla (tienda, laboratorio, criterio…). “Clase” es el ABC dentro de lo filtrado; esta es la importancia real del item.' },
     ...(nivel === 'tienda_item' ? [{ field: 'empresa', headerName: 'Empresa', width: 80, filter: true, headerTooltip: 'Empresa de la tienda (05 Funat, 21 Stores): un mismo código de tienda puede existir en las dos.' } as ColDef, { field: 'bodega_id', headerName: 'Tienda', width: 90, filter: true, headerTooltip: 'Tienda (código de Siesa). Solo aparece al clasificar por tienda × item.' } as ColDef] : []),
     { field: 'producto_id', headerName: 'Item', width: 100, filter: true, headerTooltip: 'Referencia del producto. Un item REC se suma a su original.' },

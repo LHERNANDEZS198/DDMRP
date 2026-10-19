@@ -68,7 +68,7 @@ export function GuiaClasificacion({ abierta, cerrar, meta }: { abierta: boolean;
       <Table size="small" sx={{ mb: 1 }}>
         <TableHead><TableRow><TableCell width={70}>Clase</TableCell><TableCell>Qué es</TableCell><TableCell>Qué hacer</TableCell></TableRow></TableHead>
         <TableBody>
-          <TableRow><TableCell><Clase c="D" color={COLOR.D} /></TableCell><TableCell><b>Sin venta</b> en la ventana (ni unidades ni valor).</TableCell><TableCell>Mira su inventario a costo: si tiene stock es capital dormido.</TableCell></TableRow>
+          <TableRow><TableCell><Clase c="D" color={COLOR.D} /></TableCell><TableCell><b>Sin venta en las tiendas</b> en la ventana (ni unidades ni valor). Lo que el CEDI vende a wholesale o canales digitales no cuenta: este informe mide la demanda de las tiendas.</TableCell><TableCell>Mira su inventario a costo: si tiene stock es capital dormido.</TableCell></TableRow>
           <TableRow><TableCell><Clase c="N" color={COLOR.N} /></TableCell><TableCell><b>Nuevo:</b> su primera venta fue en los últimos 3 meses{meta?.nuevo_desde ? ` (desde ${meta.nuevo_desde})` : ''}; aún no tiene historia para juzgarlo. Solo aplica con ventanas de 6 meses o más.</TableCell><TableCell>Seguirlo de cerca; clasificará cuando acumule historia.</TableCell></TableRow>
           <TableRow><TableCell><Clase c="S" color={COLOR.S} /></TableCell><TableCell><b>Sin costo</b> en Siesa: no se puede calcular el margen (solo cuando el criterio usa costo).</TableCell><TableCell>Corregir el costo en Siesa o clasificar por Venta neta.</TableCell></TableRow>
         </TableBody>

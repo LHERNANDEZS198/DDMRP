@@ -2,7 +2,7 @@
 
 ABC: ordena por el criterio elegido (margen bruto $ por defecto) y acumula su porcentaje: A = lo que junta hasta el corte A (80 %),
      B = hasta el corte B (95 %), C = el resto. El item que cruza el corte se queda en la clase mejor. Lo que no suma (margen <= 0) es C.
-Apartes (no entran al ranking, para no ensuciarlo): D = sin venta en la ventana, N = primera venta en los ultimos meses (producto nuevo, aun sin historia),
+Apartes (no entran al ranking, para no ensuciarlo): D = sin venta en las tiendas en la ventana (la venta del CEDI a wholesale/digital no cuenta), N = primera venta en los ultimos meses (producto nuevo, aun sin historia),
      S = sin costo conocido (solo si el criterio usa el costo).
 XYZ: por el indice de variabilidad (IV) que ya calcula el motor: X = baja, Y = media, Z = alta (cortes de la tabla de factores VAR: 0.5 y 0.8).
      A nivel item el IV es el de sus tiendas ponderado por la venta diaria (ADU).
