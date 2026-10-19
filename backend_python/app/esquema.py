@@ -43,6 +43,8 @@ SENTENCIAS = [
            ALTER TABLE ddmrp.inventario_cedi ADD PRIMARY KEY (empresa, producto_id);
          END IF;
        END $$""",
+    # la bitacora era unica por bodega: el mismo codigo existe en las dos empresas (Melonn), la llave es (empresa, bodega)
+    "DROP INDEX IF EXISTS ddmrp.uq_bitacora_bodega",
     # centro de operacion por (empresa, bodega): un mismo codigo de bodega (ej. MBG01 de Melonn) existe en Funat y en Stores con CO distinto
     "ALTER TABLE ddmrp.bodega_centro_operacion ADD COLUMN IF NOT EXISTS empresa TEXT",
     """UPDATE ddmrp.bodega_centro_operacion co SET empresa = COALESCE(
@@ -163,6 +165,51 @@ def normalizar_empresas(c) -> int:
     return n
 
 
+# Llave con empresa: el mismo codigo de bodega existe en Funat (05) y en Stores (21) (Melonn: MBG01...), asi que NINGUNA tabla por tienda
+# puede identificar la fila solo por la bodega. tabla -> llave nueva
+LLAVE_CON_EMPRESA = {
+    "maestro_bodega": ("empresa", "bodega_id"),
+    "inventario_actual": ("empresa", "producto_id", "bodega_id"),
+    "transitos": ("empresa", "producto_id", "bodega_id", "documento"),
+    "demanda_calificada": ("empresa", "producto_id", "bodega_id"),
+    "item_condenado": ("empresa", "producto_id", "bodega_id"),
+    "bodega_dia": ("empresa", "bodega_id", "dia"),
+    "ventas_mensual": ("empresa", "mes", "bodega_id", "producto_id"),
+    "buffer_historia": ("fecha", "empresa", "bodega_id", "producto_id"),
+    "sugerencias_envio": ("ejecucion_id", "empresa", "bodega_id", "producto_id"),
+}
+
+
+def empresa_en_llaves() -> None:
+    """Migracion idempotente: agrega la columna empresa (deducida de la tienda) y la mete en la llave primaria de cada tabla por tienda."""
+    for tabla, llave in LLAVE_CON_EMPRESA.items():
+        try:
+            with pg.begin() as c:
+                if not c.execute(text("SELECT to_regclass(:t)"), {"t": f"ddmrp.{tabla}"}).scalar():
+                    continue
+                en_pk = c.execute(text("""SELECT count(*) FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+                                          WHERE i.indrelid = CAST(:t AS regclass) AND i.indisprimary AND a.attname = 'empresa'"""), {"t": f"ddmrp.{tabla}"}).scalar()
+                if en_pk:
+                    continue
+                c.execute(text(f"ALTER TABLE ddmrp.{tabla} ADD COLUMN IF NOT EXISTS empresa TEXT"))
+                if tabla != "maestro_bodega":   # el maestro de bodegas ya tenia empresa
+                    c.execute(text(f"""UPDATE ddmrp.{tabla} t SET empresa = COALESCE(
+                          (SELECT mb.empresa FROM ddmrp.maestro_bodega mb WHERE mb.bodega_id = t.bodega_id LIMIT 1),
+                          (SELECT min(b.empresa) FROM ddmrp.abast_bitacora b WHERE b.bodega_id = t.bodega_id), '05') WHERE t.empresa IS NULL"""))
+                if tabla == "item_condenado":   # '*' = todas las tiendas: ahora una fila por empresa
+                    c.execute(text("""INSERT INTO ddmrp.item_condenado (empresa, producto_id, bodega_id, motivo)
+                                      SELECT e.e, t.producto_id, t.bodega_id, t.motivo FROM ddmrp.item_condenado t, (VALUES ('05'), ('21')) e(e)
+                                      WHERE t.bodega_id = '*' ON CONFLICT DO NOTHING"""))
+                c.execute(text(f"ALTER TABLE ddmrp.{tabla} ALTER COLUMN empresa SET NOT NULL"))
+                pk = c.execute(text("SELECT conname FROM pg_constraint WHERE conrelid = CAST(:t AS regclass) AND contype = 'p'"), {"t": f"ddmrp.{tabla}"}).scalar()
+                if pk:
+                    c.execute(text(f'ALTER TABLE ddmrp.{tabla} DROP CONSTRAINT "{pk}"'))
+                c.execute(text(f"ALTER TABLE ddmrp.{tabla} ADD PRIMARY KEY ({', '.join(llave)})"))
+                log.warning("Llave con empresa aplicada a %s", tabla)
+        except Exception:
+            log.exception("No se pudo meter la empresa en la llave de %s", tabla)
+
+
 def asegurar_esquema():
     try:
         with pg.begin() as c:
@@ -173,3 +220,4 @@ def asegurar_esquema():
                 log.warning("Empresas corregidas (Funat/Stores -> 05/21): %s fila(s)", n)
     except Exception:
         log.exception("No se pudo actualizar el esquema")
+    empresa_en_llaves()

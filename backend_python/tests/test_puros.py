@@ -58,10 +58,10 @@ def test_elegir_fechas():
 
 def test_pivotear():
     f = [date(2026, 10, 1), date(2026, 10, 2)]
-    h = [("B1", "P1", f[0], "ROJA", 3, -1, 10), ("B1", "P1", f[1], "VERDE", 9, 8, 120), ("B2", "P1", f[1], "EXCESO", 50, 50, 300)]
-    r = mapa_calor.pivotear(f, [("B1", "P1"), ("B2", "P1")], h, "inventario")
-    assert r[("B1", "P1")] == ([3.0, 9.0], "RV") and r[("B2", "P1")] == ([None, 50.0], " E")
-    assert mapa_calor.pivotear(f, [("B1", "P1")], h, "pct_buffer")[("B1", "P1")][0] == [10.0, 120.0]
+    h = [("05", "B1", "P1", f[0], "ROJA", 3, -1, 10), ("05", "B1", "P1", f[1], "VERDE", 9, 8, 120), ("21", "B1", "P1", f[1], "EXCESO", 50, 50, 300)]
+    r = mapa_calor.pivotear(f, [("05", "B1", "P1"), ("21", "B1", "P1")], h, "inventario")   # misma tienda en las dos empresas: filas distintas
+    assert r[("05", "B1", "P1")] == ([3.0, 9.0], "RV") and r[("21", "B1", "P1")] == ([None, 50.0], " E")
+    assert mapa_calor.pivotear(f, [("05", "B1", "P1")], h, "pct_buffer")[("05", "B1", "P1")][0] == [10.0, 120.0]
 
 
 def test_clasificacion_abc_xyz():

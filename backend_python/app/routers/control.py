@@ -15,7 +15,7 @@ ULTIMA = "(SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok')"
 ZONAS = ("ROJA", "AMARILLA", "VERDE", "EXCESO")
 FROM = """FROM ddmrp.sugerencias_envio s
           LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = s.producto_id
-          LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = s.bodega_id
+          LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = s.bodega_id AND mb.empresa = s.empresa
           LEFT JOIN ddmrp.laboratorio lb ON lb.codigo = mi.categoria"""
 
 
@@ -46,7 +46,7 @@ def _filtros(user, bodegas, labs, q, zonas, dia, empresa, a="s", zona_expr="s.zo
     if _csv(empresa):
         cond.append(f"{a}.empresa = ANY(:f_emp)"); p["f_emp"] = _csv(empresa)
     if dia:
-        cond.append(f"{a}.bodega_id IN (SELECT bodega_id FROM ddmrp.bodega_dia WHERE dia = :f_dia)"); p["f_dia"] = dia
+        cond.append(f"({a}.empresa, {a}.bodega_id) IN (SELECT empresa, bodega_id FROM ddmrp.bodega_dia WHERE dia = :f_dia)"); p["f_dia"] = dia
     return cond, p
 
 
@@ -62,7 +62,7 @@ def filtros(user=Depends(usuario_actual)):
     with pg.connect() as c:
         ej = c.execute(text(f"SELECT id, fecha_calculo, fin FROM ddmrp.ejecucion_motor WHERE id = {ULTIMA}")).mappings().first()
         tiendas = [dict(r) for r in c.execute(text(
-            f"SELECT DISTINCT s.bodega_id, mb.descripcion AS nombre {base} ORDER BY 1"), p).mappings()]
+            f"SELECT s.bodega_id, string_agg(DISTINCT mb.descripcion, ' / ') AS nombre {base} GROUP BY s.bodega_id ORDER BY 1"), p).mappings()]
         labs = [dict(r) for r in c.execute(text(
             f"SELECT DISTINCT COALESCE(mi.categoria, '') AS codigo, lb.nombre {base} ORDER BY 1"), p).mappings()]
         empresas = [r[0] for r in c.execute(text(f"SELECT DISTINCT s.empresa {base} ORDER BY 1"), p)]
@@ -110,7 +110,7 @@ def resumen(agrupar: str = "bodega", bodegas: str | None = None, labs: str | Non
                      COALESCE(sum(s.cantidad_sugerida), 0) AS unidades,
                      COALESCE(sum(s.inventario), 0) AS inventario, COALESCE(sum(s.en_transito), 0) AS en_transito,
                      COALESCE(sum(s.flujo_neto), 0) AS flujo_neto, COALESCE(sum(s.tog_aj), 0) AS tog_aj
-              {frm} WHERE {w} GROUP BY 1 ORDER BY (count(*) FILTER (WHERE s.zona = 'ROJA'))::float / count(*) DESC, 1 LIMIT :lim"""
+              {frm} WHERE {w} GROUP BY 1{", s.empresa" if agrupar == "bodega" else ""} ORDER BY (count(*) FILTER (WHERE s.zona = 'ROJA'))::float / count(*) DESC, 1 LIMIT :lim"""
     tot = f"""SELECT count(*) AS n, count(*) FILTER (WHERE s.zona = 'ROJA') AS roja, count(*) FILTER (WHERE s.zona = 'AMARILLA') AS amarilla,
                      count(*) FILTER (WHERE s.zona = 'VERDE') AS verde, count(*) FILTER (WHERE s.zona = 'EXCESO') AS exceso,
                      round(avg(LEAST(COALESCE(s.pct_buffer, 0), 200)), 1) AS pct_prom,
@@ -172,10 +172,10 @@ XCTE = f"""WITH x AS (
          {RANGO.format(z="a.zona::text")} AS ri, {RANGO.format(z="b.zona::text")} AS rf
   FROM (SELECT * FROM ddmrp.buffer_historia WHERE fecha = :e_ini) a
   FULL JOIN (SELECT * FROM ddmrp.buffer_historia WHERE fecha = :e_fin) b
-    ON a.bodega_id = b.bodega_id AND a.producto_id = b.producto_id)
+    ON a.empresa = b.empresa AND a.bodega_id = b.bodega_id AND a.producto_id = b.producto_id)
 """
 XFROM = """FROM x LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = x.producto_id
-          LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = x.bodega_id
+          LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = x.bodega_id AND mb.empresa = x.empresa
           LEFT JOIN ddmrp.laboratorio lb ON lb.codigo = mi.categoria"""
 
 
@@ -222,7 +222,7 @@ def cambios(agrupar: str = "bodega", desde: date | None = None, hasta: date | No
         ids, fechas_ = _periodo(c, desde, hasta)
         pr = {**p, **ids}
         grupos = [dict(r) for r in c.execute(text(
-            f"{XCTE} SELECT {clave} AS clave, MAX({nombre}) AS nombre, {sel} {xfrom} WHERE {w} GROUP BY 1 "
+            f"{XCTE} SELECT {clave} AS clave, MAX({nombre}) AS nombre, {sel} {xfrom} WHERE {w} GROUP BY 1{", x.empresa" if agrupar == "bodega" else ""} "
             f"ORDER BY {cnt(MOV['entraron_rojo'])} DESC, 1 LIMIT :lim"), {**pr, "lim": limit}).mappings()]
         total = dict(c.execute(text(f"{XCTE} SELECT {sel} {xfrom} WHERE {w}"), pr).mappings().first())
         mat = [dict(r) for r in c.execute(text(
@@ -307,28 +307,28 @@ def _mapa_datos(c, user, bodegas, labs, q, zonas, dia, empresa, crit, desde, has
     w = " AND ".join(cond)
     base = """FROM ddmrp.buffer_historia h
               LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = h.producto_id
-              LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = h.bodega_id
+              LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = h.bodega_id AND mb.empresa = h.empresa
               LEFT JOIN ddmrp.laboratorio lb ON lb.codigo = mi.categoria"""
     ORDEN = {"critico": "h.pct_buffer NULLS FIRST, h.bodega_id, h.producto_id",
              "item": "h.producto_id, h.bodega_id", "tienda": "h.bodega_id, h.producto_id"}
     if orden not in ORDEN:
         raise HTTPException(400, f"orden debe ser uno de {list(ORDEN)}")
     total = c.execute(text(f"SELECT count(*) {base} WHERE {w}"), p).scalar()
-    sql = f"""SELECT h.bodega_id, mb.descripcion AS bodega_nombre, h.producto_id, mi.descripcion,
+    sql = f"""SELECT h.empresa, h.bodega_id, mb.descripcion AS bodega_nombre, h.producto_id, mi.descripcion,
                      COALESCE(mi.categoria, '(sin laboratorio)') AS laboratorio, h.zona::text AS zona, h.pct_buffer,
                      (SELECT s.adu::float8 FROM ddmrp.sugerencias_envio s WHERE s.ejecucion_id = {ULTIMA}
-                        AND s.bodega_id = h.bodega_id AND s.producto_id = h.producto_id) AS adu,
+                        AND s.empresa = h.empresa AND s.bodega_id = h.bodega_id AND s.producto_id = h.producto_id) AS adu,
                      (SELECT ci.costo::float8 FROM ddmrp.costo_item ci WHERE ci.producto_id = h.producto_id) AS costo
               {base} WHERE {w} ORDER BY {ORDEN[orden]} LIMIT :lim"""
     combos = [dict(r) for r in c.execute(text(sql), {**p, "lim": limit}).mappings()]
-    llaves = [(r["bodega_id"], r["producto_id"]) for r in combos]
+    llaves = [(r["empresa"], r["bodega_id"], r["producto_id"]) for r in combos]
     hist = []
     if llaves:
-        hist = c.execute(text("""SELECT h.bodega_id, h.producto_id, h.fecha, h.zona::text, h.inventario, h.flujo_neto, h.pct_buffer
+        hist = c.execute(text("""SELECT h.empresa, h.bodega_id, h.producto_id, h.fecha, h.zona::text, h.inventario, h.flujo_neto, h.pct_buffer
                                  FROM ddmrp.buffer_historia h
-                                 JOIN unnest(CAST(:kb AS text[]), CAST(:kp AS text[])) AS k(b, pr) ON k.b = h.bodega_id AND k.pr = h.producto_id
+                                 JOIN unnest(CAST(:ke AS text[]), CAST(:kb AS text[]), CAST(:kp AS text[])) AS k(e, b, pr) ON k.e = h.empresa AND k.b = h.bodega_id AND k.pr = h.producto_id
                                  WHERE h.fecha = ANY(:fechas)"""),
-                         {"kb": [k[0] for k in llaves], "kp": [k[1] for k in llaves], "fechas": fechas_}).all()
+                         {"ke": [k[0] for k in llaves], "kb": [k[1] for k in llaves], "kp": [k[2] for k in llaves], "fechas": fechas_}).all()
     piv = mapa_calor.pivotear(fechas_, llaves, hist, metrica)
     from .clasificacion import datos_clase      # import tardio: clasificacion importa de este modulo
     try:

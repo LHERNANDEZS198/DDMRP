@@ -36,7 +36,7 @@ MAESTROS = {
         bodega="bodega_id", producto="producto_id", nxp=True),   # NxP en vectorizacion = condenado (item x tienda): va al maestro de condenados
     "condenados": dict(
         label="Condenados: items que no se despachan (todas las tiendas o solo una)", tabla="ddmrp.item_condenado",
-        llave=["bodega_id", "producto_id"], editable={"motivo": "txt"}, bodega="bodega_id", producto="producto_id", todas="*"),
+        llave=["empresa", "bodega_id", "producto_id"], editable={"motivo": "txt"}, bodega="bodega_id", producto="producto_id", todas="*"),
     "pronostico": dict(
         label="Pronostico (unidades/mes)", tabla="ddmrp.pronostico",
         llave=["empresa", "bodega_id", "producto_id"], editable={"pronostico": "num"},
@@ -62,7 +62,7 @@ MAESTROS = {
         solo_existentes=True, sin_reemplazo=True, oculto=True),   # oculto: las mismas claves se editan en Reglas de pedido (con validacion y nombres claros)
     "dias-bodega": dict(
         label="DIA de abastecimiento por tienda", tabla="ddmrp.bodega_dia",
-        llave=["bodega_id", "dia"], editable={}, bodega="bodega_id", producto=None),
+        llave=["empresa", "bodega_id", "dia"], editable={}, bodega="bodega_id", producto=None),
     "items": dict(
         label="Items: descripcion y laboratorio (los criterios vienen de Siesa)", tabla="ddmrp.maestro_item",
         llave=["producto_id"], editable={"descripcion": "txt", "categoria": "txt"},
@@ -84,11 +84,11 @@ MAESTROS = {
         llave=["laboratorio"], editable={"motivo": "txt"}, bodega=None, producto=None, global_=True),
     "demanda-calificada": dict(
         label="Demanda calificada (pedidos abiertos / picos)", tabla="ddmrp.demanda_calificada",
-        llave=["bodega_id", "producto_id"], editable={"cantidad": "num"},
+        llave=["empresa", "bodega_id", "producto_id"], editable={"cantidad": "num"},
         bodega="bodega_id", producto="producto_id"),
     "ventas-mensual": dict(
         label="Ventas por mes (unidades)", tabla="ddmrp.ventas_mensual",
-        llave=["mes", "bodega_id", "producto_id"], editable={"cantidad": "num"},
+        llave=["empresa", "mes", "bodega_id", "producto_id"], editable={"cantidad": "num"},
         bodega="bodega_id", producto="producto_id"),
 }
 
@@ -181,7 +181,7 @@ def opciones(user=Depends(requiere("ver_maestros", "cargar_maestros"))):
     w, p = filtro_sql_permisos(user, "mb.bodega_id", "'*'")
     with pg.connect() as c:
         tiendas = [dict(r) for r in c.execute(text(
-            f"SELECT mb.bodega_id, mb.descripcion AS nombre, mb.empresa FROM ddmrp.maestro_bodega mb WHERE {w} ORDER BY 1"), p).mappings()]
+            f"SELECT mb.bodega_id, string_agg(DISTINCT mb.descripcion, ' / ') AS nombre, string_agg(DISTINCT mb.empresa, ',') AS empresa FROM ddmrp.maestro_bodega mb WHERE {w} GROUP BY mb.bodega_id ORDER BY 1"), p).mappings()]
         labs = [dict(r) for r in c.execute(text(
             "SELECT l.codigo, l.nombre FROM ddmrp.laboratorio l WHERE EXISTS (SELECT 1 FROM ddmrp.maestro_item m WHERE m.categoria = l.codigo) ORDER BY 1")).mappings()]
     return {"tiendas": tiendas, "laboratorios": labs}
@@ -271,7 +271,7 @@ def leer(nombre: str, response: Response, bodega_id: str | None = None, producto
         join = f"LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = t.{d['producto']}" if d.get("producto") else ""
         w, p = filtro_sql_permisos(user, f"t.{d['bodega']}", "mi.categoria" if d.get("producto") else "'*'")
         sel += ", mi.descripcion" if d.get("producto") else ""
-        join += f" LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = t.{d['bodega']}"
+        join += f" LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = t.{d['bodega']}" + (" AND mb.empresa = t.empresa" if "empresa" in d["llave"] else "")
         sel += ", mb.descripcion AS bodega_nombre"
     elif d.get("producto"):
         join = f"LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = t.{d['producto']}"
@@ -411,9 +411,20 @@ def _mapa_bodegas():
     """(por codigo, por nombre) desde ddmrp.maestro_bodega (que el ETL trae de Siesa t150)."""
     with pg.connect() as c:
         rows = c.execute(text("SELECT bodega_id, empresa, descripcion FROM ddmrp.maestro_bodega")).all()
-    return ({r[0].strip().upper(): (r[0], r[1]) for r in rows},
-            {_norm(r[2]): (r[0], r[1]) for r in rows if r[2]},
-            sorted({r[1] for r in rows}))
+    por_cod: dict[str, list[tuple[str, str]]] = {}
+    for r in rows:   # un mismo codigo puede existir en las dos empresas (Melonn: MBG01 en Funat y en Stores)
+        por_cod.setdefault(r[0].strip().upper(), []).append((r[0], r[1]))
+    return (por_cod, {_norm(r[2]): (r[0], r[1]) for r in rows if r[2]}, sorted({r[1] for r in rows}))
+
+
+def _resolver_tienda(cands: list[tuple[str, str]], emp_arch: str):
+    """Una tienda por su codigo: si el codigo esta en las dos empresas, la empresa del archivo decide; sin ella no se adivina."""
+    if emp_arch:
+        hit = [c for c in cands if c[1] == emp_arch]
+        return hit[0] if hit else None
+    if len(cands) > 1:
+        raise ValueError(f"la tienda {cands[0][0]} existe en las empresas {' y '.join(sorted(c[1] for c in cands))}: agrega la columna empresa")
+    return cands[0]
 
 
 def _preparar(d: dict, filas: list[dict], omitir: bool = False, malas_out: list | None = None, cond_out: list | None = None) -> tuple[list[str], list[dict]]:
@@ -440,7 +451,8 @@ def _preparar(d: dict, filas: list[dict], omitir: bool = False, malas_out: list 
             llave: dict[str, str] = {}
             if con_bodega:
                 cod = _valor_llave("bodega_id", f.get(cod_h)) if cod_h else ""
-                hit = por_cod.get(cod.upper()) if cod else None
+                emp_f = _valor_llave("empresa", f.get("empresa")) if "empresa" in d["llave"] else ""
+                hit = _resolver_tienda(por_cod[cod.upper()], emp_f) if cod and cod.upper() in por_cod else None
                 if d.get("todas") and not hit and (cod.upper() in TODAS or (not cod and not (nom_h and f.get(nom_h)))):
                     hit = (d["todas"], None)   # el item queda condenado en todas las tiendas
                 if not hit and (cod or nom_h):
@@ -455,10 +467,10 @@ def _preparar(d: dict, filas: list[dict], omitir: bool = False, malas_out: list 
                     emp_arch = _valor_llave("empresa", f.get("empresa"))
                     # el mismo codigo de bodega puede existir en las dos empresas (Melonn: MBG01 en Funat y en Stores): manda la empresa del archivo
                     emp = emp_arch or hit[1] or ""
-                    if not emp:
+                    if not emp and not (d.get("todas") and hit[0] == d["todas"]):
                         raise ValueError("no se pudo deducir la empresa de la tienda " + repr(hit[0]) + ": esta base aun no conoce las tiendas. "
                                      "Agrega la columna empresa (05 Funat, 21 Store) al archivo, o carga primero la bitacora con esa columna")
-                    llave["empresa"] = emp
+                    llave["empresa"] = emp   # vacio solo en "todas las tiendas": mas abajo se replica en cada empresa
             for k in otras:
                 llave[k] = _valor_llave(k, f.get(k))
                 if TIPO_LLAVE.get(k) == "int" and llave[k]:
@@ -471,7 +483,7 @@ def _preparar(d: dict, filas: list[dict], omitir: bool = False, malas_out: list 
             fila_base = dict(llave)
             cond_nxp = bool(d.get("nxp")) and es_nxp(f.get("vectorizacion"))
             if cond_nxp and cond_out is not None:
-                cond_out.append((llave[d["bodega"]], llave[d["producto"]]))
+                cond_out.append((llave["empresa"], llave[d["bodega"]], llave[d["producto"]]))
             for c in cols:
                 t = d["editable"][c]
                 if cond_nxp and c == "vectorizacion":
@@ -538,7 +550,7 @@ def _importar_(nombre: str, d: dict, filas: list[dict], modo: str, user, omitir:
     if reemplazo and d.get("sin_reemplazo"):
         raise HTTPException(400, "Este maestro no admite reemplazo total: usa 'actualizar'")
     malas: list[str] = []
-    cond_nxp: list[tuple[str, str]] = []
+    cond_nxp: list[tuple[str, str, str]] = []
     cols, filas = _preparar(d, filas, omitir, malas, cond_nxp)
     if not filas:
         raise HTTPException(400, "El archivo no trae filas")
@@ -578,9 +590,9 @@ def _importar_(nombre: str, d: dict, filas: list[dict], modo: str, user, omitir:
         else:
             ignoradas, creadas = 0, n_unicas - existentes
         if cond_nxp:
-            c.execute(text("INSERT INTO ddmrp.item_condenado (bodega_id, producto_id, motivo) SELECT * FROM unnest(CAST(:b AS text[]), CAST(:p AS text[]), CAST(:m AS text[])) "
-                           "ON CONFLICT (producto_id, bodega_id) DO NOTHING"),
-                      {"b": [x[0] for x in cond_nxp], "p": [x[1] for x in cond_nxp], "m": ["NxP (carga de vectorizacion)"] * len(cond_nxp)})
+            c.execute(text("INSERT INTO ddmrp.item_condenado (empresa, bodega_id, producto_id, motivo) SELECT * FROM unnest(CAST(:e AS text[]), CAST(:b AS text[]), CAST(:p AS text[]), CAST(:m AS text[])) "
+                           "ON CONFLICT (empresa, producto_id, bodega_id) DO NOTHING"),
+                      {"e": [x[0] for x in cond_nxp], "b": [x[1] for x in cond_nxp], "p": [x[2] for x in cond_nxp], "m": ["NxP (carga de vectorizacion)"] * len(cond_nxp)})
         c.execute(text("INSERT INTO ddmrp.config_audit (tabla, llave, campo, valor_anterior, valor_nuevo, usuario) "
                        "VALUES (:t, '*', :m, NULL, :n, :u)"),
                   {"t": nombre, "m": "carga_" + modo, "n": f"{len(filas)} filas ({creadas} nuevas)", "u": user["nombre"]})
@@ -635,7 +647,7 @@ def bajar_excel(nombre: str, bodega_id: str | None = None, q: str | None = None,
         join = f"LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = t.{d['producto']}"
     if bod:
         join = f"LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = t.{d['producto']}" if d.get("producto") else ""
-        join += f" LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = t.{bod}"
+        join += f" LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = t.{bod}" + (" AND mb.empresa = t.empresa" if "empresa" in d["llave"] else "")
         w, p = filtro_sql_permisos(user, f"t.{bod}", "mi.categoria" if d.get("producto") else "'*'")
         sel = (f"t.{bod}, mb.descripcion AS bodega_nombre" + (", t.empresa" if con_emp else "") + "".join(f", t.{c}" for c in cols_t if c != bod)
                + "".join(f", t.{c}" for c in d["editable"]))

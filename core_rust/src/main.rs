@@ -19,7 +19,7 @@ WITH meses AS (
 ),
 rec AS (SELECT empresa, rec_id, original_id FROM ddmrp.v_item_rec),
 v AS (
-  SELECT a.bodega_id, COALESCE(r.original_id, a.producto_id) AS producto_id,
+  SELECT a.empresa, a.bodega_id, COALESCE(r.original_id, a.producto_id) AS producto_id,
     COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 0), 0)::float8 AS m0,
     COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 1), 0)::float8 AS m1,
     COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 2), 0)::float8 AS m2,
@@ -33,30 +33,27 @@ v AS (
     COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 10), 0)::float8 AS m10,
     COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 11), 0)::float8 AS m11
   FROM ddmrp.ventas_mensual a JOIN meses m ON m.mes = a.mes
-  LEFT JOIN ddmrp.abast_bitacora ab ON ab.bodega_id = a.bodega_id
-  LEFT JOIN rec r ON r.empresa = ab.empresa AND r.rec_id = a.producto_id
-  GROUP BY a.bodega_id, COALESCE(r.original_id, a.producto_id)
+  LEFT JOIN rec r ON r.empresa = a.empresa AND r.rec_id = a.producto_id
+  GROUP BY a.empresa, a.bodega_id, COALESCE(r.original_id, a.producto_id)
 ),
 inv AS (
-  SELECT ia.bodega_id, COALESCE(r.original_id, ia.producto_id) AS producto_id, SUM(ia.disponible) AS disponible
+  SELECT ia.empresa, ia.bodega_id, COALESCE(r.original_id, ia.producto_id) AS producto_id, SUM(ia.disponible) AS disponible
   FROM ddmrp.inventario_actual ia
-  LEFT JOIN ddmrp.abast_bitacora ab ON ab.bodega_id = ia.bodega_id
-  LEFT JOIN rec r ON r.empresa = ab.empresa AND r.rec_id = ia.producto_id
-  GROUP BY 1, 2
+  LEFT JOIN rec r ON r.empresa = ia.empresa AND r.rec_id = ia.producto_id
+  GROUP BY 1, 2, 3
 ),
 tr AS (
-  SELECT tt.bodega_id, COALESCE(r.original_id, tt.producto_id) AS producto_id, SUM(tt.cantidad) AS cant
+  SELECT tt.empresa, tt.bodega_id, COALESCE(r.original_id, tt.producto_id) AS producto_id, SUM(tt.cantidad) AS cant
   FROM ddmrp.transitos tt
-  LEFT JOIN ddmrp.abast_bitacora ab ON ab.bodega_id = tt.bodega_id
-  LEFT JOIN rec r ON r.empresa = ab.empresa AND r.rec_id = tt.producto_id
-  GROUP BY 1, 2
+  LEFT JOIN rec r ON r.empresa = tt.empresa AND r.rec_id = tt.producto_id
+  GROUP BY 1, 2, 3
 ),
 llaves AS (
-  SELECT bodega_id, producto_id FROM v
-  UNION SELECT bodega_id, producto_id FROM ddmrp.abast_vectorizacion WHERE vectorizacion <> 0
-  UNION SELECT bodega_id, producto_id FROM ddmrp.pronostico WHERE pronostico <> 0
-  UNION SELECT bodega_id, producto_id FROM inv WHERE disponible <> 0
-  UNION SELECT bodega_id, producto_id FROM ddmrp.abast_control_referencias
+  SELECT empresa, bodega_id, producto_id FROM v
+  UNION SELECT empresa, bodega_id, producto_id FROM ddmrp.abast_vectorizacion WHERE vectorizacion <> 0
+  UNION SELECT empresa, bodega_id, producto_id FROM ddmrp.pronostico WHERE pronostico <> 0
+  UNION SELECT empresa, bodega_id, producto_id FROM inv WHERE disponible <> 0
+  UNION SELECT empresa, bodega_id, producto_id FROM ddmrp.abast_control_referencias
 )
 SELECT b.empresa, k.bodega_id, k.producto_id,
   COALESCE(v.m0, 0) AS m0, COALESCE(v.m1, 0) AS m1, COALESCE(v.m2, 0) AS m2, COALESCE(v.m3, 0) AS m3, COALESCE(v.m4, 0) AS m4, COALESCE(v.m5, 0) AS m5, COALESCE(v.m6, 0) AS m6, COALESCE(v.m7, 0) AS m7, COALESCE(v.m8, 0) AS m8, COALESCE(v.m9, 0) AS m9, COALESCE(v.m10, 0) AS m10, COALESCE(v.m11, 0) AS m11,
@@ -68,22 +65,22 @@ SELECT b.empresa, k.bodega_id, k.producto_id,
   COALESCE(c.cota_minima, 0)::float8       AS cota_min,
   COALESCE(pr.indicativo, 0)::int2         AS promo,
   COALESCE(ve.vectorizacion, 0)::float8    AS vectorizacion,
-  (EXISTS (SELECT 1 FROM ddmrp.item_condenado cd WHERE cd.producto_id = k.producto_id AND cd.bodega_id IN (k.bodega_id, '*')))::int::int2 AS condenado,
+  (EXISTS (SELECT 1 FROM ddmrp.item_condenado cd WHERE cd.empresa = k.empresa AND cd.producto_id = k.producto_id AND cd.bodega_id IN (k.bodega_id, '*')))::int::int2 AS condenado,
   COALESCE(i.disponible, 0)::float8        AS inventario,
   COALESCE(t.cant, 0)::float8              AS en_transito,
   COALESCE(d.cantidad, 0)::float8          AS demanda_calificada,
   COALESCE(oi.regla, ol.regla, 0)::int2    AS regla_objetivo
 FROM llaves k
-JOIN ddmrp.abast_bitacora b ON b.bodega_id = k.bodega_id
-LEFT JOIN v ON v.bodega_id = k.bodega_id AND v.producto_id = k.producto_id
+JOIN ddmrp.abast_bitacora b ON b.empresa = k.empresa AND b.bodega_id = k.bodega_id
+LEFT JOIN v ON v.empresa = k.empresa AND v.bodega_id = k.bodega_id AND v.producto_id = k.producto_id
 LEFT JOIN ddmrp.pronostico p ON p.empresa = b.empresa AND p.bodega_id = k.bodega_id AND p.producto_id = k.producto_id
 LEFT JOIN ddmrp.abast_unidad_despacho ud ON ud.empresa = b.empresa AND ud.producto_id = k.producto_id
 LEFT JOIN ddmrp.abast_control_referencias c ON c.empresa = b.empresa AND c.bodega_id = k.bodega_id AND c.producto_id = k.producto_id
 LEFT JOIN ddmrp.promocion pr ON pr.empresa = b.empresa AND pr.producto_id = k.producto_id
 LEFT JOIN ddmrp.abast_vectorizacion ve ON ve.empresa = b.empresa AND ve.bodega_id = k.bodega_id AND ve.producto_id = k.producto_id
-LEFT JOIN inv i ON i.bodega_id = k.bodega_id AND i.producto_id = k.producto_id
-LEFT JOIN tr t ON t.bodega_id = k.bodega_id AND t.producto_id = k.producto_id
-LEFT JOIN ddmrp.demanda_calificada d ON d.bodega_id = k.bodega_id AND d.producto_id = k.producto_id
+LEFT JOIN inv i ON i.empresa = k.empresa AND i.bodega_id = k.bodega_id AND i.producto_id = k.producto_id
+LEFT JOIN tr t ON t.empresa = k.empresa AND t.bodega_id = k.bodega_id AND t.producto_id = k.producto_id
+LEFT JOIN ddmrp.demanda_calificada d ON d.empresa = k.empresa AND d.bodega_id = k.bodega_id AND d.producto_id = k.producto_id
 LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = k.producto_id
 LEFT JOIN ddmrp.reposicion_item oi ON oi.producto_id = k.producto_id
 LEFT JOIN ddmrp.reposicion_laboratorio ol ON ol.laboratorio = mi.categoria

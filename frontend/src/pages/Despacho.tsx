@@ -79,7 +79,7 @@ export default function Despacho() {
   const [filtrar, setFiltrar] = useState(false) // false = todas las tiendas
   const [tiendas, setTiendas] = useState<string[]>([])
   const [nueva, setNueva] = useState('')
-  useEffect(() => { api('/despacho/dias').then(x => { setDias(x.dias); setTodas(x.bodegas); setEmpDe(x.empresa_de ?? {}) }) }, [])
+  useEffect(() => { api('/despacho/dias?empresa=' + empresa).then(x => { setDias(x.dias); setTodas(x.bodegas); setEmpDe(x.empresa_de ?? {}) }) }, [empresa])
   const diasEmp = useMemo(() => dias.map(d => ({ ...d, bodegas: d.bodegas.filter(b => empDe[b] === empresa) })).filter(d => d.bodegas.length), [dias, empDe, empresa])
   const todas = useMemo(() => todasBod.filter(b => empDe[b] === empresa), [todasBod, empDe, empresa])
   const elegirDia = (v: string) => {
@@ -128,7 +128,7 @@ export default function Despacho() {
     if (!sel.length) { setMsg('Selecciona filas'); return }
     try {
       await api('/despacho/aprobar', { method: 'POST', body: JSON.stringify(sel.map((r: any) => ({
-        ejecucion_id: r.ejecucion_id, producto_id: r.producto_id, bodega_id: r.bodega_id,
+        ejecucion_id: r.ejecucion_id, producto_id: r.producto_id, bodega_id: r.bodega_id, empresa: r.empresa,
         cantidad_aprobada: r.cantidad_aprobada ?? r.cantidad_sugerida, aprobar: true }))) })
       setMsg(`Aprobadas ${sel.length}. Las ves en “Aprobadas”, desde donde puedes devolverlas a pendiente.`); cargar()
     } catch (x: any) { setMsg('Error: ' + x.message) }
@@ -137,7 +137,7 @@ export default function Despacho() {
     const sel = grid?.getSelectedRows() ?? []
     if (!sel.length) { setMsg('Selecciona filas aprobadas'); return }
     try {
-      const r = await api('/despacho/desaprobar', { method: 'POST', body: JSON.stringify(sel.map((x: any) => ({ ejecucion_id: x.ejecucion_id, producto_id: x.producto_id, bodega_id: x.bodega_id }))) })
+      const r = await api('/despacho/desaprobar', { method: 'POST', body: JSON.stringify(sel.map((x: any) => ({ ejecucion_id: x.ejecucion_id, producto_id: x.producto_id, bodega_id: x.bodega_id, empresa: x.empresa }))) })
       setMsg(r.devueltas ? `Devueltas a pendiente: ${r.devueltas}` + (r.omitidas ? ` (${r.omitidas} no estaban aprobadas)` : '')
         : 'Ninguna se devolvió: las filas elegidas no están aprobadas en la corrida actual.'); grid?.deselectAll(); cargar()
     } catch (x: any) { setMsg('Error: ' + x.message) }

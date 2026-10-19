@@ -45,7 +45,7 @@ def catalogo():
 def opciones():
     """Tiendas y laboratorios para elegir el alcance."""
     with pg.connect() as c:
-        t = c.execute(text("SELECT bodega_id, coalesce(nombre, '') FROM ddmrp.maestro_bodega ORDER BY 1")).all()
+        t = c.execute(text("SELECT DISTINCT ON (bodega_id) bodega_id, coalesce(descripcion, '') FROM ddmrp.maestro_bodega ORDER BY 1")).all()
         if not t:
             t = c.execute(text("SELECT DISTINCT bodega_id, '' FROM ddmrp.abast_bitacora ORDER BY 1")).all()
         lb = c.execute(text("SELECT codigo, coalesce(nombre, '') FROM ddmrp.laboratorio ORDER BY 1")).all()

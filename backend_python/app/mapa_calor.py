@@ -20,25 +20,25 @@ def elegir_fechas(disponibles: list[date], paso: int = 1, maximo: int = MAX_COLU
     return sorted(elegidas)
 
 
-def pivotear(fechas: list[date], combos: list[tuple[str, str]], historia, metrica: str = "inventario") -> dict:
-    """combos = [(bodega, producto)] en el orden de salida; historia = filas (bodega, producto, fecha, zona, inventario, flujo_neto, pct_buffer).
-    Devuelve {(bodega, producto): (valores, zonas)}: valores = lista (None si ese dia no hubo foto), zonas = texto de una letra por fecha
+def pivotear(fechas: list[date], combos: list[tuple[str, str, str]], historia, metrica: str = "inventario") -> dict:
+    """combos = [(empresa, bodega, producto)] en el orden de salida; historia = filas (empresa, bodega, producto, fecha, zona, inventario, flujo_neto, pct_buffer).
+    Devuelve {(empresa, bodega, producto): (valores, zonas)}: valores = lista (None si ese dia no hubo foto), zonas = texto de una letra por fecha
     (R/A/V/E, espacio = sin foto)."""
     if metrica not in METRICAS:
         raise ValueError(f"metrica debe ser una de {list(METRICAS)}")
-    col = {"inventario": 4, "flujo_neto": 5, "pct_buffer": 6}[metrica]
+    col = {"inventario": 5, "flujo_neto": 6, "pct_buffer": 7}[metrica]
     idx = {f: i for i, f in enumerate(fechas)}
     n = len(fechas)
     vals = {c: [None] * n for c in combos}
     zon = {c: [" "] * n for c in combos}
     for r in historia:
-        c = (r[0], r[1])
-        i = idx.get(r[2])
+        c = (r[0], r[1], r[2])
+        i = idx.get(r[3])
         if i is None or c not in vals:
             continue
         v = r[col]
         vals[c][i] = None if v is None else float(v)
-        zon[c][i] = ZONA_LETRA.get(str(r[3]), " ")
+        zon[c][i] = ZONA_LETRA.get(str(r[4]), " ")
     return {c: (vals[c], "".join(zon[c])) for c in combos}
 
 

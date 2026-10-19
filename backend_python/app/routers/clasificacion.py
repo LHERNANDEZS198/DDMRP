@@ -56,12 +56,11 @@ def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, l
     p["mes_desde"] = mes_desde
     sql = f"""
     WITH v AS (
-      SELECT mb.empresa, a.bodega_id, COALESCE(r.original_id, a.producto_id) AS producto_id,
+      SELECT a.empresa, a.bodega_id, COALESCE(r.original_id, a.producto_id) AS producto_id,
              SUM(a.cantidad)::float8 AS cant, SUM(a.valor)::float8 AS valor,
              MIN(a.mes) FILTER (WHERE a.cantidad > 0) AS primer_mes
       FROM ddmrp.ventas_mensual a
-      JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = a.bodega_id
-      LEFT JOIN ddmrp.v_item_rec r ON r.empresa = mb.empresa AND r.rec_id = a.producto_id
+      LEFT JOIN ddmrp.v_item_rec r ON r.empresa = a.empresa AND r.rec_id = a.producto_id
       WHERE a.mes >= :mes_desde
       GROUP BY 1, 2, 3),
     s AS (
@@ -72,12 +71,12 @@ def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, l
       SELECT COALESCE(v.empresa, s.empresa) AS empresa, COALESCE(v.bodega_id, s.bodega_id) AS bodega_id,
              COALESCE(v.producto_id, s.producto_id) AS producto_id,
              v.cant, v.valor, v.primer_mes, s.inventario, s.iv, s.adu, s.zona, s.pct_buffer, s.flujo_neto, s.sugerido
-      FROM v FULL JOIN s ON s.bodega_id = v.bodega_id AND s.producto_id = v.producto_id)
-    SELECT k.bodega_id, mb.descripcion AS bodega_nombre, k.producto_id, mi.descripcion, COALESCE(mi.categoria, '(sin laboratorio)') AS laboratorio,
+      FROM v FULL JOIN s ON s.empresa = v.empresa AND s.bodega_id = v.bodega_id AND s.producto_id = v.producto_id)
+    SELECT k.empresa, k.bodega_id, mb.descripcion AS bodega_nombre, k.producto_id, mi.descripcion, COALESCE(mi.categoria, '(sin laboratorio)') AS laboratorio,
            COALESCE(k.cant, 0) AS cant, COALESCE(k.valor, 0) AS valor, k.primer_mes, COALESCE(k.inventario, 0) AS inventario, k.iv, COALESCE(k.adu, 0) AS adu,
            k.zona, k.pct_buffer, k.flujo_neto, k.sugerido,
            (SELECT ci.costo::float8 FROM ddmrp.costo_item ci WHERE ci.producto_id = k.producto_id) AS costo
-    FROM k LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = k.producto_id LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = k.bodega_id
+    FROM k LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = k.producto_id LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = k.bodega_id AND mb.empresa = k.empresa
     WHERE {' AND '.join(cond)}"""
     return [dict(r) for r in c.execute(text(sql), p).mappings()]
 
@@ -99,7 +98,7 @@ def _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, 
     items = cl.agregar(filas, nivel); cl.calcular(items, dias); cl.clasificar(items, criterio, corte_a, corte_b, nuevo, cortes)
     if filas_g is not None:       # clase de cada item contra TODO el universo que el usuario puede ver (sin los filtros de pantalla)
         glob = cl.agregar(filas_g, nivel); cl.calcular(glob, dias); cl.clasificar(glob, criterio, corte_a, corte_b, nuevo, cortes)
-        clave = (lambda x: (x["bodega_id"], x["producto_id"])) if nivel == "tienda_item" else (lambda x: x["producto_id"])
+        clave = (lambda x: (x["empresa"], x["bodega_id"], x["producto_id"])) if nivel == "tienda_item" else (lambda x: x["producto_id"])
         g = {clave(x): x["clase"] for x in glob}
         for it in items:
             it["clase_global"] = g.get(clave(it))
@@ -130,7 +129,7 @@ def clasificar(nivel: str = "item", criterio: str = "margen", meses: int = 12, c
 
 COLS = [{"t": "Puesto", "k": "puesto", "f": "int", "w": 8}, {"t": "Clase", "k": "clase", "w": 8}, {"t": "ABC", "k": "abc", "w": 6}, {"t": "XYZ", "k": "xyz", "w": 6},
         {"t": "Clase global", "k": "clase_global", "w": 11}, {"t": "% acumulado", "k": "pct_acum", "f": "dec1"},
-        {"t": "Tienda", "k": "bodega_id", "w": 9}, {"t": "Nombre tienda", "k": "bodega_nombre", "w": 24},
+        {"t": "Empresa", "k": "empresa", "w": 8}, {"t": "Tienda", "k": "bodega_id", "w": 9}, {"t": "Nombre tienda", "k": "bodega_nombre", "w": 24},
         {"t": "Item", "k": "producto_id", "w": 11}, {"t": "Descripcion", "k": "descripcion", "w": 44}, {"t": "Laboratorio", "k": "laboratorio", "w": 14},
         {"t": "Unidades vendidas", "k": "cant", "f": "int"}, {"t": "Venta neta $", "k": "valor", "f": "cop"}, {"t": "Costo de lo vendido $", "k": "costo_venta", "f": "cop"},
         {"t": "Margen $", "k": "margen", "f": "cop"}, {"t": "Margen %", "k": "margen_pct", "f": "dec1"}, {"t": "Costo unitario", "k": "costo", "f": "cop"},
@@ -164,7 +163,7 @@ def exportar(nivel: str = "item", criterio: str = "margen", meses: int = 12, cor
     m = cl.matriz(items)
     vis = _filtrar_salida(items, abc, xyz)
     vis.sort(key=lambda i: (cl.ORDEN_ABC.index(i["abc"]), i["puesto"] or 10**9, i["producto_id"]))
-    cols = [c for c in COLS if nivel == "tienda_item" or c["k"] not in ("bodega_id", "bodega_nombre")]
+    cols = [c for c in COLS if nivel == "tienda_item" or c["k"] not in ("empresa", "bodega_id", "bodega_nombre")]
     wb = excel.libro()
     # hoja resumen: una fila por celda de la matriz
     res_cols = [{"t": "ABC", "k": "abc", "w": 8}, {"t": "XYZ", "k": "xyz", "w": 8}, {"t": "Items", "k": "n", "f": "int"}, {"t": "Venta neta $", "k": "venta", "f": "cop"},
@@ -184,12 +183,12 @@ def exportar(nivel: str = "item", criterio: str = "margen", meses: int = 12, cor
 
 
 def datos_clase(user, empresa=None, bodegas=None, labs=None, crit=None, q=None, meses: int = 12) -> dict:
-    """{(bodega, producto): {clase, ranking, prom_venta, prom_unid}} por tienda x item, con los mismos filtros de una pantalla (mapa de calor).
+    """{(empresa, bodega, producto): {clase, ranking, prom_venta, prom_unid}} por tienda x item, con los mismos filtros de una pantalla (mapa de calor).
     Si las ventas aun no traen valor en pesos usa el consumo a costo (solo necesita unidades y costo)."""
     meses = min(max(meses, 1), 12)
     items, meta = _calcular(user, "tienda_item", "margen", meses, 80, 95, empresa, bodegas, labs, crit, q, con_global=False)
     if meta["sin_valor"]:
         items, meta = _calcular(user, "tienda_item", "costo", meses, 80, 95, empresa, bodegas, labs, crit, q, con_global=False)
     m = max(meta["dias"] / 30.4375, 1.0)
-    return {(i["bodega_id"], i["producto_id"]): {"clase": i["clase"], "ranking": i["puesto"], "prom_venta": i["valor"] / m, "prom_unid": i["cant"] / m}
+    return {(i["empresa"], i["bodega_id"], i["producto_id"]): {"clase": i["clase"], "ranking": i["puesto"], "prom_venta": i["valor"] / m, "prom_unid": i["cant"] / m}
             for i in items}

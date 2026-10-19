@@ -279,11 +279,11 @@ export default function Config() {
           <Typography variant="body2" sx={{ fontWeight: 600 }}>Filtrar</Typography>
           {def.filtros.empresa && <TextField select size="small" label="Empresa" value={empresa} onChange={e => setEmpresa(e.target.value)} sx={{ width: 150 }}>
             <MenuItem value="05">05 · Funat</MenuItem><MenuItem value="21">21 · Stores</MenuItem></TextField>}
-          {def.filtros.empresa_opc && <TextField select size="small" label="Empresa" value={f.emp} onChange={e => setF({ emp: e.target.value, tienda: f.tienda.filter(b => !e.target.value || opc.tiendas.find(t => t.bodega_id === b)?.empresa === e.target.value) })}
+          {def.filtros.empresa_opc && <TextField select size="small" label="Empresa" value={f.emp} onChange={e => setF({ emp: e.target.value, tienda: f.tienda.filter(b => !e.target.value || (opc.tiendas.find(t => t.bodega_id === b)?.empresa ?? '').split(',').includes(e.target.value)) })}
             sx={{ width: 150 }} slotProps={{ select: { displayEmpty: true }, inputLabel: { shrink: true } }}>
             <MenuItem value="">Todas</MenuItem><MenuItem value="05">05 · Funat</MenuItem><MenuItem value="21">21 · Stores</MenuItem></TextField>}
           {def.filtros.tienda && <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 260, flex: '1 1 260px', maxWidth: 460 }} value={f.tienda}
-            options={opc.tiendas.filter(t => !def.filtros.empresa_opc || !f.emp || t.empresa === f.emp).map(t => t.bodega_id)}
+            options={opc.tiendas.filter(t => !def.filtros.empresa_opc || !f.emp || (t.empresa ?? '').split(',').includes(f.emp)).map(t => t.bodega_id)}
             getOptionLabel={(id: string) => { const t = opc.tiendas.find(x => x.bodega_id === id); return t?.nombre ? `${id} · ${t.nombre}` : id }}
             onChange={(_, v) => setF({ tienda: v })} renderInput={p => <TextField {...p} label="Tienda(s)" />} />}
           <TextField size="small" label={def.filtros.item ? 'Item o descripción' : 'Buscar'} value={f.texto} onChange={e => setF({ texto: e.target.value })} sx={{ width: 200 }} />

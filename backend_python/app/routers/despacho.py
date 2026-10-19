@@ -18,14 +18,15 @@ ACTIVO = solo_activos("s")   # items inactivos o bloqueados en Siesa no se sugie
 
 
 @router.get("/dias")
-def dias(user=Depends(requiere("ver_despacho"))):
-    """DIA de abastecimiento de cada tienda (maestro dias-bodega) y todas las bodegas, para armar la corrida."""
+def dias(empresa: str | None = None, user=Depends(requiere("ver_despacho"))):
+    """DIA de abastecimiento de cada tienda (maestro dias-bodega) y todas las bodegas, para armar la corrida. Con `empresa`, solo las de esa
+    empresa (un mismo codigo de bodega puede existir en las dos)."""
     with pg.connect() as c:
         por_dia: dict[int, list[str]] = {}
-        for dia, b in c.execute(text("SELECT dia, bodega_id FROM ddmrp.bodega_dia ORDER BY dia, bodega_id")).all():
+        for dia, b in c.execute(text("SELECT dia, bodega_id FROM ddmrp.bodega_dia WHERE (CAST(:e AS text) IS NULL OR empresa = :e) ORDER BY dia, bodega_id"), {"e": empresa}).all():
             por_dia.setdefault(dia, []).append(b)
-        todas = [r[0] for r in c.execute(text("SELECT bodega_id FROM ddmrp.abast_bitacora ORDER BY bodega_id")).all()]
-        emp = {b: e for b, e in c.execute(text("SELECT bodega_id, empresa FROM ddmrp.abast_bitacora")).all()}
+        todas = [r[0] for r in c.execute(text("SELECT bodega_id FROM ddmrp.abast_bitacora WHERE (CAST(:e AS text) IS NULL OR empresa = :e) ORDER BY bodega_id"), {"e": empresa}).all()]
+        emp = {b: e for b, e in c.execute(text("SELECT bodega_id, empresa FROM ddmrp.abast_bitacora WHERE (CAST(:e AS text) IS NULL OR empresa = :e)"), {"e": empresa}).all()}
     return {"dias": [{"dia": k, "bodegas": v} for k, v in sorted(por_dia.items())], "bodegas": todas, "empresa_de": emp}
 
 
@@ -84,6 +85,7 @@ class Aprobacion(BaseModel):
     ejecucion_id: int
     producto_id: str
     bodega_id: str
+    empresa: str | None = None           # una misma tienda puede existir en las dos empresas: el front la manda siempre
     cantidad_aprobada: float
     aprobar: bool = True
 
@@ -98,9 +100,9 @@ def aprobar(items: list[Aprobacion], user=Depends(requiere("aprobar_despacho")))
             c.execute(text("""UPDATE ddmrp.sugerencias_envio SET cantidad_aprobada=:q,
                               estado = CASE WHEN :ap THEN 'APROBADA'::ddmrp.estado_sugerencia ELSE estado END,
                               aprobado_por=:u, aprobado_en=now()
-                              WHERE ejecucion_id=:e AND producto_id=:p AND bodega_id=:b"""),
+                              WHERE ejecucion_id=:e AND producto_id=:p AND bodega_id=:b AND (CAST(:em AS text) IS NULL OR empresa = :em)"""),
                       {"q": it.cantidad_aprobada, "ap": it.aprobar, "u": user["nombre"],
-                       "e": it.ejecucion_id, "p": it.producto_id, "b": it.bodega_id})
+                       "e": it.ejecucion_id, "p": it.producto_id, "b": it.bodega_id, "em": it.empresa})
     bitacora.evento("aprobacion", bitacora.usuario_de(user),
                     f"{'Aprobó' if items and items[0].aprobar else 'Guardó cantidades de'} {len(items)} filas", {"filas": len(items), "ejecucion_id": items[0].ejecucion_id if items else None})
     return {"ok": True, "n": len(items)}
@@ -110,6 +112,7 @@ class Clave(BaseModel):
     ejecucion_id: int
     producto_id: str
     bodega_id: str
+    empresa: str | None = None
 
 
 @router.post("/desaprobar")
@@ -122,13 +125,14 @@ def desaprobar(items: list[Clave], user=Depends(requiere("aprobar_despacho"))):
             exigir(user, it.bodega_id, cat, "aprobacion")
             n += c.execute(text("""UPDATE ddmrp.sugerencias_envio SET estado='PENDIENTE'::ddmrp.estado_sugerencia, cantidad_aprobada=NULL,
                                    aprobado_por=:u, aprobado_en=now()
-                                   WHERE ejecucion_id=:e AND producto_id=:p AND bodega_id=:b AND estado='APROBADA'"""),
-                           {"u": user["nombre"], "e": it.ejecucion_id, "p": it.producto_id, "b": it.bodega_id}).rowcount
+                                   WHERE ejecucion_id=:e AND producto_id=:p AND bodega_id=:b AND estado='APROBADA'
+                                     AND (CAST(:em AS text) IS NULL OR empresa = :em)"""),
+                           {"u": user["nombre"], "e": it.ejecucion_id, "p": it.producto_id, "b": it.bodega_id, "em": it.empresa}).rowcount
     bitacora.evento("aprobacion", bitacora.usuario_de(user), f"Devolvió a pendiente {n} filas", {"devueltas": n, "omitidas": len(items) - n})
     return {"ok": True, "devueltas": n, "omitidas": len(items) - n}
 
 
-def tiendas_bajo_minimo(c, eid: int, bodegas: list[str] | None = None) -> tuple[dict[str, float], float, bool]:
+def tiendas_bajo_minimo(c, eid: int, bodegas: list[str] | None = None, empresa: str | None = None) -> tuple[dict[str, float], float, bool]:
     """Tiendas cuyo despacho APROBADO vale menos que el minimo (regla valor_minimo_envio), a costo promedio.
     Devuelve ({tienda: valor}, minimo, hay_costos). Sin costos cargados o con minimo 0 la regla no se aplica."""
     minimo = float(c.execute(text("SELECT valor FROM ddmrp.parametro WHERE clave = 'valor_minimo_envio'")).scalar() or 0)
@@ -138,8 +142,8 @@ def tiendas_bajo_minimo(c, eid: int, bodegas: list[str] | None = None) -> tuple[
     rows = c.execute(text("""SELECT s.bodega_id, COALESCE(SUM(COALESCE(s.cantidad_aprobada, s.cantidad_sugerida) * COALESCE(ci.costo, 0)), 0)::float8
                              FROM ddmrp.sugerencias_envio s LEFT JOIN ddmrp.costo_item ci ON ci.producto_id = s.producto_id
                              WHERE s.ejecucion_id = :e AND s.estado = 'APROBADA' AND COALESCE(s.cantidad_aprobada, s.cantidad_sugerida) >= 0.5
-                               AND (CAST(:bs AS text[]) IS NULL OR s.bodega_id = ANY(CAST(:bs AS text[])))
-                             GROUP BY s.bodega_id"""), {"e": eid, "bs": bodegas or None}).all()
+                               AND (CAST(:bs AS text[]) IS NULL OR s.bodega_id = ANY(CAST(:bs AS text[]))) AND (CAST(:em AS text) IS NULL OR s.empresa = :em)
+                             GROUP BY s.bodega_id"""), {"e": eid, "bs": bodegas or None, "em": empresa}).all()
     return {b: v for b, v in rows if v < minimo}, minimo, True
 
 
@@ -177,7 +181,7 @@ def marcar_enviadas(req: MarcarReq, user=Depends(requiere("aprobar_despacho", "d
             raise HTTPException(404, "No hay sugerencias aprobadas para marcar como enviadas")
         for b in tiendas:
             exigir(user, b, None, "aprobacion")
-        bajo, minimo, _ = tiendas_bajo_minimo(c, eid, req.bodegas)
+        bajo, minimo, _ = tiendas_bajo_minimo(c, eid, req.bodegas, req.empresa)
         ok = [b for b in tiendas if b not in bajo]
         consumir_derrame(c, eid, req.empresa, ok)
         n = c.execute(text("""UPDATE ddmrp.sugerencias_envio SET estado = 'ENVIADA'::ddmrp.estado_sugerencia
@@ -216,7 +220,7 @@ def exportar_plano(req: PlanoReq, user=Depends(requiere("descargar_planos"))):
                          {"e": eid, "bs": req.bodegas or None, "emp": req.empresa}).all()
         if not rows:
             raise HTTPException(404, "No hay sugerencias aprobadas para exportar")
-        bajo, minimo, _ = tiendas_bajo_minimo(c, eid, req.bodegas)
+        bajo, minimo, _ = tiendas_bajo_minimo(c, eid, req.bodegas, req.empresa)
         if bajo:   # no se dejan enviar: quedan aprobadas y no entran al plano
             rows = [r for r in rows if r[0] not in bajo]
             if not rows:

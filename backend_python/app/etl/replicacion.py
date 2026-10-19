@@ -238,7 +238,7 @@ def diagnostico_inventario(bodega: str, producto: str) -> dict:
     with pg.connect() as c:
         out["local"]["en_bitacora"] = [dict(r) for r in c.execute(text("SELECT empresa, bodega_id FROM ddmrp.abast_bitacora WHERE bodega_id = :b"), {"b": bodega}).mappings()]
         out["local"]["inventario_actual"] = [{k: (float(v) if hasattr(v, "as_tuple") else str(v) if k == "fecha_corte" else v) for k, v in r.items()}
-                                              for r in c.execute(text("SELECT producto_id, bodega_id, fecha_corte, disponible FROM ddmrp.inventario_actual WHERE bodega_id = :b AND producto_id = :p"), {"b": bodega, "p": producto}).mappings()]
+                                              for r in c.execute(text("SELECT empresa, producto_id, bodega_id, fecha_corte, disponible FROM ddmrp.inventario_actual WHERE bodega_id = :b AND producto_id = :p"), {"b": bodega, "p": producto}).mappings()]
         out["local"]["costo"] = [float(r[0]) for r in c.execute(text("SELECT costo FROM ddmrp.costo_item WHERE producto_id = :p"), {"p": producto}).all()]
         out["local"]["resta_comprometido"] = bool((c.execute(text("SELECT valor FROM ddmrp.parametro WHERE clave='inv_tiendas_resta_comprometido'")).scalar() or 0))
         out["local"]["resta_sin_acumular"] = bool((c.execute(text("SELECT valor FROM ddmrp.parametro WHERE clave='inv_tiendas_resta_sin_acumular'")).scalar() or 0))
@@ -307,11 +307,11 @@ def sincronizar_bodegas(cur) -> int:
                 continue
             for cod, nombre in filas:
                 cur.execute("INSERT INTO ddmrp.maestro_bodega (bodega_id, empresa, descripcion) VALUES (%s, %s, %s) "
-                            "ON CONFLICT (bodega_id) DO UPDATE SET descripcion = EXCLUDED.descripcion, empresa = EXCLUDED.empresa",
+                            "ON CONFLICT (empresa, bodega_id) DO UPDATE SET descripcion = EXCLUDED.descripcion",
                             (cod, empresa, nombre))
                 n += 1
     cur.execute("INSERT INTO ddmrp.maestro_bodega (bodega_id, empresa) SELECT bodega_id, empresa FROM ddmrp.abast_bitacora "
-                "ON CONFLICT (bodega_id) DO NOTHING")
+                "ON CONFLICT (empresa, bodega_id) DO NOTHING")
     return n
 
 
@@ -551,7 +551,7 @@ def _sincronizar_ventas() -> dict:
                     por_empresa.setdefault(emp, []).append(b)
                 if not por_empresa:
                     raise RuntimeError("abast_bitacora esta vacia: cargala en Maestros antes de traer las ventas")
-                cur.execute("CREATE TEMP TABLE stg_vm (mes char(6), bodega_id text, producto_id text, cantidad numeric, valor numeric) ON COMMIT DROP")
+                cur.execute("CREATE TEMP TABLE stg_vm (empresa text, mes char(6), bodega_id text, producto_id text, cantidad numeric, valor numeric) ON COMMIT DROP")
                 leidas: list[str] = []
                 for empresa, db in (("05", settings.siesa_db), ("21", settings.siesa_db_s)):
                     bodegas = por_empresa.get(empresa, [])
@@ -562,20 +562,21 @@ def _sincronizar_ventas() -> dict:
                     if aviso:
                         res[f"aviso_estado_{empresa}"] = aviso
                     progreso.avance(f"Leyendo ventas de {db} desde {desde:%Y-%m} ({len(bodegas)} bodegas)… puede tardar varios minutos")
-                    with cur.copy("COPY stg_vm (mes, bodega_id, producto_id, cantidad, valor) FROM STDIN") as cp:
+                    with cur.copy("COPY stg_vm (empresa, mes, bodega_id, producto_id, cantidad, valor) FROM STDIN") as cp:
                         for r in _stream(eng, _con_estado(vsql, filtrar), {"cia": settings.siesa_cia, "bodegas": bodegas, "desde": desde}, expanding="bodegas"):
-                            cp.write_row(r); n += 1
+                            cp.write_row((empresa,) + tuple(r)); n += 1
                             if n % 50000 == 0:
                                 progreso.avance(f"Leyendo ventas de {db}: {n:,} filas…")
                     res[f"ventas_{empresa}"] = n
-                    leidas += bodegas
+                    leidas += [(empresa, b) for b in bodegas]
                 if not leidas:
                     raise RuntimeError("No hay bodegas para leer (revisa SIESA_DB / SIESA_DB_S y la bitacora)")
                 progreso.avance("Guardando las ventas en la base…")
-                cur.execute("DELETE FROM ddmrp.ventas_mensual WHERE mes >= %s AND bodega_id = ANY(%s)", (f"{desde:%Y%m}", leidas))
-                cur.execute("""INSERT INTO ddmrp.ventas_mensual (mes, bodega_id, producto_id, cantidad, valor)
-                               SELECT mes, bodega_id, producto_id, SUM(cantidad), COALESCE(SUM(valor), 0) FROM stg_vm
-                               WHERE mes >= %s GROUP BY 1, 2, 3""", (f"{desde:%Y%m}",))
+                cur.execute("DELETE FROM ddmrp.ventas_mensual v WHERE v.mes >= %s AND (v.empresa || '|' || v.bodega_id) = ANY(%s)",
+                            (f"{desde:%Y%m}", [f"{e}|{b}" for e, b in leidas]))
+                cur.execute("""INSERT INTO ddmrp.ventas_mensual (empresa, mes, bodega_id, producto_id, cantidad, valor)
+                               SELECT empresa, mes, bodega_id, producto_id, SUM(cantidad), COALESCE(SUM(valor), 0) FROM stg_vm
+                               WHERE mes >= %s GROUP BY 1, 2, 3, 4""", (f"{desde:%Y%m}",))
                 res["meses_desde"] = f"{desde:%Y%m}"
             raw.commit()
         except Exception:
@@ -632,14 +633,14 @@ def _correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
                 log.info("ETL empresa %s (%s): %s bodegas", empresa, db, len(bodegas))
                 progreso.avance(f"Leyendo inventario de Siesa ({db}, {len(bodegas)} bodegas)…")
                 res[f"inventario_{empresa}"] = _volcar(
-                    cur, _stream(eng, _con_estado(SQL_INVENTARIO, filtrar), prm_inv, expanding="bodegas"), "ddmrp.inventario_actual",
-                    ["producto_id", "bodega_id", "fecha_corte", "disponible"], reemplazar=False)
+                    cur, ((empresa,) + r for r in _stream(eng, _con_estado(SQL_INVENTARIO, filtrar), prm_inv, expanding="bodegas")), "ddmrp.inventario_actual",
+                    ["empresa", "producto_id", "bodega_id", "fecha_corte", "disponible"], reemplazar=False)
                 progreso.avance(f"Leyendo costos promedio de Siesa ({db})…")
                 res[f"costos_{empresa}"] = _costos(cur, eng, bodegas, pisar=False, filtrar=filtrar)   # respaldo: el costo del CEDI manda (se lee al final)
                 progreso.avance(f"Leyendo traslados en tránsito de Siesa ({db})…")
                 res[f"transitos_{empresa}"] = _volcar(
-                    cur, _stream(eng, _con_estado(SQL_TRANSITOS, filtrar), prm, expanding="bodegas"), "ddmrp.transitos",
-                    ["producto_id", "bodega_id", "documento", "cantidad"], reemplazar=False)
+                    cur, ((empresa,) + r for r in _stream(eng, _con_estado(SQL_TRANSITOS, filtrar), prm, expanding="bodegas")), "ddmrp.transitos",
+                    ["empresa", "producto_id", "bodega_id", "documento", "cantidad"], reemplazar=False)
                 progreso.avance(f"Leyendo items, criterios y centros de operación ({db})…")
                 try:  # descripciones, laboratorio, criterios y centro de operacion: utiles pero no criticos
                     res[f"items_{empresa}"] = _items_de_siesa(cur, eng, primera=(empresa == "05"), empresa=empresa)

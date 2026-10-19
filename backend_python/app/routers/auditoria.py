@@ -75,14 +75,14 @@ def excel(bodegas: str | None = None, labs: str | None = None, q: str | None = N
             meses.append(f"{y:04d}{m:02d}"); m -= 1
             if m == 0: y, m = y - 1, 12
         meses.reverse()
-        idx = {(f["bodega_id"], f["producto_id"]): f for f in filas}
+        idx = {(f["empresa"], f["bodega_id"], f["producto_id"]): f for f in filas}
         for f in filas: f["ventas"] = [0.0] * n
         if filas:
-            for b, pid, mes, cant in c.execute(text("""
-                SELECT v.bodega_id, v.producto_id, v.mes, sum(v.cantidad)::float8
-                FROM ddmrp.ventas_mensual v JOIN unnest(CAST(:b AS text[]), CAST(:p AS text[])) k(b, p) ON k.b = v.bodega_id AND k.p = v.producto_id
-                WHERE v.mes = ANY(:m) GROUP BY 1, 2, 3"""), {"b": [f["bodega_id"] for f in filas], "p": [f["producto_id"] for f in filas], "m": meses}):
-                idx[(b, pid)]["ventas"][meses.index(mes)] = cant
+            for em, b, pid, mes, cant in c.execute(text("""
+                SELECT v.empresa, v.bodega_id, v.producto_id, v.mes, sum(v.cantidad)::float8
+                FROM ddmrp.ventas_mensual v JOIN unnest(CAST(:e AS text[]), CAST(:b AS text[]), CAST(:p AS text[])) k(e, b, p) ON k.e = v.empresa AND k.b = v.bodega_id AND k.p = v.producto_id
+                WHERE v.mes = ANY(:m) GROUP BY 1, 2, 3, 4"""), {"e": [f["empresa"] for f in filas], "b": [f["bodega_id"] for f in filas], "p": [f["producto_id"] for f in filas], "m": meses}):
+                idx[(em, b, pid)]["ventas"][meses.index(mes)] = cant
     data = construir(filas, meses, prm, factores, {"id": ej["id"], "fecha": fc.isoformat()}, truncado=total if total > len(filas) else 0)
     evento("auditoria", usuario_de(user), f"Excel de auditoría: {len(filas):,} filas de la corrida #{ej['id']}", {"filas": len(filas), "total": total, "ejecucion_id": ej["id"]})
     h = {"Content-Disposition": f'attachment; filename="Auditoria_DDMRP_{fc:%Y%m%d}.xlsx"', "X-Filas": str(len(filas)), "X-Filas-Total": str(total)}

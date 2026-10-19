@@ -120,7 +120,7 @@ def aplicar_a_ejecucion(c, eid: int) -> dict:
                            "AND NOT EXISTS (SELECT 1 FROM ddmrp.maestro_item mi JOIN ddmrp.laboratorio_sin_envio ls ON ls.laboratorio = mi.categoria "
                            "                WHERE mi.producto_id = s.producto_id) "
                            f"AND {solo_activos('s')} "
-                           "AND (cardinality(CAST(:d AS int[])) = 0 OR s.bodega_id IN (SELECT bodega_id FROM ddmrp.bodega_dia WHERE dia = ANY(CAST(:d AS int[]))))"),
+                           "AND (cardinality(CAST(:d AS int[])) = 0 OR (s.empresa, s.bodega_id) IN (SELECT empresa, bodega_id FROM ddmrp.bodega_dia WHERE dia = ANY(CAST(:d AS int[]))))"),
                      {"e": eid, "d": dias, "em": d["empresas"]}).all()
     por_item: dict = {}
     for emp, prod, bod, q, ud, pct, adu in filas:
@@ -131,7 +131,7 @@ def aplicar_a_ejecucion(c, eid: int) -> dict:
         asign = repartir(grupo, util, regla)
         for bod, q, *_ in grupo:
             if asign[bod] + EPS < q:
-                cambios.append((eid, prod, bod, asign[bod]))
+                cambios.append((eid, emp, prod, bod, asign[bod]))
     # stock del CEDI de TODAS las filas de las empresas con inventario (tambien las de tiendas fuera del alcance o sin competir)
     c.execute(text("""UPDATE ddmrp.sugerencias_envio s
                       SET stock_cedi = GREATEST(0, FLOOR(COALESCE((SELECT ic.disponible FROM ddmrp.inventario_cedi ic
@@ -139,10 +139,10 @@ def aplicar_a_ejecucion(c, eid: int) -> dict:
                                                          * (1 - COALESCE((SELECT r.porcentaje FROM ddmrp.reserva_cedi r WHERE r.producto_id = s.producto_id), 0)) + 1e-9))
                       WHERE s.ejecucion_id = :e AND s.empresa = ANY(CAST(:em AS text[]))"""), {"e": eid, "em": d["empresas"]})
     if cambios:
-        c.execute(text("CREATE TEMP TABLE IF NOT EXISTS stg_asig (e bigint, p text, b text, q numeric) ON COMMIT DROP"))
+        c.execute(text("CREATE TEMP TABLE IF NOT EXISTS stg_asig (e bigint, em text, p text, b text, q numeric) ON COMMIT DROP"))
         c.execute(text("TRUNCATE stg_asig"))
-        c.execute(text("INSERT INTO stg_asig VALUES (:e, :p, :b, :q)"), [{"e": a, "p": b, "b": x, "q": q} for a, b, x, q in cambios])
+        c.execute(text("INSERT INTO stg_asig VALUES (:e, :em, :p, :b, :q)"), [{"e": a, "em": em, "p": b, "b": x, "q": q} for a, em, b, x, q in cambios])
         c.execute(text("UPDATE ddmrp.sugerencias_envio s SET cantidad_sugerida = t.q FROM stg_asig t "
-                       "WHERE s.ejecucion_id = t.e AND s.producto_id = t.p AND s.bodega_id = t.b"))
-    return {"limitadas": len(cambios), "items_sin_alcanzar": len({x[1] for x in cambios}), "regla": regla, "aplicado": True,
-            "dias": dias, "tiendas_en_reparto": len({f[2] for f in filas}), "empresas": d["empresas"]}
+                       "WHERE s.ejecucion_id = t.e AND s.empresa = t.em AND s.producto_id = t.p AND s.bodega_id = t.b"))
+    return {"limitadas": len(cambios), "items_sin_alcanzar": len({(x[1], x[2]) for x in cambios}), "regla": regla, "aplicado": True,
+            "dias": dias, "tiendas_en_reparto": len({(f[0], f[2]) for f in filas}), "empresas": d["empresas"]}
