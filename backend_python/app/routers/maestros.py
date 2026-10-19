@@ -23,9 +23,12 @@ ANCHO = {"producto_id": 6, "empresa": 2}
 
 MAESTROS = {
     "bitacora": dict(
-        label="Bitacora: lead time y frecuencia por bodega", tabla="ddmrp.abast_bitacora",
-        llave=["empresa", "bodega_id"], editable={"frecuencia": "num", "leadtime": "num"},
-        bodega="bodega_id", producto=None),
+        label="Bitacora: tiendas que se abastecen (lead time, frecuencia, CEDI y centro de operacion)", tabla="ddmrp.abast_bitacora",
+        llave=["empresa", "bodega_id"], editable={"frecuencia": "num", "leadtime": "num", "cedi": "txt", "id_co": "txt"},
+        bodega="bodega_id", producto=None, valida_cedi=True),
+    "cedis": dict(
+        label="CEDIs: bodegas desde donde se abastece a las tiendas", tabla="ddmrp.maestro_cedi",
+        llave=["empresa", "bodega_id"], editable={"descripcion": "txt"}, bodega=None, producto=None, global_=True, empresa_obligatoria=True),
     "control-referencias": dict(
         label="Cotas maxima / minima por bodega y referencia", tabla="ddmrp.abast_control_referencias",
         llave=["empresa", "bodega_id", "producto_id"], editable={"cota_maxima": "num", "cota_minima": "num"},
@@ -70,9 +73,6 @@ MAESTROS = {
     "items-rec": dict(
         label="Items REC: cada item REC y su original (el SKU sin el primer digito)", tabla="ddmrp.item_rec",
         llave=["empresa", "rec_id"], editable={"original_id": "txt"}, bodega=None, producto=None, global_=True),
-    "centro-operacion": dict(
-        label="Centro de operacion por bodega (archivo plano)", tabla="ddmrp.bodega_centro_operacion",
-        llave=["empresa", "bodega_id"], editable={"id_co": "txt"}, bodega="bodega_id", producto=None),
     "reposicion-laboratorio": dict(
         label="Hasta donde se repone, por laboratorio (1 TOG aj · 2 TOY aj · 3 TOY aj + mitad de la zona verde)", tabla="ddmrp.reposicion_laboratorio",
         llave=["laboratorio"], editable={"regla": "int"}, bodega=None, producto=None, global_=True),
@@ -97,7 +97,8 @@ SIN_VACIAR = {"items", "factores", "parametros"}   # se llenan desde Siesa o son
 OPS = {"eq": "=", "ne": "<>", "gt": ">", "lt": "<", "ge": ">=", "le": "<="}
 
 AYUDA = {
-    "bitacora": "Lead time (días que tarda el producto en llegar a la tienda) y frecuencia (cada cuántos días se abastece) de cada tienda. "
+    "bitacora": "Las tiendas que se abastecen, solo las que tú metas aquí (nada se agrega solo). Por tienda: lead time (días que tarda el producto en llegar a la tienda), frecuencia (cada cuántos días se abastece), "
+                "CEDI que la abastece (código de bodega del maestro CEDIs, ej. PT001) y centro de operación para el archivo plano de Siesa (si lo dejas vacío, el ETL lo completa desde Siesa y si no hay, se deduce con la regla del ejemplo). "
                 "El lead time × la venta diaria da la zona amarilla y la frecuencia × la venta diaria da la verde; además el lead time define el factor de la zona roja (maestro Factores). "
                 "Una tienda que no esté aquí no entra al cálculo del motor.",
     "control-referencias": "Cota máxima y mínima por tienda y referencia, como fracción o % (20% = 0.2). Ajustan los topes: TOY ajustado = TOG × cota máx + TOR + ZA, "
@@ -119,7 +120,8 @@ AYUDA = {
     "items": "Descripción y laboratorio de cada item; los demás criterios vienen de Siesa con 'Traer items'. El laboratorio define los permisos por categoría y los filtros del Control.",
     "items-rec": "Items cuya descripción empieza por REC (ej. 2190340 REC CALENDULA...): cuentan como su original (190340, el SKU sin el primer dígito). Su inventario, tránsito y ventas se suman al original y el REC sale del cálculo. "
                  "El ETL detecta los pares solo (origen auto) cuando el original existe en Siesa; aquí puedes agregar o corregir uno a mano (origen manual, no lo pisa el ETL). Se aplica con la regla 'Items REC se suman a su original'. Para despachar, el stock debe estar físicamente bajo el SKU original en Siesa.",
-    "centro-operacion": "Centro de operación de cada tienda para el archivo plano de Siesa. Si falta, se deduce con la regla observada en el ejemplo.",
+    "cedis": "CEDIs (bodegas desde donde se despacha a las tiendas), uno por empresa y código de bodega, ej. empresa 05 PT001. La bitácora dice qué CEDI abastece a cada tienda. "
+             "Hoy el motor reparte el inventario de un solo CEDI por empresa (el primero de esta lista); la columna CEDI de la bitácora deja listo el modelo para cuando haya más de uno.",
     "demanda-calificada": "Pedidos abiertos o picos conocidos por tienda y referencia. Se restan del flujo neto cuando la regla 'Restar demanda calificada' está en Sí.",
     "pronostico": "Venta mensual esperada (unidades/mes) por tienda y referencia. Sirve sobre todo para tiendas, referencias o laboratorios NUEVOS: si la combinacion tiene menos meses de venta que la regla 'Pronostico directo en casos nuevos' (por defecto 3), el motor usa este valor tal cual, aunque no haya historial. Con mas historial el pronostico solo ajusta: el motor lo lleva entre 1 y 2 veces el ADU de referencia (nunca baja el historial). Para campanas o promociones usa Promocion y las cotas.",
     "ventas-mensual": "Unidades vendidas por mes, tienda y referencia: base de la venta diaria (ADU) y de la variabilidad. Se traen de Siesa con 'Traer ventas por mes' o se cargan por Excel.",
@@ -446,6 +448,11 @@ def _preparar(d: dict, filas: list[dict], omitir: bool = False, malas_out: list 
     es_nxp = lambda v: isinstance(v, str) and v.strip().lower() in NXP
     por_cod, por_nom, empresas = _mapa_bodegas() if ("empresa" in d["llave"] or con_bodega) else ({}, {}, [])
     malas, out = [], []
+    cedis_ok: dict[str, set] = {}
+    if d.get("valida_cedi") and "cedi" in cols:
+        with pg.connect() as c:
+            for emp_c, bod_c in c.execute(text("SELECT empresa, bodega_id FROM ddmrp.maestro_cedi")).all():
+                cedis_ok.setdefault(bod_c.strip().upper(), set()).add(emp_c)
     for n, f in enumerate(filas, start=2):
         try:
             llave: dict[str, str] = {}
@@ -490,8 +497,16 @@ def _preparar(d: dict, filas: list[dict], omitir: bool = False, malas_out: list 
                     fila_base[c] = 0
                     continue
                 fila_base[c] = _valor_num(f.get(c), t) if t in ("num", "int") else (str(f[c]).strip() if f.get(c) not in (None, "") else None)
+                if c == "cedi" and fila_base[c]:
+                    fila_base[c] = fila_base[c].upper()
                 if d.get("fraccion") and fila_base[c] is not None and not 0 <= fila_base[c] <= 1:
                     raise ValueError(f"{f.get(c)!r} no es un porcentaje valido: escribe 20% (o 0.2)")
+            if d.get("valida_cedi") and fila_base.get("cedi"):
+                emp_c = fila_base.get("empresa")
+                if not any(not emp_c or e == emp_c for e in cedis_ok.get(fila_base["cedi"], ())):
+                    raise ValueError(f"el CEDI {fila_base['cedi']!r} no esta en el maestro CEDIs" + (f" para la empresa {emp_c}" if emp_c else "") + ": crealo primero ahi")
+            if d.get("empresa_obligatoria") and not fila_base.get("empresa"):
+                raise ValueError("falta la empresa (05 Funat, 21 Store)")
             if "empresa" in d["llave"] and not fila_base.get("empresa"):
                 if not empresas:
                     raise ValueError("falta la columna empresa (y aun no hay bodegas cargadas para deducirla)")
@@ -632,8 +647,8 @@ def bajar_excel(nombre: str, bodega_id: str | None = None, q: str | None = None,
                 col: str | None = None, op: str | None = None, val: str | None = None,
                 user=Depends(requiere("ver_maestros", "cargar_maestros"))):
     """Descarga lo que el usuario puede ver, con los mismos encabezados que acepta la carga (sirve de plantilla).
-    Maestros por tienda: la tienda va con su codigo y su nombre (la empresa se deduce) y, si el maestro es solo por
-    tienda (bitacora, centro de operacion), vienen todas las tiendas aunque aun no tengan datos."""
+    Maestros por tienda: la tienda va con su codigo y su nombre (la empresa se deduce). Solo trae las filas que ya estan en el maestro:
+    nada se agrega solo (para sumar una tienda a la bitacora se escribe o se pega)."""
     d = _def(nombre)
     bod = d.get("bodega")
     llave_xl = [k for k in d["llave"] if not (bod and k in ("empresa", bod))]
@@ -641,7 +656,6 @@ def bajar_excel(nombre: str, bodega_id: str | None = None, q: str | None = None,
     cols_t = [k for k in d["llave"] if k != "empresa"] if bod else d["llave"]
     sel = ", ".join(f"t.{c}" for c in cols_t + list(d["editable"]))
     join, w, p = "", "TRUE", {}
-    solo_tienda = bool(bod) and not llave_xl and not d.get("producto") and not col   # con filtro por columna se baja lo filtrado, no la plantilla
     wf, pf = _filtros_maestro(nombre, d, bodega_id, q, lab, empresa, mes, estado, col, op, val)   # los mismos filtros de la pantalla: se baja lo filtrado (sin tope de 20.000)
     if d.get("producto"):
         join = f"LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = t.{d['producto']}"
@@ -658,21 +672,9 @@ def bajar_excel(nombre: str, bodega_id: str | None = None, q: str | None = None,
         join += " LEFT JOIN ddmrp.costo_item ci ON ci.producto_id = t.producto_id"
         sel += ", ci.costo::float8 AS costo, " + "(SELECT CASE ix2.estado WHEN 1 THEN \'Activo\' WHEN 0 THEN \'Inactivo\' WHEN 2 THEN \'Bloqueado\' END FROM ddmrp.item_estado ix2 WHERE ix2.empresa = :emp AND ix2.producto_id = t.producto_id) AS estado"; cab = cab + ["costo", "estado"]
     with pg.connect() as c:
-        if solo_tienda:   # plantilla con todas las tiendas del maestro de bodegas
-            w2, p2 = filtro_sql_permisos(user, "mb.bodega_id", "'*'")
-            ed = "".join(f", t.{c}" for c in d["editable"])
-            if bodega_id:
-                w2 += " AND mb.bodega_id = ANY(:fb)"; p2["fb"] = [x.strip() for x in bodega_id.split(",") if x.strip()]
-            if q and q.strip():
-                w2 += " AND (mb.bodega_id ILIKE :q OR mb.descripcion ILIKE :q)"; p2["q"] = f"%{q.strip()}%"
-            if con_emp and empresa in ("05", "21"):
-                w2 += " AND mb.empresa = :emp"; p2["emp"] = empresa
-            filas = c.execute(text(f"SELECT mb.bodega_id, mb.descripcion{', mb.empresa' if con_emp else ''}{ed} FROM ddmrp.maestro_bodega mb "
-                                   f"LEFT JOIN {d['tabla']} t ON t.{bod} = mb.bodega_id{' AND t.empresa = mb.empresa' if con_emp else ''} WHERE {w2} ORDER BY mb.bodega_id"), p2).all()
-        else:
-            w, p = w + wf, {**p, **pf}
-            filas = c.execute(text(f"SELECT {sel} FROM {d['tabla']} t {join} WHERE {w} ORDER BY "
-                                   + ", ".join("t." + k for k in d["llave"]) + " LIMIT 1000000"), p).all()
+        w, p = w + wf, {**p, **pf}
+        filas = c.execute(text(f"SELECT {sel} FROM {d['tabla']} t {join} WHERE {w} ORDER BY "
+                               + ", ".join("t." + k for k in d["llave"]) + " LIMIT 1000000"), p).all()
     wb = Workbook(write_only=True)
     ws = wb.create_sheet("Datos")
     ws.append(cab)

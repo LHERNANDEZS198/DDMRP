@@ -46,7 +46,7 @@ flowchart LR
 ## Decisiones clave
 - **Rust como binario independiente** (no PyO3): aislamiento, despliegue simple y se puede correr/probar solo.
 - **Maestros propios de la app (sin FUNATLAB):** bitacora, cotas, unidad de despacho, vectorizacion, pronostico, promocion,
-  DIA por tienda, items, centro de operacion, demanda calificada, factores y parametros los alimenta el analista por pantalla
+  DIA por tienda, items, CEDIs, demanda calificada, factores y parametros los alimenta el analista por pantalla
   o por Excel (descargar lo que hay, modificar y cargar: crear nuevos, actualizar o reemplazar todo). El ETL no los toca.
 - **Reglas de pedido configurables** (pantalla “Reglas de pedido”, tabla `parametro`): cuando pedir, hasta donde, redondeo,
   vectorizacion, transito, demanda calificada. El motor las lee en cada corrida.

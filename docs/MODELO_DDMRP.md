@@ -45,7 +45,7 @@ Valores por defecto:
 `POST /api/despacho/exportar-plano` toma las sugerencias **aprobadas** (cantidad aprobada, o la sugerida si no se edito) y arma el mismo
 Excel que `docs/Abastecimiento día 4_15102026.xlsx`: hojas Inicial · Documentos · Movimientos · Final.
 - Un documento **RIT** por bodega destino (sale de `PT001`, solicitante `S688`, 1 dia de entrega), un movimiento por referencia (UND, motivo 01, un. negocio 12).
-- `f440_id_co` = centro de operacion de la bodega: tabla `bodega_centro_operacion` (sembrada con las 37 bodegas del ejemplo; el ETL la completa desde Siesa).
+- `f440_id_co` = centro de operacion de la bodega: columna `id_co` de la bitacora (`abast_bitacora`): se escribe por tienda en Maestros y el ETL solo completa la que falte desde Siesa. La bitacora tambien dice el CEDI que abastece a cada tienda (columna `cedi`, maestro `maestro_cedi`).
   Si falta, se deduce con la regla del ejemplo (3 digitos finales del codigo, o `000`) y la respuesta avisa en el encabezado `X-Bodegas-CO-Derivado`.
 - Nota del documento y consecutivo inicial se eligen al exportar. `marcar_enviadas` pasa las filas a estado ENVIADA.
 - Cada usuario solo puede exportar si tiene permiso de aprobacion en todas las bodegas incluidas.

@@ -7,7 +7,7 @@
    - inventario disponible por bodega/referencia          -> ddmrp.inventario_actual
    - traslados abiertos (t406, estado 0)                   -> ddmrp.transitos
    - descripcion de items (t120)                           -> ddmrp.maestro_item (no pisa categoria/linea)
-   - centro de operacion de cada bodega                    -> ddmrp.bodega_centro_operacion (no fatal)
+   - centro de operacion de cada bodega                    -> columna id_co de ddmrp.abast_bitacora, solo donde falte (no fatal)
    - ventas por mes (consulta en etl/sql/ventas_siesa.sql) -> ddmrp.ventas_mensual (solo la ventana de meses)
 
 Patron: leer el origen en chunks, COPY a tabla temporal y volcar a destino en UNA transaccion: si algo falla,
@@ -475,7 +475,9 @@ def _cedi_de_siesa(cur) -> dict:
     errores: dict[str, str] = {}
     avisos: dict[str, str] = {}
     solo = _solo_activos(cur)
-    for emp, db, bod in (("05", settings.siesa_db, settings.siesa_cedi_bodega), ("21", settings.siesa_db_s, settings.siesa_cedi_bodega_s)):
+    cur.execute("SELECT empresa, min(bodega_id) FROM ddmrp.maestro_cedi GROUP BY empresa")   # el CEDI de cada empresa sale del maestro de CEDIs
+    cedis = dict(cur.fetchall())
+    for emp, db, bod in (("05", settings.siesa_db, cedis.get("05") or settings.siesa_cedi_bodega), ("21", settings.siesa_db_s, cedis.get("21") or settings.siesa_cedi_bodega_s)):
         if not (db and bod):
             continue
         try:
@@ -677,8 +679,8 @@ def _correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
                 try:  # descripciones, laboratorio, criterios y centro de operacion: utiles pero no criticos
                     res[f"items_{empresa}"] = _items_de_siesa(cur, eng, primera=(empresa == "05"), empresa=empresa)
                     for b, co in _stream(eng, SQL_CO, prm, expanding="bodegas"):
-                        cur.execute("INSERT INTO ddmrp.bodega_centro_operacion (empresa, bodega_id, id_co) VALUES (%s, %s, %s) "
-                                    "ON CONFLICT (empresa, bodega_id) DO UPDATE SET id_co = EXCLUDED.id_co", (empresa, b, co))
+                        # solo completa el centro de operacion que falte en la bitacora (lo que el usuario escribio no se pisa; no crea tiendas)
+                        cur.execute("UPDATE ddmrp.abast_bitacora SET id_co = %s WHERE empresa = %s AND bodega_id = %s AND (id_co IS NULL OR id_co = '')", (co, empresa, b))
                 except Exception as e:  # solo fallos del origen; un error de Postgres si debe abortar
                     if isinstance(e, psycopg.Error):
                         raise

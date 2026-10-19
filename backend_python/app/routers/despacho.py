@@ -213,7 +213,7 @@ def exportar_plano(req: PlanoReq, user=Depends(requiere("descargar_planos"))):
         rows = c.execute(text(f"""SELECT s.bodega_id, s.producto_id, COALESCE(s.cantidad_aprobada, s.cantidad_sugerida) AS q,
                                         co.id_co
                                  FROM ddmrp.sugerencias_envio s
-                                 LEFT JOIN ddmrp.bodega_centro_operacion co ON co.bodega_id = s.bodega_id AND co.empresa = s.empresa
+                                 LEFT JOIN ddmrp.abast_bitacora co ON co.bodega_id = s.bodega_id AND co.empresa = s.empresa
                                  WHERE s.ejecucion_id = :e AND s.estado = 'APROBADA' AND s.empresa = :emp
                                    AND COALESCE(s.cantidad_aprobada, s.cantidad_sugerida) >= 0.5 AND {CON_CEDI} AND {SIN_ENVIO} AND {ACTIVO}
                                    AND (CAST(:bs AS text[]) IS NULL OR s.bodega_id = ANY(CAST(:bs AS text[])))"""),

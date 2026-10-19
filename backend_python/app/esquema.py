@@ -45,6 +45,10 @@ SENTENCIAS = [
        END $$""",
     # la bitacora era unica por bodega: el mismo codigo existe en las dos empresas (Melonn), la llave es (empresa, bodega)
     "DROP INDEX IF EXISTS ddmrp.uq_bitacora_bodega",
+    # la bitacora es el maestro de tiendas que se abastecen: lleva tambien su CEDI y su centro de operacion (antes tabla aparte)
+    "ALTER TABLE ddmrp.abast_bitacora ADD COLUMN IF NOT EXISTS cedi TEXT",
+    "ALTER TABLE ddmrp.abast_bitacora ADD COLUMN IF NOT EXISTS id_co TEXT",
+    "CREATE TABLE IF NOT EXISTS ddmrp.maestro_cedi (empresa TEXT NOT NULL, bodega_id TEXT NOT NULL, descripcion TEXT, PRIMARY KEY (empresa, bodega_id))",
     # centro de operacion por (empresa, bodega): un mismo codigo de bodega (ej. MBG01 de Melonn) existe en Funat y en Stores con CO distinto
     "ALTER TABLE ddmrp.bodega_centro_operacion ADD COLUMN IF NOT EXISTS empresa TEXT",
     """UPDATE ddmrp.bodega_centro_operacion co SET empresa = COALESCE(
@@ -211,6 +215,13 @@ def empresa_en_llaves() -> None:
 
 
 def asegurar_esquema():
+    nueva = False
+    try:
+        with pg.connect() as c:   # la bitacora aun no tiene la columna cedi: es la primera vez con este esquema
+            nueva = bool(c.execute(text("SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns "
+                                        "WHERE table_schema = 'ddmrp' AND table_name = 'abast_bitacora' AND column_name = 'cedi')")).scalar())
+    except Exception:
+        log.exception("No se pudo revisar la bitacora")
     try:
         with pg.begin() as c:
             for s in SENTENCIAS:
@@ -221,3 +232,24 @@ def asegurar_esquema():
     except Exception:
         log.exception("No se pudo actualizar el esquema")
     empresa_en_llaves()
+    if nueva:
+        cedi_y_co_iniciales()
+
+
+def cedi_y_co_iniciales():
+    """Una sola vez (cuando la bitacora gana las columnas cedi e id_co): el maestro de CEDIs sale de la configuracion (SIESA_CEDI_BODEGA[_S]),
+    cada tienda ya en la bitacora queda con el CEDI de su empresa y toma el centro de operacion que tenia en la tabla anterior.
+    Las filas de esa tabla que no estan en la bitacora no se pasan: la bitacora solo tiene lo que el usuario meta."""
+    from .config import settings
+    try:
+        with pg.begin() as c:
+            if not c.execute(text("SELECT 1 FROM ddmrp.maestro_cedi LIMIT 1")).first():
+                for emp, bod in (("05", settings.siesa_cedi_bodega), ("21", settings.siesa_cedi_bodega_s)):
+                    if bod and bod.strip():
+                        c.execute(text("INSERT INTO ddmrp.maestro_cedi (empresa, bodega_id, descripcion) VALUES (:e, :b, 'CEDI') ON CONFLICT DO NOTHING"),
+                                  {"e": emp, "b": bod.strip().upper()})
+            c.execute(text("UPDATE ddmrp.abast_bitacora b SET cedi = (SELECT min(m.bodega_id) FROM ddmrp.maestro_cedi m WHERE m.empresa = b.empresa) WHERE b.cedi IS NULL"))
+            c.execute(text("UPDATE ddmrp.abast_bitacora b SET id_co = co.id_co FROM ddmrp.bodega_centro_operacion co "
+                           "WHERE co.empresa = b.empresa AND co.bodega_id = b.bodega_id AND b.id_co IS NULL"))
+    except Exception:
+        log.exception("No se pudieron sembrar los CEDIs ni los centros de operacion de la bitacora")
