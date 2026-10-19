@@ -20,8 +20,9 @@ from datetime import date
 from pathlib import Path
 from sqlalchemy import bindparam, text
 from ..config import settings
-from .. import progreso, bitacora
+from .. import progreso, bitacora, lanzamientos
 from ..db import pg, siesa_engine
+from ..rec import detectar_rec
 
 log = logging.getLogger("etl")
 CHUNK = 50_000
@@ -36,7 +37,7 @@ FROM t400_cm_existencia e
 JOIN t150_mc_bodegas b ON b.f150_rowid = e.f400_rowid_bodega
 JOIN t121_mc_items_extensiones x ON x.f121_rowid = e.f400_rowid_item_ext
 JOIN t120_mc_items i ON i.f120_rowid = x.f121_rowid_item
-WHERE i.f120_id_cia = :cia AND b.f150_id IN :bodegas
+WHERE i.f120_id_cia = :cia AND b.f150_id IN :bodegas /*ACTIVO:x,i*/
 GROUP BY i.f120_referencia, b.f150_id"""
 
 def _sql_costo() -> str:
@@ -62,15 +63,25 @@ SELECT referencia, costo FROM (
   JOIN t121_mc_items_extensiones x ON x.f121_rowid = e.f400_rowid_item_ext
   JOIN t120_mc_items i ON i.f120_rowid = x.f121_rowid_item
   {union}
-  WHERE i.f120_id_cia = :cia AND b.f150_id IN :bodegas AND {origen}.{col} > 0
+  WHERE i.f120_id_cia = :cia AND b.f150_id IN :bodegas AND {origen}.{col} > 0 /*ACTIVO:x,i*/
   GROUP BY RTRIM(i.f120_referencia), e.f400_rowid_item_ext) q
 WHERE rn = 1"""
 
 
 SQL_CO = "SELECT RTRIM(f150_id), RTRIM(f150_id_co) FROM t150_mc_bodegas WHERE f150_id_cia = :cia AND f150_id IN :bodegas"
 
-SQL_ITEMS = """SELECT RTRIM(f120_referencia), MAX(RTRIM(f120_descripcion)) FROM t120_mc_items
+def _sql_items(con_estado: bool) -> str:
+    """Referencia, descripcion y, si la columna de estado existe, cuantas extensiones (t121) de esa referencia estan activas y cuantas
+    bloqueadas (una referencia puede tener varias extensiones: es activa si alguna lo es)."""
+    if not con_estado:
+        return """SELECT RTRIM(f120_referencia), MAX(RTRIM(f120_descripcion)), CAST(NULL AS int), CAST(NULL AS int) FROM t120_mc_items
 WHERE f120_id_cia = :cia AND f120_referencia IS NOT NULL AND RTRIM(f120_referencia) <> '' GROUP BY RTRIM(f120_referencia)"""
+    col = _col_estado()
+    return f"""SELECT RTRIM(i.f120_referencia), MAX(RTRIM(i.f120_descripcion)),
+       SUM(CASE WHEN x.{col} = {int(settings.siesa_item_estado_activo)} THEN 1 ELSE 0 END),
+       SUM(CASE WHEN x.{col} = {int(settings.siesa_item_estado_bloqueado)} THEN 1 ELSE 0 END)
+FROM t120_mc_items i LEFT JOIN t121_mc_items_extensiones x ON x.f121_rowid_item = i.f120_rowid
+WHERE i.f120_id_cia = :cia AND i.f120_referencia IS NOT NULL AND RTRIM(i.f120_referencia) <> '' GROUP BY RTRIM(i.f120_referencia)"""
 
 # Tiendas: bodegas del grupo de bodegas de tiendas (t152) con su nombre. Es la lista que ve el usuario en los Excel.
 SQL_BODEGAS = """SELECT RTRIM(b.f150_id), RTRIM(b.f150_descripcion)
@@ -110,9 +121,57 @@ JOIN t150_mc_bodegas be ON be.f150_rowid = t.f406_rowid_bodega_ent
 JOIN t150_mc_bodegas bs ON bs.f150_rowid = t.f406_rowid_bodega_sal
 JOIN t121_mc_items_extensiones x ON x.f121_rowid = t.f406_rowid_item_ext
 JOIN t120_mc_items i ON i.f120_rowid = x.f121_rowid_item
-WHERE t.f406_ind_estado = 0 AND t.f406_id_cia = :cia AND be.f150_id IN :bodegas
+WHERE t.f406_ind_estado = 0 AND t.f406_id_cia = :cia AND be.f150_id IN :bodegas /*ACTIVO:x,i*/
 GROUP BY i.f120_referencia, be.f150_id, bs.f150_id
 HAVING SUM(t.f406_cant_base_pendiente) > 0"""
+
+ACTIVO_RE = re.compile(r"/\*ACTIVO:(\w+),(\w+)\*/")
+
+
+def _col_estado() -> str:
+    col = settings.siesa_item_estado_col.strip().lower()
+    if not re.fullmatch(r"f121_[a-z0-9_]+", col):
+        raise ValueError(f"SIESA_ITEM_ESTADO_COL invalida: {col!r} (debe ser una columna de t121_mc_items_extensiones, p.ej. f121_ind_estado)")
+    return col
+
+
+def _con_estado(sql: str, activo: bool) -> str:
+    """Cada /*ACTIVO:ext,item*/ de la consulta se reemplaza por la condicion de extension ACTIVA (alias de t121) o item REC (alias de t120: los REC
+    se suman a su original y su estado no importa); con activo=False por nada. Asi inventario, transitos, costos y ventas solo traen items activos."""
+    def cond(m):
+        if not activo:
+            return ""
+        x, i = m.group(1), m.group(2)
+        return f"AND ({x}.{_col_estado()} = {int(settings.siesa_item_estado_activo)} OR {i}.f120_descripcion LIKE 'REC[ .-]%')"
+    return ACTIVO_RE.sub(cond, sql)
+
+
+def _probe_estado(eng) -> str | None:
+    """None si la columna de estado se puede leer en t121; si no, el mensaje de error."""
+    try:
+        with eng.connect() as c:
+            c.execute(text(f"SELECT TOP 1 {_col_estado()} FROM t121_mc_items_extensiones"))
+        return None
+    except Exception as e:   # solo fallos del origen (la columna no existe, permisos...)
+        return str(e).splitlines()[0][:200]
+
+
+def _solo_activos(cur) -> bool:
+    """Regla 'solo_items_activos' (por defecto Si)."""
+    v = _param(cur, "solo_items_activos")
+    return True if v is None else v >= 1
+
+
+def _filtrar_activos(solo: bool, eng) -> tuple[bool, str | None]:
+    """(filtrar, aviso). Si la columna de estado no existe se sigue SIN filtrar (como antes) y se avisa en el resultado del ETL."""
+    if not solo:
+        return False, None
+    err = _probe_estado(eng)
+    if err:
+        log.warning("Sin filtro de estado de items: no se pudo leer %s en t121 (%s). Revisa SIESA_ITEM_ESTADO_COL.", settings.siesa_item_estado_col, err)
+        return False, f"No se filtro por estado: no se pudo leer {settings.siesa_item_estado_col} en t121 ({err}). Revisa SIESA_ITEM_ESTADO_COL."
+    return True, None
+
 
 VENTAS_SQL_FILE = Path(__file__).parent / "sql" / "ventas_siesa.sql"
 
@@ -156,11 +215,11 @@ def _volcar(cur, filas, destino: str, cols: list[str], reemplazar: bool = True) 
     return n
 
 
-def _costos(cur, eng, bodegas: list[str], pisar: bool) -> int | str:
+def _costos(cur, eng, bodegas: list[str], pisar: bool, filtrar: bool = False) -> int | str:
     """Costo promedio por referencia de esas bodegas -> ddmrp.costo_item. `pisar`=True (CEDI) manda sobre lo que haya;
     False (tiendas) solo llena lo que falte. Un fallo del origen (p.ej. la columna no existe) no tumba el ETL: devuelve el aviso."""
     try:
-        filas = list(_stream(eng, _sql_costo(), {"cia": settings.siesa_cia, "bodegas": bodegas}, expanding="bodegas"))
+        filas = list(_stream(eng, _con_estado(_sql_costo(), filtrar), {"cia": settings.siesa_cia, "bodegas": bodegas}, expanding="bodegas"))
     except Exception as e:
         if isinstance(e, psycopg.Error):
             raise
@@ -201,6 +260,34 @@ def diagnostico_inventario(bodega: str, producto: str) -> dict:
                         for k, v in r.items() if v not in (None, "", 0, 0.0)}})
         except Exception as e:
             out["siesa"].append({"empresa": empresa, "base": db, "error": str(e)[:300]})
+    return out
+
+
+def diagnostico_estado_items() -> dict:
+    """En vivo, por empresa: cuantas extensiones de item hay en cada valor de la columna de estado de t121 (para confirmar la columna y que 1 = activo,
+    0 = inactivo, 2 = bloqueado antes de confiar en el filtro) y los items REC que se sumarian a su original. Solo lectura."""
+    out: dict = {"columna": settings.siesa_item_estado_col, "valor_activo": settings.siesa_item_estado_activo,
+                 "valor_bloqueado": settings.siesa_item_estado_bloqueado, "empresas": []}
+    if not settings.siesa_host:
+        out["aviso"] = "Siesa no esta configurado"; return out
+    col = _col_estado()
+    for empresa, db in (("05", settings.siesa_db), ("21", settings.siesa_db_s)):
+        if not db:
+            continue
+        try:
+            eng = siesa_engine(db)
+            estados = [{"estado": r[0], "extensiones": r[1], "rec": r[2]} for r in _stream(
+                eng, f"SELECT x.{col}, COUNT(*), SUM(CASE WHEN i.f120_descripcion LIKE 'REC[ .-]%' THEN 1 ELSE 0 END) "
+                     f"FROM t121_mc_items_extensiones x JOIN t120_mc_items i ON i.f120_rowid = x.f121_rowid_item "
+                     f"WHERE i.f120_id_cia = :cia GROUP BY x.{col} ORDER BY x.{col}", {"cia": settings.siesa_cia})]
+            todos = [(r[0], r[1]) for r in _stream(eng, "SELECT RTRIM(f120_referencia), MAX(RTRIM(f120_descripcion)) FROM t120_mc_items "
+                                                        "WHERE f120_id_cia = :cia AND f120_referencia IS NOT NULL AND RTRIM(f120_referencia) <> '' "
+                                                        "GROUP BY RTRIM(f120_referencia)", {"cia": settings.siesa_cia})]
+            pares, sin = detectar_rec(todos)
+            out["empresas"].append({"empresa": empresa, "base": db, "estados": estados, "rec_con_original": len(pares), "rec_sin_original": sin[:20],
+                                    "rec_ejemplos": [{"rec": r, "original": o, "descripcion": d} for r, o, d in pares[:15]]})
+        except Exception as e:
+            out["empresas"].append({"empresa": empresa, "base": db, "error": str(e).splitlines()[0][:300]})
     return out
 
 
@@ -253,7 +340,9 @@ def _items_de_siesa(cur, eng, primera: bool = True, empresa: str | None = None) 
     Primero se lee todo del origen y solo despues se escribe, para que un fallo de Siesa no deje la tabla a medias.
     Si hay dos bases (Funat y Stores), la primera manda y la segunda solo agrega lo que falte."""
     prm = {"cia": settings.siesa_cia}
-    items = list(_stream(eng, SQL_ITEMS, prm))
+    aviso_estado = _probe_estado(eng)     # None = la columna de estado existe
+    items_all = list(_stream(eng, _sql_items(aviso_estado is None), prm))   # TODOS los t120: el estado y los REC se leen antes de filtrar por criterio
+    items = [x[:2] for x in items_all]
     labs = list(_stream(eng, SQL_LAB, {**prm, "plan": settings.siesa_plan_laboratorio}))
     crit = list(_stream(eng, SQL_ITEM_CRITERIOS, prm))
     permitidos = {tuple(x.strip().split(":", 1)) for x in settings.siesa_criterios_items.split(",") if ":" in x}
@@ -285,6 +374,25 @@ def _items_de_siesa(cur, eng, primera: bool = True, empresa: str | None = None) 
         cur.execute("DELETE FROM ddmrp.item_empresa WHERE empresa = %s", (empresa,))
         cur.execute("INSERT INTO ddmrp.item_empresa (empresa, producto_id) SELECT DISTINCT %s, producto_id FROM stg_items ON CONFLICT DO NOTHING", (empresa,))
     cur.execute("DROP TABLE stg_items")
+    extra: dict = {}
+    if empresa:
+        if aviso_estado is None:   # estado de CADA item de Siesa (tambien los que quedan fuera de la seleccion por criterio)
+            est = [(empresa, x[0], 1 if (x[2] or 0) > 0 else 2 if (x[3] or 0) > 0 else 0) for x in items_all]
+            cur.execute("DELETE FROM ddmrp.item_estado WHERE empresa = %s", (empresa,))
+            with cur.copy("COPY ddmrp.item_estado (empresa, producto_id, estado) FROM STDIN") as cp:
+                for r in est:
+                    cp.write_row(r)
+            extra.update(activos=sum(1 for e in est if e[2] == 1), inactivos=sum(1 for e in est if e[2] == 0), bloqueados=sum(1 for e in est if e[2] == 2))
+        else:
+            extra["aviso_estado"] = f"No se filtra por estado: no se pudo leer {settings.siesa_item_estado_col} en t121 ({aviso_estado}). Revisa SIESA_ITEM_ESTADO_COL."
+            log.warning(extra["aviso_estado"])
+        pares, sin_original = detectar_rec(items_all)   # items REC -> su original (referencia sin el primer digito)
+        cur.execute("DELETE FROM ddmrp.item_rec WHERE empresa = %s AND origen = 'auto'", (empresa,))
+        cur.executemany("INSERT INTO ddmrp.item_rec (empresa, rec_id, original_id, descripcion, origen) VALUES (%s, %s, %s, %s, 'auto') "
+                        "ON CONFLICT (empresa, rec_id) DO NOTHING", [(empresa, r, o, d) for r, o, d in pares])
+        extra.update(rec=len(pares), rec_sin_original=len(sin_original))
+        if sin_original:
+            log.warning("Items REC sin original en Siesa (quedan como items normales): %s", ", ".join(sin_original[:10]))
     cur.executemany("UPDATE ddmrp.maestro_item SET categoria = %s WHERE producto_id = %s", [(l, p) for p, l in labs])
     for cod, nom in nombres_lab:
         cur.execute("INSERT INTO ddmrp.laboratorio (codigo, nombre) VALUES (%s, %s) "
@@ -300,7 +408,7 @@ def _items_de_siesa(cur, eng, primera: bool = True, empresa: str | None = None) 
     for pid, cid, nom in nombres_crit:
         cur.execute("INSERT INTO ddmrp.criterio (plan_id, criterio_id, nombre) VALUES (%s, %s, %s) "
                     "ON CONFLICT (plan_id, criterio_id) DO UPDATE SET nombre = EXCLUDED.nombre", (pid, cid, nom))
-    return {"items": len(items), "eliminados": borrados, "con_laboratorio": len(labs), "criterios": len(crit), "planes": len({c[1] for c in crit})}
+    return {"items": len(items), "eliminados": borrados, "con_laboratorio": len(labs), "criterios": len(crit), "planes": len({c[1] for c in crit}), **extra}
 
 
 def sincronizar_items_ahora(usuario: str | None = None) -> dict:
@@ -334,30 +442,57 @@ def _cedi_de_siesa(cur) -> dict:
     Se lee todo antes de escribir; si una empresa falla se conserva el ultimo corte de esa empresa y se avisa."""
     leidos: dict[str, tuple] = {}
     errores: dict[str, str] = {}
+    avisos: dict[str, str] = {}
+    solo = _solo_activos(cur)
     for emp, db, bod in (("05", settings.siesa_db, settings.siesa_cedi_bodega), ("21", settings.siesa_db_s, settings.siesa_cedi_bodega_s)):
         if not (db and bod):
             continue
         try:
             eng = siesa_engine(db)
-            filas = list(_stream(eng, SQL_INVENTARIO, {"cia": settings.siesa_cia, "bodegas": [bod], "resta": 1, "resta_sa": 0}, expanding="bodegas"))   # el CEDI siempre descuenta lo comprometido; las ventas sin acumular no aplican
-            leidos[emp] = (bod, eng, filas)
+            filtrar, aviso = _filtrar_activos(solo, eng)
+            if aviso:
+                avisos[emp] = aviso
+            prm = {"cia": settings.siesa_cia, "bodegas": [bod], "resta": 1, "resta_sa": 0}
+            filas = list(_stream(eng, _con_estado(SQL_INVENTARIO, filtrar), prm, expanding="bodegas"))   # el CEDI siempre descuenta lo comprometido; las ventas sin acumular no aplican
+            try:   # existencia FISICA (sin descontar lo comprometido) de todos los items: base de los lanzamientos. Si falla, solo se omiten los lanzamientos
+                fisica = list(_stream(eng, _con_estado(SQL_INVENTARIO, False), {**prm, "resta": 0}, expanding="bodegas"))
+            except Exception as e:
+                log.warning("Existencia fisica del CEDI %s no leida (lanzamientos omitidos): %s", emp, e); fisica = None
+            leidos[emp] = (bod, eng, filas, fisica, filtrar)
         except Exception as e:
             if emp == "05":
                 raise
             log.warning("Inventario del CEDI de la empresa %s no leido: %s", emp, e); errores[emp] = str(e)[:200]
+    cur.execute("SELECT empresa, rec_id, original_id FROM ddmrp.v_item_rec")   # los REC suman al original
+    rec: dict[str, dict[str, str]] = {}
+    for e_, r_, o_ in cur.fetchall():
+        rec.setdefault(e_, {})[r_] = o_
     out: dict = {}
-    for emp, (bod, eng, filas) in leidos.items():
-        costos = _costos(cur, eng, [bod], pisar=(emp == "05"))   # el costo del CEDI de Funat manda; el de Stores solo llena lo que falte
+    lanz: dict = {}
+    for emp, (bod, eng, filas, fisica, filtrar) in leidos.items():
+        costos = _costos(cur, eng, [bod], pisar=(emp == "05"), filtrar=filtrar)   # el costo del CEDI de Funat manda; el de Stores solo llena lo que falte
         cur.execute("DELETE FROM ddmrp.inventario_cedi WHERE empresa = %s", (emp,))
+        mapa = rec.get(emp, {})
         datos: dict = {}
         for prod, _b, fecha, disp in filas:
-            d = datos.setdefault(prod, [fecha, 0.0])
+            d = datos.setdefault(mapa.get(prod, prod), [fecha, 0.0])
             d[1] += float(disp or 0)
         for prod, (fecha, disp) in datos.items():
             cur.execute("INSERT INTO ddmrp.inventario_cedi (empresa, producto_id, disponible, fecha_corte) VALUES (%s, %s, %s, %s)", (emp, prod, max(disp, 0.0), fecha))
-        out[emp] = {"bodega": bod, "productos": len(datos), "con_stock": sum(1 for d in datos.values() if d[1] > 0), "costos": costos}
+        out[emp] = {"bodega": bod, "productos": len(datos), "con_stock": sum(1 for d in datos.values() if d[1] > 0), "costos": costos, "rec_sumados": len(mapa)}
+        if fisica is not None:
+            exist: dict[str, float] = {}
+            for prod, _b, fecha, disp in fisica:
+                k = mapa.get(prod, prod)
+                exist[k] = exist.get(k, 0.0) + float(disp or 0)
+            hoy = (filas[0][2] if filas else fisica[0][2] if fisica else date.today())
+            lanz[emp] = lanzamientos.registrar(cur, emp, exist, hoy)
     res = {**out["05"]} if "05" in out else {}
     res["por_empresa"] = out
+    if lanz:
+        res["lanzamientos"] = lanz
+    if avisos:
+        res["avisos_estado"] = avisos
     if errores:
         res["errores"] = errores
     return res
@@ -409,6 +544,7 @@ def _sincronizar_ventas() -> dict:
             with raw.cursor() as cur:
                 meses = _param(cur, "meses_historia")
                 desde = _primer_mes(date.today(), min(max(int(meses), 2), 12) if meses else MESES_VENTANA)
+                solo = _solo_activos(cur)
                 cur.execute("SELECT empresa, bodega_id FROM ddmrp.abast_bitacora")
                 por_empresa: dict[str, list[str]] = {}
                 for emp, b in cur.fetchall():
@@ -422,9 +558,12 @@ def _sincronizar_ventas() -> dict:
                     if not db or not bodegas:
                         continue
                     eng, n = siesa_engine(db), 0
+                    filtrar, aviso = _filtrar_activos(solo, eng)
+                    if aviso:
+                        res[f"aviso_estado_{empresa}"] = aviso
                     progreso.avance(f"Leyendo ventas de {db} desde {desde:%Y-%m} ({len(bodegas)} bodegas)… puede tardar varios minutos")
                     with cur.copy("COPY stg_vm (mes, bodega_id, producto_id, cantidad) FROM STDIN") as cp:
-                        for r in _stream(eng, vsql, {"cia": settings.siesa_cia, "bodegas": bodegas, "desde": desde}, expanding="bodegas"):
+                        for r in _stream(eng, _con_estado(vsql, filtrar), {"cia": settings.siesa_cia, "bodegas": bodegas, "desde": desde}, expanding="bodegas"):
                             cp.write_row(r); n += 1
                             if n % 50000 == 0:
                                 progreso.avance(f"Leyendo ventas de {db}: {n:,} filas…")
@@ -478,6 +617,7 @@ def _correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
             traer_ventas = (_param(cur, "etl_traer_ventas") or 0) >= 1
             resta_comp = (_param(cur, "inv_tiendas_resta_comprometido") or 0) >= 1
             resta_sa = (_param(cur, "inv_tiendas_resta_sin_acumular") or 0) >= 1   # ventas del POS aun sin acumular (salida sin confirmar)
+            solo = _solo_activos(cur)
             if not traer_ventas:
                 log.info("ETL: las ventas por mes no se traen aqui (parametro etl_traer_ventas = 0); usa el boton 'Traer ventas'")
             for empresa, db in (("05", settings.siesa_db), ("21", settings.siesa_db_s)):
@@ -486,16 +626,19 @@ def _correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
                     continue
                 eng, prm = siesa_engine(db), {"cia": settings.siesa_cia, "bodegas": bodegas}
                 prm_inv = {**prm, "resta": 1 if resta_comp else 0, "resta_sa": 1 if resta_sa else 0}
+                filtrar, aviso = _filtrar_activos(solo, eng)   # solo items activos de Siesa (y REC); sin la columna de estado no se filtra y se avisa
+                if aviso:
+                    res[f"aviso_estado_{empresa}"] = aviso
                 log.info("ETL empresa %s (%s): %s bodegas", empresa, db, len(bodegas))
                 progreso.avance(f"Leyendo inventario de Siesa ({db}, {len(bodegas)} bodegas)…")
                 res[f"inventario_{empresa}"] = _volcar(
-                    cur, _stream(eng, SQL_INVENTARIO, prm_inv, expanding="bodegas"), "ddmrp.inventario_actual",
+                    cur, _stream(eng, _con_estado(SQL_INVENTARIO, filtrar), prm_inv, expanding="bodegas"), "ddmrp.inventario_actual",
                     ["producto_id", "bodega_id", "fecha_corte", "disponible"], reemplazar=False)
                 progreso.avance(f"Leyendo costos promedio de Siesa ({db})…")
-                res[f"costos_{empresa}"] = _costos(cur, eng, bodegas, pisar=False)   # respaldo: el costo del CEDI manda (se lee al final)
+                res[f"costos_{empresa}"] = _costos(cur, eng, bodegas, pisar=False, filtrar=filtrar)   # respaldo: el costo del CEDI manda (se lee al final)
                 progreso.avance(f"Leyendo traslados en tránsito de Siesa ({db})…")
                 res[f"transitos_{empresa}"] = _volcar(
-                    cur, _stream(eng, SQL_TRANSITOS, prm, expanding="bodegas"), "ddmrp.transitos",
+                    cur, _stream(eng, _con_estado(SQL_TRANSITOS, filtrar), prm, expanding="bodegas"), "ddmrp.transitos",
                     ["producto_id", "bodega_id", "documento", "cantidad"], reemplazar=False)
                 progreso.avance(f"Leyendo items, criterios y centros de operación ({db})…")
                 try:  # descripciones, laboratorio, criterios y centro de operacion: utiles pero no criticos

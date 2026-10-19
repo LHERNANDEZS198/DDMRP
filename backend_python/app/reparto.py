@@ -2,6 +2,7 @@
 Es una funcion pura (repartir) mas el cargador de datos; se usa en la Matriz de despacho, entre las tiendas de la corrida."""
 import math
 from sqlalchemy import text
+from .activos import solo_activos
 
 EPS = 1e-9
 REGLAS = {0: "No limitar", 1: "Proporcional a la rotacion", 4: "Proporcional a la necesidad", 2: "Parejo", 3: "Prioridad al mas critico"}
@@ -118,6 +119,7 @@ def aplicar_a_ejecucion(c, eid: int) -> dict:
                            "WHERE s.ejecucion_id = :e AND s.cantidad_sugerida > 0 AND NOT s.condenado AND s.empresa = ANY(CAST(:em AS text[])) "
                            "AND NOT EXISTS (SELECT 1 FROM ddmrp.maestro_item mi JOIN ddmrp.laboratorio_sin_envio ls ON ls.laboratorio = mi.categoria "
                            "                WHERE mi.producto_id = s.producto_id) "
+                           f"AND {solo_activos('s')} "
                            "AND (cardinality(CAST(:d AS int[])) = 0 OR s.bodega_id IN (SELECT bodega_id FROM ddmrp.bodega_dia WHERE dia = ANY(CAST(:d AS int[]))))"),
                      {"e": eid, "d": dias, "em": d["empresas"]}).all()
     por_item: dict = {}

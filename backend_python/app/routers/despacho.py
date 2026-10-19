@@ -6,6 +6,7 @@ from sqlalchemy import text
 from ..db import pg
 from .. import reparto, bitacora
 from ..plano_siesa import co_derivado, generar_xlsx, notas_por_defecto
+from ..activos import solo_activos
 from ..security import usuario_actual, filtro_sql_permisos, exigir, requiere
 
 router = APIRouter(prefix="/despacho", tags=["despacho"])
@@ -13,6 +14,7 @@ ULTIMA = "(SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok')"
 # lo que NO se sugiere ni se envia: laboratorios sin envio (maestro) e items sin stock en el CEDI de su empresa
 SIN_ENVIO = "NOT EXISTS (SELECT 1 FROM ddmrp.maestro_item mi_x JOIN ddmrp.laboratorio_sin_envio ls_x ON ls_x.laboratorio = mi_x.categoria WHERE mi_x.producto_id = s.producto_id)"
 CON_CEDI = "(s.stock_cedi IS NULL OR s.stock_cedi > 0)"
+ACTIVO = solo_activos("s")   # items inactivos o bloqueados en Siesa no se sugieren ni se envian (regla solo_items_activos)
 
 
 @router.get("/dias")
@@ -35,7 +37,7 @@ def matriz(empresa: str, bodega_id: str | None = None, bodegas: str | None = Non
     if empresa not in ("05", "21"):
         raise HTTPException(400, "Elige la empresa (05 o 21)")
     w, p = filtro_sql_permisos(user)
-    f = f"s.ejecucion_id = {ULTIMA} AND s.empresa = :emp AND (s.cantidad_sugerida > 0 OR s.cantidad_necesaria > 0) AND {w} AND {CON_CEDI} AND {SIN_ENVIO}"
+    f = f"s.ejecucion_id = {ULTIMA} AND s.empresa = :emp AND (s.cantidad_sugerida > 0 OR s.cantidad_necesaria > 0) AND {w} AND {CON_CEDI} AND {SIN_ENVIO} AND {ACTIVO}"
     p["emp"] = empresa
     if bodega_id: f += " AND s.bodega_id=:b"; p["b"] = bodega_id
     if bodegas: f += " AND s.bodega_id = ANY(:bs)"; p["bs"] = [x.strip() for x in bodegas.split(",") if x.strip()]
@@ -209,7 +211,7 @@ def exportar_plano(req: PlanoReq, user=Depends(requiere("descargar_planos"))):
                                  FROM ddmrp.sugerencias_envio s
                                  LEFT JOIN ddmrp.bodega_centro_operacion co ON co.bodega_id = s.bodega_id
                                  WHERE s.ejecucion_id = :e AND s.estado = 'APROBADA' AND s.empresa = :emp
-                                   AND COALESCE(s.cantidad_aprobada, s.cantidad_sugerida) >= 0.5 AND {CON_CEDI} AND {SIN_ENVIO}
+                                   AND COALESCE(s.cantidad_aprobada, s.cantidad_sugerida) >= 0.5 AND {CON_CEDI} AND {SIN_ENVIO} AND {ACTIVO}
                                    AND (CAST(:bs AS text[]) IS NULL OR s.bodega_id = ANY(CAST(:bs AS text[])))"""),
                          {"e": eid, "bs": req.bodegas or None, "emp": req.empresa}).all()
         if not rows:

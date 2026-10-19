@@ -1,6 +1,6 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from ..orchestrator import pipeline_nocturno, ejecutar_motor
-from ..etl.replicacion import correr_etl, sincronizar_bodegas_ahora, sincronizar_items_ahora, sincronizar_ventas, diagnostico_inventario
+from ..etl.replicacion import correr_etl, sincronizar_bodegas_ahora, sincronizar_items_ahora, sincronizar_ventas, diagnostico_inventario, diagnostico_estado_items
 from ..security import usuario_actual
 from .. import progreso
 from ..security import requiere
@@ -107,3 +107,10 @@ def diag_inventario(bodega: str, producto: str, user=Depends(requiere("sincroniz
     para una tienda y una referencia. Sirve para saber por que un inventario no cuadra."""
     producto = producto.strip().zfill(6) if producto.strip().isdigit() else producto.strip()
     return diagnostico_inventario(bodega.strip().upper(), producto)
+
+
+@router.get("/diagnostico-estado-items")
+def diag_estado_items(user=Depends(requiere("sincronizar_siesa", "correr_motor"))):
+    """Cuantos items hay en cada estado de t120 en Siesa (activo / inactivo / bloqueado) y que items REC se sumarian a su original.
+    Sirve para confirmar la columna de estado antes de confiar en el filtro de items activos."""
+    return diagnostico_estado_items()

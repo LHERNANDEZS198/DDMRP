@@ -13,6 +13,7 @@ import Storage from '@mui/icons-material/Storage'
 import ManageAccounts from '@mui/icons-material/ManageAccounts'
 import History from '@mui/icons-material/History'
 import FactCheck from '@mui/icons-material/FactCheck'
+import RocketLaunch from '@mui/icons-material/RocketLaunch'
 import { useYo } from './Yo'
 import { BannerSalud } from './Salud'
 import Errores from './Errores'
@@ -22,9 +23,11 @@ export const VISTAS = [
   { to: '/control', label: 'Foto actual', ayuda: 'Estado del buffer hoy' },
   { to: '/control/cambios', label: 'Cambios en un periodo', ayuda: 'Cómo se movió el semáforo entre dos fechas' },
   { to: '/control/tendencia', label: 'Tendencia en el tiempo', ayuda: 'Curva del buffer, inventario y flujo neto' },
+  { to: '/control/mapa', label: 'Mapa de calor', ayuda: 'Item × tienda × fecha con el color de la zona, como el Excel' },
 ]
 export const NAV = [
   { to: '/control', label: 'Control DDMRP', icon: <Insights />, vistas: true, req: ['ver_control'] },
+  { to: '/lanzamientos', label: 'Lanzamientos', icon: <RocketLaunch />, req: ['ver_control'] },
   { to: '/dashboard', label: 'Alertas', icon: <WarningAmber />, req: ['ver_alertas'] },
   { to: '/despacho', label: 'Matriz de despacho', icon: <LocalShipping />, req: ['ver_despacho'] },
   { to: '/auditoria', label: 'Auditoría', icon: <FactCheck />, req: ['ver_auditoria'] },

@@ -8,13 +8,16 @@ use std::io::Write;
 
 /// $1 = fecha de calculo (texto YYYY-MM-DD). Se leen 12 meses calendario terminando en el mes de $1; el motor usa los ultimos `meses_historia`.
 /// Universo: bodega/producto con ventas en la ventana, vectorizacion, pronostico, inventario o cotas.
+/// Items REC (ddmrp.v_item_rec): su venta, inventario y transitos se suman al item ORIGINAL y el REC no se calcula aparte.
+/// Items inactivos o bloqueados en Siesa (ddmrp.item_estado) no entran, salvo que la regla solo_items_activos este en 0.
 const SQL_ENTRADA: &str = r#"
 WITH meses AS (
   SELECT n, to_char(date_trunc('month', $1::text::date) - make_interval(months => 11 - n), 'YYYYMM') AS mes
   FROM generate_series(0, 11) AS n
 ),
+rec AS (SELECT empresa, rec_id, original_id FROM ddmrp.v_item_rec),
 v AS (
-  SELECT a.bodega_id, a.producto_id,
+  SELECT a.bodega_id, COALESCE(r.original_id, a.producto_id) AS producto_id,
     COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 0), 0)::float8 AS m0,
     COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 1), 0)::float8 AS m1,
     COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 2), 0)::float8 AS m2,
@@ -28,13 +31,29 @@ v AS (
     COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 10), 0)::float8 AS m10,
     COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 11), 0)::float8 AS m11
   FROM ddmrp.ventas_mensual a JOIN meses m ON m.mes = a.mes
-  GROUP BY a.bodega_id, a.producto_id
+  LEFT JOIN ddmrp.abast_bitacora ab ON ab.bodega_id = a.bodega_id
+  LEFT JOIN rec r ON r.empresa = ab.empresa AND r.rec_id = a.producto_id
+  GROUP BY a.bodega_id, COALESCE(r.original_id, a.producto_id)
+),
+inv AS (
+  SELECT ia.bodega_id, COALESCE(r.original_id, ia.producto_id) AS producto_id, SUM(ia.disponible) AS disponible
+  FROM ddmrp.inventario_actual ia
+  LEFT JOIN ddmrp.abast_bitacora ab ON ab.bodega_id = ia.bodega_id
+  LEFT JOIN rec r ON r.empresa = ab.empresa AND r.rec_id = ia.producto_id
+  GROUP BY 1, 2
+),
+tr AS (
+  SELECT tt.bodega_id, COALESCE(r.original_id, tt.producto_id) AS producto_id, SUM(tt.cantidad) AS cant
+  FROM ddmrp.transitos tt
+  LEFT JOIN ddmrp.abast_bitacora ab ON ab.bodega_id = tt.bodega_id
+  LEFT JOIN rec r ON r.empresa = ab.empresa AND r.rec_id = tt.producto_id
+  GROUP BY 1, 2
 ),
 llaves AS (
   SELECT bodega_id, producto_id FROM v
   UNION SELECT bodega_id, producto_id FROM ddmrp.abast_vectorizacion WHERE vectorizacion <> 0
   UNION SELECT bodega_id, producto_id FROM ddmrp.pronostico WHERE pronostico <> 0
-  UNION SELECT bodega_id, producto_id FROM ddmrp.inventario_actual WHERE disponible <> 0
+  UNION SELECT bodega_id, producto_id FROM inv WHERE disponible <> 0
   UNION SELECT bodega_id, producto_id FROM ddmrp.abast_control_referencias
 )
 SELECT b.empresa, k.bodega_id, k.producto_id,
@@ -60,13 +79,15 @@ LEFT JOIN ddmrp.abast_unidad_despacho ud ON ud.empresa = b.empresa AND ud.produc
 LEFT JOIN ddmrp.abast_control_referencias c ON c.empresa = b.empresa AND c.bodega_id = k.bodega_id AND c.producto_id = k.producto_id
 LEFT JOIN ddmrp.promocion pr ON pr.empresa = b.empresa AND pr.producto_id = k.producto_id
 LEFT JOIN ddmrp.abast_vectorizacion ve ON ve.empresa = b.empresa AND ve.bodega_id = k.bodega_id AND ve.producto_id = k.producto_id
-LEFT JOIN ddmrp.inventario_actual i ON i.bodega_id = k.bodega_id AND i.producto_id = k.producto_id
-LEFT JOIN (SELECT producto_id, bodega_id, SUM(cantidad) AS cant FROM ddmrp.transitos GROUP BY 1, 2) t
-       ON t.bodega_id = k.bodega_id AND t.producto_id = k.producto_id
+LEFT JOIN inv i ON i.bodega_id = k.bodega_id AND i.producto_id = k.producto_id
+LEFT JOIN tr t ON t.bodega_id = k.bodega_id AND t.producto_id = k.producto_id
 LEFT JOIN ddmrp.demanda_calificada d ON d.bodega_id = k.bodega_id AND d.producto_id = k.producto_id
 LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = k.producto_id
 LEFT JOIN ddmrp.reposicion_item oi ON oi.producto_id = k.producto_id
 LEFT JOIN ddmrp.reposicion_laboratorio ol ON ol.laboratorio = mi.categoria
+WHERE NOT EXISTS (SELECT 1 FROM rec r2 WHERE r2.empresa = b.empresa AND r2.rec_id = k.producto_id)
+  AND ((SELECT COALESCE(max(valor), 1) FROM ddmrp.parametro WHERE clave = 'solo_items_activos') = 0
+       OR NOT EXISTS (SELECT 1 FROM ddmrp.item_estado ie WHERE ie.empresa = b.empresa AND ie.producto_id = k.producto_id AND ie.estado <> 1))
 "#;
 
 fn arg(name: &str) -> Option<String> {

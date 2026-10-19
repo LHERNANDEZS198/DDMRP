@@ -67,6 +67,9 @@ MAESTROS = {
         label="Items: descripcion y laboratorio (los criterios vienen de Siesa)", tabla="ddmrp.maestro_item",
         llave=["producto_id"], editable={"descripcion": "txt", "categoria": "txt"},
         bodega=None, producto=None, global_=True, defecto={"descripcion": "producto_id"}),
+    "items-rec": dict(
+        label="Items REC: cada item REC y su original (el SKU sin el primer digito)", tabla="ddmrp.item_rec",
+        llave=["empresa", "rec_id"], editable={"original_id": "txt"}, bodega=None, producto=None, global_=True),
     "centro-operacion": dict(
         label="Centro de operacion por bodega (archivo plano)", tabla="ddmrp.bodega_centro_operacion",
         llave=["bodega_id"], editable={"id_co": "txt"}, bodega="bodega_id", producto=None),
@@ -109,6 +112,8 @@ AYUDA = {
     "laboratorio-sin-envio": "Laboratorios (el código de la columna Laboratorio del maestro de items, ej. 1781 o 181) que no se envían: sus items no se sugieren en la Matriz de despacho, "
                              "no compiten por el stock del CEDI y no salen en el plano de Siesa. Se aplica en la próxima corrida del motor (la matriz y el plano lo respetan de inmediato).",
     "items": "Descripción y laboratorio de cada item; los demás criterios vienen de Siesa con 'Traer items'. El laboratorio define los permisos por categoría y los filtros del Control.",
+    "items-rec": "Items cuya descripción empieza por REC (ej. 2190340 REC CALENDULA...): cuentan como su original (190340, el SKU sin el primer dígito). Su inventario, tránsito y ventas se suman al original y el REC sale del cálculo. "
+                 "El ETL detecta los pares solo (origen auto) cuando el original existe en Siesa; aquí puedes agregar o corregir uno a mano (origen manual, no lo pisa el ETL). Se aplica con la regla 'Items REC se suman a su original'. Para despachar, el stock debe estar físicamente bajo el SKU original en Siesa.",
     "centro-operacion": "Centro de operación de cada tienda para el archivo plano de Siesa. Si falta, se deduce con la regla observada en el ejemplo.",
     "demanda-calificada": "Pedidos abiertos o picos conocidos por tienda y referencia. Se restan del flujo neto cuando la regla 'Restar demanda calificada' está en Sí.",
     "pronostico": "Venta mensual esperada (unidades/mes) por tienda y referencia. Sirve sobre todo para tiendas, referencias o laboratorios NUEVOS: si la combinacion tiene menos meses de venta que la regla 'Pronostico directo en casos nuevos' (por defecto 3), el motor usa este valor tal cual, aunque no haya historial. Con mas historial el pronostico solo ajusta: el motor lo lleva entre 1 y 2 veces el ADU de referencia (nunca baja el historial). Para campanas o promociones usa Promocion y las cotas.",
@@ -163,7 +168,7 @@ def listar_maestros(user=Depends(requiere("ver_maestros", "cargar_maestros"))):
 
 
 def _filtros_maestro(nombre: str, d: dict, bodega_id: str | None, q: str | None, lab: str | None,
-                     empresa: str | None = None, mes: str | None = None) -> tuple[str, dict]:
+                     empresa: str | None = None, mes: str | None = None, estado: str | None = None) -> tuple[str, dict]:
     """Filtros de pantalla y de descarga. Supone el alias t (tabla) y mi (maestro_item) cuando el maestro tiene producto."""
     w, p = "", {}
     bod, prod = d.get("bodega"), d.get("producto")
@@ -190,6 +195,14 @@ def _filtros_maestro(nombre: str, d: dict, bodega_id: str | None, q: str | None,
         if empresa not in ("05", "21"):
             raise HTTPException(400, "Elige la empresa (05 o 21) para ver los items")
         w += " AND EXISTS (SELECT 1 FROM ddmrp.item_empresa ie WHERE ie.producto_id = t.producto_id AND ie.empresa = :emp)"; p["emp"] = empresa
+        est = (estado or "activo").lower()   # estado en Siesa (ETL): por defecto solo los activos; sin dato de estado = activo
+        if est not in ("activo", "inactivo", "bloqueado", "todos"):
+            raise HTTPException(400, "estado debe ser activo, inactivo, bloqueado o todos")
+        if est == "activo":
+            w += " AND NOT EXISTS (SELECT 1 FROM ddmrp.item_estado ix WHERE ix.empresa = :emp AND ix.producto_id = t.producto_id AND ix.estado <> 1)"
+        elif est != "todos":
+            w += " AND EXISTS (SELECT 1 FROM ddmrp.item_estado ix WHERE ix.empresa = :emp AND ix.producto_id = t.producto_id AND ix.estado = :est)"
+            p["est"] = 0 if est == "inactivo" else 2
     if nombre == "ventas-mensual" and mes and mes.strip():   # filtro de mes en el servidor (no solo sobre las filas ya cargadas)
         p["mes"] = mes.strip().replace("-", "")[:6]
         w += " AND t.mes = :mes"
@@ -198,7 +211,7 @@ def _filtros_maestro(nombre: str, d: dict, bodega_id: str | None, q: str | None,
 
 @router.get("/{nombre}")
 def leer(nombre: str, response: Response, bodega_id: str | None = None, producto_id: str | None = None, q: str | None = None,
-         lab: str | None = None, empresa: str | None = None, mes: str | None = None, limit: int = 20000,
+         lab: str | None = None, empresa: str | None = None, mes: str | None = None, estado: str | None = None, limit: int = 20000,
          user=Depends(requiere("ver_maestros", "cargar_maestros"))):
     d = _def(nombre)
     cols = d["llave"] + [c for c in d["editable"] if c not in d["llave"]]
@@ -215,11 +228,11 @@ def leer(nombre: str, response: Response, bodega_id: str | None = None, producto
         sel += ", mi.descripcion"
     if producto_id and d.get("producto"):
         w += f" AND t.{d['producto']} = :pr"; p["pr"] = producto_id
-    wf, pf = _filtros_maestro(nombre, d, bodega_id, q, lab, empresa, mes)
+    wf, pf = _filtros_maestro(nombre, d, bodega_id, q, lab, empresa, mes, estado)
     w, p = w + wf, {**p, **pf}
-    if nombre == "items":   # costo promedio por instalacion (lo trae el ETL): solo lectura
+    if nombre == "items":   # costo promedio por instalacion (lo trae el ETL) y estado en Siesa: solo lectura
         join += " LEFT JOIN ddmrp.costo_item ci ON ci.producto_id = t.producto_id"
-        sel += ", ci.costo::float8 AS costo"
+        sel += ", ci.costo::float8 AS costo, " + "(SELECT CASE ix2.estado WHEN 1 THEN \'Activo\' WHEN 0 THEN \'Inactivo\' WHEN 2 THEN \'Bloqueado\' END FROM ddmrp.item_estado ix2 WHERE ix2.empresa = :emp AND ix2.producto_id = t.producto_id) AS estado"
     sql = f"SELECT {sel} FROM {d['tabla']} t {join} WHERE {w} ORDER BY {', '.join('t.' + c for c in d['llave'])} LIMIT :lim"
     with pg.connect() as c:
         filas = [dict(r) for r in c.execute(text(sql), {**p, "lim": limit}).mappings()]
@@ -548,7 +561,8 @@ async def subir_excel(nombre: str, archivo: UploadFile = File(...), modo: str = 
 
 @router.get("/{nombre}/excel")
 def bajar_excel(nombre: str, bodega_id: str | None = None, q: str | None = None, lab: str | None = None,
-                empresa: str | None = None, mes: str | None = None, user=Depends(requiere("ver_maestros", "cargar_maestros"))):
+                empresa: str | None = None, mes: str | None = None, estado: str | None = None,
+                user=Depends(requiere("ver_maestros", "cargar_maestros"))):
     """Descarga lo que el usuario puede ver, con los mismos encabezados que acepta la carga (sirve de plantilla).
     Maestros por tienda: la tienda va con su codigo y su nombre (la empresa se deduce) y, si el maestro es solo por
     tienda (bitacora, centro de operacion), vienen todas las tiendas aunque aun no tengan datos."""
@@ -560,7 +574,7 @@ def bajar_excel(nombre: str, bodega_id: str | None = None, q: str | None = None,
     sel = ", ".join(f"t.{c}" for c in cols_t + list(d["editable"]))
     join, w, p = "", "TRUE", {}
     solo_tienda = bool(bod) and not llave_xl and not d.get("producto")
-    wf, pf = _filtros_maestro(nombre, d, bodega_id, q, lab, empresa, mes)   # los mismos filtros de la pantalla: se baja lo que se ve (sin tope de 20.000)
+    wf, pf = _filtros_maestro(nombre, d, bodega_id, q, lab, empresa, mes, estado)   # los mismos filtros de la pantalla: se baja lo que se ve (sin tope de 20.000)
     if d.get("producto"):
         join = f"LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = t.{d['producto']}"
     if bod:
@@ -574,7 +588,7 @@ def bajar_excel(nombre: str, bodega_id: str | None = None, q: str | None = None,
         cab = cols_t + list(d["editable"])
     if nombre == "items":   # costo promedio: columna informativa (la carga la ignora)
         join += " LEFT JOIN ddmrp.costo_item ci ON ci.producto_id = t.producto_id"
-        sel += ", ci.costo::float8 AS costo"; cab = cab + ["costo"]
+        sel += ", ci.costo::float8 AS costo, " + "(SELECT CASE ix2.estado WHEN 1 THEN \'Activo\' WHEN 0 THEN \'Inactivo\' WHEN 2 THEN \'Bloqueado\' END FROM ddmrp.item_estado ix2 WHERE ix2.empresa = :emp AND ix2.producto_id = t.producto_id) AS estado"; cab = cab + ["costo", "estado"]
     with pg.connect() as c:
         if solo_tienda:   # plantilla con todas las tiendas del maestro de bodegas
             w2, p2 = filtro_sql_permisos(user, "mb.bodega_id", "'*'")

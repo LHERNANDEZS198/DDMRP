@@ -49,6 +49,23 @@ SENTENCIAS = [
     # laboratorios (categoria de maestro_item) que no se envian: no se sugieren, no compiten por el CEDI ni salen en el plano
     "CREATE TABLE IF NOT EXISTS ddmrp.laboratorio_sin_envio (laboratorio TEXT PRIMARY KEY, motivo TEXT)",
     "CREATE TABLE IF NOT EXISTS ddmrp.laboratorio (codigo TEXT PRIMARY KEY, nombre TEXT)",
+    # estado de cada item en Siesa por empresa (1 activo, 0 inactivo, 2 bloqueado): solo los activos entran al modelo
+    "CREATE TABLE IF NOT EXISTS ddmrp.item_estado (empresa TEXT NOT NULL, producto_id TEXT NOT NULL, estado SMALLINT NOT NULL, PRIMARY KEY (empresa, producto_id))",
+    "INSERT INTO ddmrp.parametro VALUES ('solo_items_activos', 1, 'Solo los items ACTIVOS de Siesa entran al modelo (ETL, motor, matriz, controles): 1 = si, 0 = tambien inactivos y bloqueados') ON CONFLICT DO NOTHING",
+    # items REC: su inventario y ventas se suman al item original (referencia sin el primer digito); origen auto = lo deduce el ETL de la descripcion
+    "CREATE TABLE IF NOT EXISTS ddmrp.item_rec (empresa TEXT NOT NULL, rec_id TEXT NOT NULL, original_id TEXT NOT NULL, descripcion TEXT, origen TEXT NOT NULL DEFAULT 'manual', PRIMARY KEY (empresa, rec_id))",
+    "INSERT INTO ddmrp.parametro VALUES ('rec_suma_original', 1, 'Items REC (descripcion que empieza por REC): 1 = su inventario y ventas se suman al item original para el calculo y el despacho, 0 = se calculan aparte') ON CONFLICT DO NOTHING",
+    """CREATE OR REPLACE VIEW ddmrp.v_item_rec AS
+       SELECT empresa, rec_id, original_id FROM ddmrp.item_rec
+       WHERE COALESCE((SELECT max(valor) FROM ddmrp.parametro WHERE clave = 'rec_suma_original'), 1) <> 0""",
+    # lanzamientos: primera existencia y reingresos al CEDI, detectados por el ETL (historia propia; la primera lectura es la linea base)
+    "CREATE TABLE IF NOT EXISTS ddmrp.cedi_estado (empresa TEXT NOT NULL, producto_id TEXT NOT NULL, existencia NUMERIC(14,3) NOT NULL DEFAULT 0, visto_desde DATE NOT NULL, ultima_con_stock DATE, PRIMARY KEY (empresa, producto_id))",
+    """CREATE TABLE IF NOT EXISTS ddmrp.cedi_evento (
+         id BIGSERIAL PRIMARY KEY, empresa TEXT NOT NULL, producto_id TEXT NOT NULL, fecha DATE NOT NULL,
+         tipo TEXT NOT NULL CHECK (tipo IN ('PRIMERA','REINGRESO')), dias_sin_stock INT, existencia NUMERIC(14,3) NOT NULL,
+         UNIQUE (empresa, producto_id, fecha))""",
+    "CREATE INDEX IF NOT EXISTS idx_cedi_evento_fecha ON ddmrp.cedi_evento (fecha, empresa)",
+    "CREATE TABLE IF NOT EXISTS ddmrp.cedi_base (empresa TEXT PRIMARY KEY, fecha DATE NOT NULL)",
     "ALTER TABLE ddmrp.maestro_bodega ADD COLUMN IF NOT EXISTS descripcion TEXT",
     # cotas como fraccion (0.125 = 12,5%): 4 decimales en vez de 2
     """DO $$ BEGIN

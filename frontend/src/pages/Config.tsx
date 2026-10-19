@@ -45,7 +45,8 @@ export default function Config() {
   const f = fRaw.sel === sel ? fRaw : { sel, ...VACIO }
   const setF = (c: Partial<typeof VACIO>) => setFRaw({ ...f, ...c, sel })
   const hayFiltro = !!(f.tienda || f.texto || f.lab || f.mes)
-  const consulta = () => { const p = new URLSearchParams(); if (f.tienda.trim()) p.set('bodega_id', f.tienda.trim().replace(/\s+/g, '')); if (f.texto.trim()) p.set('q', f.texto.trim()); if (f.lab.trim()) p.set('lab', f.lab.trim()); if (def?.filtros.mes && f.mes) p.set('mes', f.mes); if (def?.filtros.empresa) p.set('empresa', empresa); const s = p.toString(); return s ? '?' + s : '' }
+  const consulta = () => { const p = new URLSearchParams(); if (f.tienda.trim()) p.set('bodega_id', f.tienda.trim().replace(/\s+/g, '')); if (f.texto.trim()) p.set('q', f.texto.trim()); if (f.lab.trim()) p.set('lab', f.lab.trim()); if (def?.filtros.mes && f.mes) p.set('mes', f.mes); if (def?.filtros.empresa) { p.set('empresa', empresa); p.set('estado', estado) }; const s = p.toString(); return s ? '?' + s : '' }
+  const [estado, setEstado] = useState('activo')   // items: estado en Siesa
   const [empresa, setEmpresa] = useState('05')   // items: se trabaja una empresa a la vez
   const [agregar, setAgregar] = useState(false)
   const [nueva, setNueva] = useState<Record<string, string>>({})
@@ -68,7 +69,7 @@ export default function Config() {
       .catch(e => { if (n === peticion.current) setMsg('Error: ' + e.message) }).finally(() => { if (n === peticion.current) setCargando(false) })
   }
   useEffect(() => { setRows([]); setMsg(''); setModo('actualizar') }, [sel])
-  useEffect(() => { const t = setTimeout(cargar, f.texto || f.tienda || f.lab ? 350 : 0); return () => clearTimeout(t) }, [sel, f.tienda, f.texto, f.lab, f.mes, empresa, defs.length])
+  useEffect(() => { const t = setTimeout(cargar, f.texto || f.tienda || f.lab ? 350 : 0); return () => clearTimeout(t) }, [sel, f.tienda, f.texto, f.lab, f.mes, empresa, estado, defs.length])
 
   const cols: ColDef[] = useMemo(() => {
     if (!def) return []
@@ -82,13 +83,14 @@ export default function Config() {
       ? { field: k, editable: pCarga, filter: true }
       : { field: k, editable: pCarga, type: 'numericColumn', filter: 'agNumberColumnFilter' })
     // items: una columna por plan de criterios (el nombre del plan es el encabezado, el criterio es el valor)
-    const conocidas = new Set([...def.llave, ...def.editable, 'descripcion', 'bodega_nombre', 'costo'])
+    const conocidas = new Set([...def.llave, ...def.editable, 'descripcion', 'bodega_nombre', 'costo', 'estado'])
     const extra: ColDef[] = def.clave === 'items' && rows[0]
       ? Object.keys(rows[0]).filter(k => !conocidas.has(k)).map(k => ({ field: k, headerName: k, filter: true, width: 190 })) : []
     const ed2 = def.clave === 'items' ? ed.map(c => c.field === 'categoria' ? { ...c, headerName: 'Laboratorio (código)', width: 150 } : c.field === 'descripcion' ? { ...c, width: 300 } : c) : ed
     const costo: ColDef[] = def.clave === 'items' ? [{ field: 'costo', headerName: 'Costo promedio', type: 'numericColumn', width: 140, filter: 'agNumberColumnFilter',
       valueFormatter: p => p.value == null ? '' : '$' + Math.round(p.value).toLocaleString('es-CO'), headerTooltip: 'Costo promedio por instalación (lo trae el ETL desde Siesa). Solo lectura.' }] : []
-    return [...llave, ...desc, ...ed2, ...costo, ...extra]
+    const est: ColDef[] = def.clave === 'items' ? [{ field: 'estado', headerName: 'Estado Siesa', width: 120, filter: true, headerTooltip: 'Estado del item en Siesa (extensión del item). Solo lectura; sin dato = activo.' }] : []
+    return [...llave, ...desc, ...ed2, ...costo, ...est, ...extra]
   }, [def, rows, pCarga])
 
   const onChange = async (e: CellValueChangedEvent) => {
@@ -208,6 +210,8 @@ export default function Config() {
           <TextField size="small" label={def.filtros.item ? 'Item o descripción' : 'Buscar'} value={f.texto} onChange={e => setF({ texto: e.target.value })} sx={{ width: 220 }} />
           {def.filtros.empresa && <TextField select size="small" label="Empresa" value={empresa} onChange={e => setEmpresa(e.target.value)} sx={{ width: 150 }}>
             <MenuItem value="05">05 · Funat</MenuItem><MenuItem value="21">21 · Stores</MenuItem></TextField>}
+          {def.filtros.empresa && <TextField select size="small" label="Estado en Siesa" value={estado} onChange={e => setEstado(e.target.value)} sx={{ width: 160 }}>
+            <MenuItem value="activo">Activos</MenuItem><MenuItem value="inactivo">Inactivos</MenuItem><MenuItem value="bloqueado">Bloqueados</MenuItem><MenuItem value="todos">Todos</MenuItem></TextField>}
           {def.filtros.mes && <TextField size="small" type="month" label="Mes" value={f.mes} onChange={e => setF({ mes: e.target.value })} slotProps={{ inputLabel: { shrink: true } }} sx={{ width: 170 }} />}
           {def.filtros.lab && <TextField size="small" label="Laboratorio (código)" value={f.lab} onChange={e => setF({ lab: e.target.value })} sx={{ width: 170 }} />}
           {hayFiltro && <Button size="small" onClick={() => setF(VACIO)}>Quitar filtros</Button>}

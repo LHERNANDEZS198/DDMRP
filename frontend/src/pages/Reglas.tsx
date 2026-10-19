@@ -14,6 +14,7 @@ const grupos: [string, string[]][] = [
   ['Qué entra al flujo neto y a lo sugerido', ['incluir_transito', 'restar_demanda_calificada', 'sumar_vectorizacion', 'vectorizacion_un_solo_uso']],
   ['Inventario del CEDI (cuando no alcanza)', ['cedi_regla_reparto']],
   ['Envío a las tiendas (Matriz de despacho)', ['valor_minimo_envio']],
+  ['Qué items entran al modelo', ['solo_items_activos', 'rec_suma_original']],
   ['Datos de Siesa', ['etl_traer_ventas', 'inv_tiendas_resta_comprometido', 'inv_tiendas_resta_sin_acumular']],
   ['Parámetros del modelo (hoja Modelo)', ['meses_historia', 'meses_adu', 'pron_meses_minimos', 'mult_cota_max_promo', 'mult_cota_min_promo', 'adu_bajo_min', 'adu_bajo_max']],
   ['Historial (vistas de cambios y tendencia)', ['retener_dias']],

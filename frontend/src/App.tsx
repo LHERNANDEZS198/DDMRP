@@ -12,12 +12,14 @@ import Reglas from './pages/Reglas'
 import Usuarios from './pages/Usuarios'
 import Log from './pages/Log'
 import Auditoria from './pages/Auditoria'
+import Lanzamientos from './pages/Lanzamientos'
 import { SaludProvider } from './Salud'
 import { Yo, YoCtx, useYo } from './Yo'
 
 /** Pantallas y la función que las habilita (basta una). Se usa también en el menú. */
 export const PANTALLAS = [
   { to: '/control', req: ['ver_control'] },
+  { to: '/lanzamientos', req: ['ver_control'] },
   { to: '/dashboard', req: ['ver_alertas'] },
   { to: '/despacho', req: ['ver_despacho'] },
   { to: '/auditoria', req: ['ver_auditoria'] },
@@ -58,6 +60,8 @@ export default function App() {
           <Route path="/control" element={<Req to="/control"><Control /></Req>} />
           <Route path="/control/cambios" element={<Req to="/control"><Control /></Req>} />
           <Route path="/control/tendencia" element={<Req to="/control"><Control /></Req>} />
+          <Route path="/control/mapa" element={<Req to="/control"><Control /></Req>} />
+          <Route path="/lanzamientos" element={<Req to="/lanzamientos"><Lanzamientos /></Req>} />
           <Route path="/dashboard" element={<Req to="/dashboard"><Dashboard /></Req>} />
           <Route path="/despacho" element={<Req to="/despacho"><Despacho /></Req>} />
           <Route path="/reglas" element={<Req to="/reglas"><Reglas /></Req>} />

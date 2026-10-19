@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     # 0002 de terceros. De cada item se traen TODOS sus criterios. Vacio = todos los items.
     siesa_criterios_items: str = "001:0001,001:0002"
     siesa_plan_laboratorio: str = "006"   # plan de criterios de items que define el laboratorio
+    # Estado del item en Siesa: columna de la EXTENSION del item (t121_mc_items_extensiones.f121_ind_estado). 1 activo; 0 inactivo y 2 bloqueado
+    # segun el diccionario de Siesa (confirmalo con docs/sql/estado_items.sql). Si la columna no se puede leer, el ETL avisa y sigue SIN filtrar.
+    siesa_item_estado_col: str = "f121_ind_estado"
+    siesa_item_estado_activo: int = 1
+    siesa_item_estado_bloqueado: int = 2
     # Costo promedio unitario por INSTALACION (reporte "Existencia a la fecha por bodega": "Costo prom. unit. (ins)"). Se lee de esta
     # tabla unida por item y por la instalacion de la bodega (t400.f400_id_instalacion, p.ej. F01). Las claves se deducen del prefijo
     # de la columna: <pref>_id_cia, <pref>_rowid_item_ext, <pref>_id_instalacion. Si no existen, el ETL avisa y sigue sin costos

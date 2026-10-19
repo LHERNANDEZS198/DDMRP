@@ -4,10 +4,12 @@ import { ColDef, ICellRendererParams } from 'ag-grid-community'
 import { Autocomplete, Box, Button, Card, CardActionArea, Chip, MenuItem, Paper, Tab, Tabs, TextField, Tooltip, Typography } from '@mui/material'
 import { useLocation, useSearchParams } from 'react-router-dom'
 import { BufferTrend, ZonaShare, Punto } from '../TrendCharts'
-import { api } from '../api'
+import { api, bajar } from '../api'
 import { AYUDA, ayudar } from '../ayuda'
 
 const COLOR: Record<string, string> = { ROJA: '#c62828', AMARILLA: '#f9a825', VERDE: '#2e7d32', EXCESO: '#1565c0' }
+const HEAT: Record<string, string> = { R: '#E8B9B7', A: '#FFC000', V: '#92D050', E: '#4792DC' }   // mismos colores del Excel de control
+const METRICAS_MAPA = [{ k: 'inventario', label: 'Inventario (u.)' }, { k: 'flujo_neto', label: 'Flujo neto (u.)' }, { k: 'pct_buffer', label: '% de buffer' }]
 const ZONAS = ['ROJA', 'AMARILLA', 'VERDE', 'EXCESO']
 const KEY: Record<string, string> = { ROJA: 'roja', AMARILLA: 'amarilla', VERDE: 'verde', EXCESO: 'exceso' }
 const NIVELES = [
@@ -95,8 +97,12 @@ export default function Control() {
   const ruta = useLocation().pathname
   const cambiosModo = ruta.startsWith('/control/cambios')
   const tendModo = ruta.startsWith('/control/tendencia')
+  const mapaModo = ruta.startsWith('/control/mapa')
+  const [mapa, setMapa] = useState<{ fechas: string[]; filas: any[]; total: number; truncado: boolean }>({ fechas: [], filas: [], total: 0, truncado: false })
+  const [paso, setPaso] = useState(1); const [metrica, setMetrica] = useState('inventario'); const [orden, setOrden] = useState('critico')
+  const [bajando, setBajando] = useState(false)
   const [serie, setSerie] = useState<Punto[]>([])
-  const [desde, setDesde] = useState(hace(ruta.startsWith('/control/tendencia') ? 90 : 7)); const [hasta, setHasta] = useState(hoy())
+  const [desde, setDesde] = useState(hace(ruta.startsWith('/control/tendencia') ? 90 : ruta.startsWith('/control/mapa') ? 30 : 7)); const [hasta, setHasta] = useState(hoy())
   const [mov, setMov] = useState('')
   const [periodo, setPeriodo] = useState<{ desde: string; hasta: string } | null>(null)
   const [matriz, setMatriz] = useState<{ de: string; a: string; n: number }[]>([])
@@ -129,6 +135,11 @@ export default function Control() {
       api(`/control/tendencia?${qs(f, true)}&${per}`).then(r => vivo && setSerie(r.serie)).catch(e => vivo && setErr(e.message)).finally(() => vivo && setCargando(false))
       return () => { vivo = false }
     }
+    if (mapaModo) {
+      api(`/control/mapa?limit=3000&paso=${paso}&metrica=${metrica}&orden=${orden}&${qs(f)}&${per}`).then(r => vivo && setMapa(r)).catch(e => vivo && setErr(e.message)).finally(() => vivo && setCargando(false))
+      api(`/control/resumen?agrupar=empresa&${qs(f, true)}`).then(r => vivo && setKpi({ m: false, v: r.total })).catch(() => {})
+      return () => { vivo = false }
+    }
     const base = cambiosModo ? '/control/cambios' : '/control/resumen'
     const extra = (cambiosModo ? '&' + per : '') + (nivel === 'criterio' ? '&plan=' + encodeURIComponent(f.plan || opc.criterios?.[0]?.plan_id || '') : '')
     api(`${base}?agrupar=empresa&${qs(f, true)}${extra}`).then(r => { if (!vivo) return; setKpi({ m: cambiosModo, v: r.total }); if (cambiosModo) { setPeriodo(r.periodo); setMatriz(r.matriz) } })
@@ -138,7 +149,7 @@ export default function Control() {
       : api(`${base}?agrupar=${nivel}&${qs(f)}${extra}`).then(r => vivo && setGrupos({ m: cambiosModo, v: r.grupos }))
     p.catch(e => vivo && setErr(e.message)).finally(() => vivo && setCargando(false))
     return () => { vivo = false }
-  }, [clave, f.plan, opc.criterios, nivel, cambiosModo, tendModo, desde, hasta, mov])
+  }, [clave, f.plan, opc.criterios, nivel, cambiosModo, tendModo, mapaModo, desde, hasta, mov, paso, metrica, orden])
 
   const total = (cambiosModo ? kpi?.n_fin : kpi?.n) || 1
   const planNombre = (p: string) => opc.criterios?.find((x: any) => x.plan_id === p)?.nombre ?? p
@@ -216,10 +227,35 @@ export default function Control() {
     { field: 'condenado', headerName: 'Condenado', width: 110, cellRenderer: (p: ICellRendererParams) => p.value ? <Chip size="small" label="NxP" sx={{ height: 20, fontSize: 11, bgcolor: '#424242', color: '#fff' }} /> : '' },
   ]
 
+  const colsMapa: ColDef[] = useMemo(() => [
+    { field: 'bodega_id', headerName: 'Tienda', width: 90, pinned: 'left', filter: true },
+    { field: 'producto_id', headerName: 'Item', width: 90, pinned: 'left', filter: true },
+    { field: 'descripcion', headerName: 'Descripción', width: 230, filter: true },
+    { field: 'bodega_nombre', headerName: 'Nombre tienda', width: 150, filter: true },
+    { field: 'laboratorio', headerName: 'Lab.', width: 80, filter: true },
+    { field: 'adu', headerName: 'ADU', type: 'numericColumn', width: 80, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(1) },
+    ...mapa.fechas.map((fe, i): ColDef => ({
+      headerName: fe.slice(5), width: 62, sortable: false, suppressMovable: true, headerTooltip: fe,
+      valueGetter: p => p.data?.v?.[i] ?? null, valueFormatter: p => p.value == null ? '' : Number(p.value).toLocaleString(),
+      cellStyle: p => { const c = HEAT[p.data?.z?.[i] ?? ' ']; return { textAlign: 'center', padding: 0, ...(c ? { backgroundColor: c } : {}) } },
+    })),
+  ], [mapa.fechas])
+  const excel = async () => {
+    setBajando(true); setErr('')
+    try {
+      const vista = tendModo ? 'tendencia' : cambiosModo ? 'cambios' : 'foto'
+      if (mapaModo) await bajar(`/control/mapa/excel?paso=${paso}&metrica=${metrica}&orden=${orden}&${qs(f)}&${per}`, 'mapa_calor.xlsx')
+      else await bajar(`/control/excel?vista=${vista}&agrupar=${nivel === 'detalle' ? 'bodega' : nivel}&${qs(f, tendModo)}${vista !== 'foto' ? '&' + per : ''}${cambiosModo && mov ? '&mov=' + mov : ''}${nivel === 'criterio' ? '&plan=' + encodeURIComponent(f.plan || opc.criterios?.[0]?.plan_id || '') : ''}`, `control_${vista}.xlsx`)
+    } catch (e: any) { setErr(e.message) } finally { setBajando(false) }
+  }
+
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 1.5, minHeight: 600 }}>
       {/* Indicadores del alcance actual: clic en una zona = filtrar por ella */}
-      <Typography variant="h6" sx={{ fontWeight: 700 }}>{tendModo ? 'Control DDMRP · tendencia en el tiempo' : cambiosModo ? 'Control DDMRP · cambios en un periodo' : 'Control DDMRP · foto actual'}</Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <Typography variant="h6" sx={{ fontWeight: 700, flex: 1 }}>{mapaModo ? 'Control DDMRP · mapa de calor' : tendModo ? 'Control DDMRP · tendencia en el tiempo' : cambiosModo ? 'Control DDMRP · cambios en un periodo' : 'Control DDMRP · foto actual'}</Typography>
+        <Tooltip title="Baja a Excel lo que ves, con los mismos filtros (sin el tope de filas de la pantalla)"><span><Button size="small" variant="outlined" disabled={bajando} onClick={excel}>{bajando ? 'Generando…' : 'Descargar Excel'}</Button></span></Tooltip>
+      </Box>
       {!tendModo && <Box sx={{ display: 'grid', flexShrink: 0, gridTemplateColumns: { xs: 'repeat(2, 1fr)', md: 'repeat(5, 1fr)' }, gap: 1.5 }}>
         <Card variant="outlined" sx={{ borderLeft: '6px solid #6e8a37', flexShrink: 0 }}>
           <Box sx={{ p: 1.25 }}>
@@ -273,13 +309,21 @@ export default function Control() {
         {hayFiltros && <Button size="small" onClick={() => { setF(VACIO); setQTxt('') }}>Toda la empresa</Button>}
       </Paper>
 
-      {(cambiosModo || tendModo) && (
+      {(cambiosModo || tendModo || mapaModo) && (
         <Paper variant="outlined" sx={{ flexShrink: 0, p: 1.25, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
           <Typography sx={{ fontWeight: 700 }}>Periodo</Typography>
           <TextField size="small" type="date" label="Desde" value={desde} onChange={e => e.target.value && setDesde(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} />
           <TextField size="small" type="date" label="Hasta" value={hasta} onChange={e => e.target.value && setHasta(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} />
-          {(tendModo ? [['30 días', 30], ['90 días', 90], ['6 meses', 180], ['12 meses', 365]] : [['Ayer', 1], ['7 días', 7], ['30 días', 30], ['90 días', 90]]).map(([l, d]) =>
+          {(tendModo ? [['30 días', 30], ['90 días', 90], ['6 meses', 180], ['12 meses', 365]] : mapaModo ? [['15 días', 15], ['30 días', 30], ['90 días', 90], ['6 meses', 180]] : [['Ayer', 1], ['7 días', 7], ['30 días', 30], ['90 días', 90]]).map(([l, d]) =>
             <Button key={l as string} size="small" variant="outlined" onClick={() => { setDesde(hace(d as number)); setHasta(hoy()) }}>{l}</Button>)}
+          {mapaModo && <>
+            <TextField select size="small" label="Una columna cada" value={paso} onChange={e => setPaso(Number(e.target.value))} sx={{ width: 150 }}>
+              {[[1, 'día'], [2, '2 días'], [5, '5 días'], [7, 'semana'], [15, '15 días']].map(([v, l]) => <MenuItem key={v} value={v}>{l}</MenuItem>)}</TextField>
+            <TextField select size="small" label="Número en la celda" value={metrica} onChange={e => setMetrica(e.target.value)} sx={{ width: 180 }}>
+              {METRICAS_MAPA.map(m => <MenuItem key={m.k} value={m.k}>{m.label}</MenuItem>)}</TextField>
+            <TextField select size="small" label="Orden" value={orden} onChange={e => setOrden(e.target.value)} sx={{ width: 150 }}>
+              <MenuItem value="critico">Más críticos</MenuItem><MenuItem value="item">Por item</MenuItem><MenuItem value="tienda">Por tienda</MenuItem></TextField>
+          </>}
           <Box sx={{ flex: 1 }} />
           {cambiosModo && periodo && <Typography variant="caption" color="text.secondary">Comparando la corrida del {periodo.desde} contra la del {periodo.hasta}
             {periodo.desde === periodo.hasta ? ' (solo hay una corrida guardada en ese rango)' : ''}</Typography>}
@@ -317,9 +361,9 @@ export default function Control() {
           <BufferTrend serie={serie} />
         </Paper>)}
       {!tendModo && <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
-        <Tabs value={nivel} onChange={(_, v) => setNivel(v)} variant="scrollable" sx={{ minHeight: 36, '& .MuiTab-root': { minHeight: 36, textTransform: 'none' } }}>
+        {!mapaModo && <Tabs value={nivel} onChange={(_, v) => setNivel(v)} variant="scrollable" sx={{ minHeight: 36, '& .MuiTab-root': { minHeight: 36, textTransform: 'none' } }}>
           {NIVELES.map(n => <Tab key={n.k} value={n.k} label={<Tooltip title={AYUDA[n.label] ?? ''} placement="top"><span>{n.label}</span></Tooltip>} />)}
-        </Tabs>
+        </Tabs>}
         <Box sx={{ flex: 1 }} />
         {f.empresa.map(v => <Chip key={'e' + v} size="small" color="primary" label={`Empresa ${v}`} onDelete={() => quitar('empresa', v)} />)}
         {f.bodegas.map(v => <Chip key={'b' + v} size="small" color="primary" label={`Tienda ${v}`} onDelete={() => quitar('bodegas', v)} />)}
@@ -334,12 +378,19 @@ export default function Control() {
           {MOVS.map(m => <Chip key={m.k} size="small" label={m.label} color={mov === m.k ? 'primary' : 'default'} variant={mov === m.k ? 'filled' : 'outlined'} onClick={() => setMov(m.k)} />)}
         </Box>)}
       {err && <Typography color="error" variant="body2">{err}</Typography>}
-      {!tendModo && opc.ejecucion && <Typography variant="caption" color="text.secondary">
+      {mapaModo && <Typography variant="caption" color="text.secondary">
+        {mapa.truncado ? `Mostrando ${mapa.filas.length.toLocaleString()} de ${mapa.total.toLocaleString()} combinaciones (según el orden); filtra para ver el resto o baja el Excel` : `${mapa.total.toLocaleString()} combinaciones`}
+        {' · '}celda vacía = ese día no hay foto del motor · colores: rojo, amarillo, verde y exceso (azul) según la zona de ese día · el filtro de zona aplica a la última fecha
+      </Typography>}
+      {!tendModo && !mapaModo && opc.ejecucion && <Typography variant="caption" color="text.secondary">
         Corte del motor: {String(opc.ejecucion.fecha_calculo).slice(0, 10)}
         {nivel !== 'detalle' ? ' · clic en una fila para acercarte' : det.truncado ? ` · mostrando ${det.filas.length.toLocaleString()} de ${det.total.toLocaleString()} (las más críticas); filtra para ver el resto` : ` · ${det.total.toLocaleString()} filas`}
       </Typography>}
 
-      {!tendModo && <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 320 }}>
+      {mapaModo && <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 320 }}>
+        <Tabla textoCargando="Calculando…" vacio="Sin resultados con estos filtros" key={'mapa' + mapa.fechas.join()} rowData={mapa.filas} columnDefs={colsMapa} rowBuffer={20} cargando={cargando} defaultColDef={{ resizable: true, sortable: true }} />
+      </Box>}
+      {!tendModo && !mapaModo && <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 320 }}>
         {nivel === 'detalle'
           ? <Tabla textoCargando="Calculando…" vacio="Sin resultados con estos filtros" key={'det' + cambiosModo} rowData={det.filas} columnDefs={ayudar(cambiosModo ? colsDetCambios : colsDet)} tooltipShowDelay={300} rowBuffer={20} cargando={cargando} defaultColDef={{ resizable: true, sortable: true }} />
           : <Tabla textoCargando="Calculando…" vacio="Sin resultados con estos filtros" key={nivel + cambiosModo} rowData={grupos} columnDefs={ayudar(cambiosModo ? colsCambios : colsGrupo)} tooltipShowDelay={300} rowBuffer={20} cargando={cargando} defaultColDef={{ resizable: true, sortable: true }}
