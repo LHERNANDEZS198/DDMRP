@@ -551,7 +551,7 @@ def _sincronizar_ventas() -> dict:
                     por_empresa.setdefault(emp, []).append(b)
                 if not por_empresa:
                     raise RuntimeError("abast_bitacora esta vacia: cargala en Maestros antes de traer las ventas")
-                cur.execute("CREATE TEMP TABLE stg_vm (mes char(6), bodega_id text, producto_id text, cantidad numeric) ON COMMIT DROP")
+                cur.execute("CREATE TEMP TABLE stg_vm (mes char(6), bodega_id text, producto_id text, cantidad numeric, valor numeric) ON COMMIT DROP")
                 leidas: list[str] = []
                 for empresa, db in (("05", settings.siesa_db), ("21", settings.siesa_db_s)):
                     bodegas = por_empresa.get(empresa, [])
@@ -562,7 +562,7 @@ def _sincronizar_ventas() -> dict:
                     if aviso:
                         res[f"aviso_estado_{empresa}"] = aviso
                     progreso.avance(f"Leyendo ventas de {db} desde {desde:%Y-%m} ({len(bodegas)} bodegas)… puede tardar varios minutos")
-                    with cur.copy("COPY stg_vm (mes, bodega_id, producto_id, cantidad) FROM STDIN") as cp:
+                    with cur.copy("COPY stg_vm (mes, bodega_id, producto_id, cantidad, valor) FROM STDIN") as cp:
                         for r in _stream(eng, _con_estado(vsql, filtrar), {"cia": settings.siesa_cia, "bodegas": bodegas, "desde": desde}, expanding="bodegas"):
                             cp.write_row(r); n += 1
                             if n % 50000 == 0:
@@ -573,8 +573,8 @@ def _sincronizar_ventas() -> dict:
                     raise RuntimeError("No hay bodegas para leer (revisa SIESA_DB / SIESA_DB_S y la bitacora)")
                 progreso.avance("Guardando las ventas en la base…")
                 cur.execute("DELETE FROM ddmrp.ventas_mensual WHERE mes >= %s AND bodega_id = ANY(%s)", (f"{desde:%Y%m}", leidas))
-                cur.execute("""INSERT INTO ddmrp.ventas_mensual (mes, bodega_id, producto_id, cantidad)
-                               SELECT mes, bodega_id, producto_id, SUM(cantidad) FROM stg_vm
+                cur.execute("""INSERT INTO ddmrp.ventas_mensual (mes, bodega_id, producto_id, cantidad, valor)
+                               SELECT mes, bodega_id, producto_id, SUM(cantidad), COALESCE(SUM(valor), 0) FROM stg_vm
                                WHERE mes >= %s GROUP BY 1, 2, 3""", (f"{desde:%Y%m}",))
                 res["meses_desde"] = f"{desde:%Y%m}"
             raw.commit()

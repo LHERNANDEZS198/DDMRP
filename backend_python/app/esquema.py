@@ -66,6 +66,8 @@ SENTENCIAS = [
          UNIQUE (empresa, producto_id, fecha))""",
     "CREATE INDEX IF NOT EXISTS idx_cedi_evento_fecha ON ddmrp.cedi_evento (fecha, empresa)",
     "CREATE TABLE IF NOT EXISTS ddmrp.cedi_base (empresa TEXT PRIMARY KEY, fecha DATE NOT NULL)",
+    # venta neta SIN IVA del mes (la trae el ETL con la cantidad); base de la clasificacion ABC por margen. 0 = aun no traida / carga manual
+    "ALTER TABLE ddmrp.ventas_mensual ADD COLUMN IF NOT EXISTS valor NUMERIC(18,2) NOT NULL DEFAULT 0",
     "ALTER TABLE ddmrp.maestro_bodega ADD COLUMN IF NOT EXISTS descripcion TEXT",
     # cotas como fraccion (0.125 = 12,5%): 4 decimales en vez de 2
     """DO $$ BEGIN

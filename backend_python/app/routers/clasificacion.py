@@ -1,0 +1,181 @@
+"""Clasificacion ABC x XYZ de items sobre las ventas de la ultima ventana de meses, recalculada con los filtros que escoja el usuario
+(tiendas, laboratorios, criterios, empresa) y descargable a Excel. Metodologia en app/clasificacion.py y en la hoja 'Metodologia' del Excel."""
+from datetime import date, datetime
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
+from sqlalchemy import text
+from .. import clasificacion as cl, excel
+from ..activos import solo_activos
+from ..db import pg
+from ..security import usuario_actual, filtro_sql_permisos, requiere
+from .control import _csv
+
+router = APIRouter(prefix="/clasificacion", tags=["clasificacion"], dependencies=[Depends(requiere("ver_control"))])
+ULTIMA = "(SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok')"
+
+
+def _ventana(meses: int) -> tuple[str, date, int]:
+    """(primer mes YYYYMM, primer dia, dias) de la ventana: los ultimos `meses` meses incluyendo el actual (igual que el ETL de ventas)."""
+    meses = min(max(int(meses), 1), 12)
+    hoy = date.today()
+    y, m = hoy.year, hoy.month - (meses - 1)
+    while m <= 0:
+        m += 12; y -= 1
+    d0 = date(y, m, 1)
+    return f"{y:04d}{m:02d}", d0, (hoy - d0).days + 1
+
+
+def _cortes_iv(c) -> tuple[float, float]:
+    r = {d: (lo, hi) for d, lo, hi in c.execute(text("SELECT descripcion, desde::float8, hasta::float8 FROM ddmrp.factor_tramo WHERE tipo = 'VAR'")).all()}
+    try:
+        return float(r["Media"][0]), float(r["Media"][1])
+    except (KeyError, TypeError):
+        return 0.5, 0.8
+
+
+def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, labs=None, crit=None, q=None) -> list[dict]:
+    """Una fila por tienda x item (REC ya sumado al original) con la venta de la ventana, el buffer de la ultima corrida y el costo."""
+    w, p = filtro_sql_permisos(user, "k.bodega_id", "mi.categoria")
+    cond = [w, solo_activos("k")]
+    if filtrar:
+        if _csv(empresa):
+            cond.append("k.empresa = ANY(:f_emp)"); p["f_emp"] = _csv(empresa)
+        if _csv(bodegas):
+            cond.append("k.bodega_id = ANY(:f_bod)"); p["f_bod"] = _csv(bodegas)
+        if _csv(labs):
+            cond.append("COALESCE(mi.categoria, '') = ANY(:f_lab)"); p["f_lab"] = [("" if x == "(sin laboratorio)" else x) for x in _csv(labs)]
+        if q and q.strip():
+            cond.append("(k.producto_id ILIKE :f_q OR mi.descripcion ILIKE :f_q)"); p["f_q"] = f"%{q.strip()}%"
+        por_plan: dict[str, list[str]] = {}
+        for x in _csv(crit):
+            if ":" in x:
+                pl, cr = x.split(":", 1); por_plan.setdefault(pl, []).append(cr)
+        for i, (pl, crs) in enumerate(por_plan.items()):
+            cond.append(f"EXISTS (SELECT 1 FROM ddmrp.item_criterio ic{i} WHERE ic{i}.producto_id = k.producto_id AND ic{i}.plan_id = :cp{i} AND ic{i}.criterio_id = ANY(:cc{i}))")
+            p[f"cp{i}"] = pl; p[f"cc{i}"] = crs
+    p["mes_desde"] = mes_desde
+    sql = f"""
+    WITH v AS (
+      SELECT mb.empresa, a.bodega_id, COALESCE(r.original_id, a.producto_id) AS producto_id,
+             SUM(a.cantidad)::float8 AS cant, SUM(a.valor)::float8 AS valor,
+             MIN(a.mes) FILTER (WHERE a.cantidad > 0) AS primer_mes
+      FROM ddmrp.ventas_mensual a
+      JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = a.bodega_id
+      LEFT JOIN ddmrp.v_item_rec r ON r.empresa = mb.empresa AND r.rec_id = a.producto_id
+      WHERE a.mes >= :mes_desde
+      GROUP BY 1, 2, 3),
+    s AS (
+      SELECT empresa, bodega_id, producto_id, inventario::float8 AS inventario, iv::float8 AS iv, adu::float8 AS adu
+      FROM ddmrp.sugerencias_envio WHERE ejecucion_id = {ULTIMA}),
+    k AS (
+      SELECT COALESCE(v.empresa, s.empresa) AS empresa, COALESCE(v.bodega_id, s.bodega_id) AS bodega_id,
+             COALESCE(v.producto_id, s.producto_id) AS producto_id,
+             v.cant, v.valor, v.primer_mes, s.inventario, s.iv, s.adu
+      FROM v FULL JOIN s ON s.bodega_id = v.bodega_id AND s.producto_id = v.producto_id)
+    SELECT k.bodega_id, mb.descripcion AS bodega_nombre, k.producto_id, mi.descripcion, COALESCE(mi.categoria, '(sin laboratorio)') AS laboratorio,
+           COALESCE(k.cant, 0) AS cant, COALESCE(k.valor, 0) AS valor, k.primer_mes, COALESCE(k.inventario, 0) AS inventario, k.iv, COALESCE(k.adu, 0) AS adu,
+           (SELECT ci.costo::float8 FROM ddmrp.costo_item ci WHERE ci.producto_id = k.producto_id) AS costo
+    FROM k LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = k.producto_id LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = k.bodega_id
+    WHERE {' AND '.join(cond)}"""
+    return [dict(r) for r in c.execute(text(sql), p).mappings()]
+
+
+def _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, labs, crit, q, con_global=True):
+    if nivel not in cl.NIVELES:
+        raise HTTPException(400, f"nivel debe ser uno de {list(cl.NIVELES)}")
+    if criterio not in cl.CRITERIOS:
+        raise HTTPException(400, f"criterio debe ser uno de {list(cl.CRITERIOS)}")
+    if not (0 < corte_a < corte_b <= 100):
+        raise HTTPException(400, "Los cortes deben cumplir 0 < A < B <= 100")
+    mes_desde, d0, dias = _ventana(meses)
+    nuevo = cl.mes_nuevo(date.today(), 3) if meses >= 6 else None     # con ventanas cortas todo seria 'nuevo'
+    with pg.connect() as c:
+        cortes = _cortes_iv(c)
+        filas = _filas(c, user, mes_desde, True, empresa, bodegas, labs, crit, q)
+        hay_filtro = bool(_csv(empresa) or _csv(bodegas) or _csv(labs) or _csv(crit) or (q and q.strip()))
+        filas_g = _filas(c, user, mes_desde, False) if (con_global and hay_filtro) else None
+    items = cl.agregar(filas, nivel); cl.calcular(items, dias); cl.clasificar(items, criterio, corte_a, corte_b, nuevo, cortes)
+    if filas_g is not None:       # clase de cada item contra TODO el universo que el usuario puede ver (sin los filtros de pantalla)
+        glob = cl.agregar(filas_g, nivel); cl.calcular(glob, dias); cl.clasificar(glob, criterio, corte_a, corte_b, nuevo, cortes)
+        clave = (lambda x: (x["bodega_id"], x["producto_id"])) if nivel == "tienda_item" else (lambda x: x["producto_id"])
+        g = {clave(x): x["clase"] for x in glob}
+        for it in items:
+            it["clase_global"] = g.get(clave(it))
+    else:
+        for it in items:
+            it["clase_global"] = it["clase"]
+    meta = {"nivel": nivel, "criterio": criterio, "criterio_nombre": cl.CRITERIOS[criterio], "meses": min(max(meses, 1), 12), "desde": d0, "hasta": date.today(),
+            "dias": dias, "corte_a": corte_a, "corte_b": corte_b, "cortes_iv": cortes, "nuevo_desde": nuevo,
+            "sin_valor": not any(i["valor"] for i in items) and bool(items)}
+    return items, meta
+
+
+def _filtrar_salida(items, abc, xyz):
+    a = [x for x in _csv(abc) if x in cl.ORDEN_ABC]; z = [x for x in _csv(xyz) if x in cl.ORDEN_XYZ]
+    return [i for i in items if (not a or i["abc"] in a) and (not z or i["xyz"] in z)]
+
+
+@router.get("")
+def clasificar(nivel: str = "item", criterio: str = "margen", meses: int = 12, corte_a: float = 80, corte_b: float = 95,
+               empresa: str | None = None, bodegas: str | None = None, labs: str | None = None, crit: str | None = None, q: str | None = None,
+               abc: str | None = None, xyz: str | None = None, limit: int = Query(3000, le=20000), user=Depends(usuario_actual)):
+    items, meta = _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, labs, crit, q)
+    m = cl.matriz(items)                                                  # la matriz siempre es del filtro completo (no del filtro de clase)
+    vis = _filtrar_salida(items, abc, xyz)
+    vis.sort(key=lambda i: (cl.ORDEN_ABC.index(i["abc"]), i["puesto"] or 10**9, i["producto_id"]))
+    return {"meta": meta, "matriz": m, "filas": vis[:limit], "total": len(vis), "truncado": len(vis) > limit}
+
+
+COLS = [{"t": "Puesto", "k": "puesto", "f": "int", "w": 8}, {"t": "Clase", "k": "clase", "w": 8}, {"t": "ABC", "k": "abc", "w": 6}, {"t": "XYZ", "k": "xyz", "w": 6},
+        {"t": "Clase global", "k": "clase_global", "w": 11}, {"t": "% acumulado", "k": "pct_acum", "f": "dec1"},
+        {"t": "Tienda", "k": "bodega_id", "w": 9}, {"t": "Nombre tienda", "k": "bodega_nombre", "w": 24},
+        {"t": "Item", "k": "producto_id", "w": 11}, {"t": "Descripcion", "k": "descripcion", "w": 44}, {"t": "Laboratorio", "k": "laboratorio", "w": 14},
+        {"t": "Unidades vendidas", "k": "cant", "f": "int"}, {"t": "Venta neta $", "k": "valor", "f": "cop"}, {"t": "Costo de lo vendido $", "k": "costo_venta", "f": "cop"},
+        {"t": "Margen $", "k": "margen", "f": "cop"}, {"t": "Margen %", "k": "margen_pct", "f": "dec1"}, {"t": "Costo unitario", "k": "costo", "f": "cop"},
+        {"t": "Inventario (u.)", "k": "inventario", "f": "int"}, {"t": "Inventario a costo $", "k": "inv_costo", "f": "cop"},
+        {"t": "GMROI (anual)", "k": "gmroi", "f": "dec2"}, {"t": "Dias de inventario", "k": "dias_inv", "f": "int"},
+        {"t": "IV", "k": "iv", "f": "dec2"}, {"t": "ADU", "k": "adu", "f": "dec1"}, {"t": "Tiendas", "k": "tiendas", "f": "int"}]
+
+METODOLOGIA = [
+    ("Que es", "Clasificacion ABC (importancia economica) x XYZ (variabilidad de la demanda) de los items sobre la venta de una ventana de meses."),
+    ("Ventana", "{desde} a {hasta} ({meses} meses, {dias} dias). Lo que traen las ventas por mes del ETL."),
+    ("Venta neta $", "Venta sin IVA: valor bruto - descuento de linea - descuento global (las devoluciones restan). Facturas y POS de Siesa."),
+    ("Costo de lo vendido", "Unidades vendidas x costo promedio actual por instalacion (Siesa). Es el costo de hoy, no el de la fecha de la venta."),
+    ("Margen $", "Venta neta - costo de lo vendido. Margen % = margen / venta neta."),
+    ("Criterio del ABC", "{criterio}. Se ordena de mayor a menor y se acumula: A hasta el {corte_a}% del total, B hasta el {corte_b}%, C el resto. El item que cruza el corte queda en la clase mejor. Lo que no suma (margen <= 0) es C."),
+    ("XYZ", "Por el indice de variabilidad (IV) del motor: X = IV < {c1}, Y = {c1} a {c2}, Z = IV > {c2} (cortes de la tabla de factores VAR). A nivel item es el IV de sus tiendas ponderado por la venta diaria (ADU)."),
+    ("D", "Sin venta en la ventana (pero puede tener inventario: ver Inventario a costo)."),
+    ("N", "Producto nuevo: su primera venta es de {nuevo_desde} en adelante; aun no tiene historia para clasificarlo. Solo se aplica con ventanas de 6 meses o mas."),
+    ("S", "Sin costo conocido en Siesa: no se puede calcular margen ni consumo a costo."),
+    ("GMROI", "Margen anualizado / inventario a costo de hoy. Cuantos pesos de margen deja cada peso invertido en inventario al año."),
+    ("Dias de inventario", "Inventario de hoy / venta diaria promedio de la ventana."),
+    ("Clase global", "La clase que tendria el item con todo lo que el usuario puede ver, sin los filtros de pantalla (la 'Clase' se recalcula solo con lo filtrado)."),
+    ("Items", "Solo activos (regla solo_items_activos); los REC suman al original."),
+]
+
+
+@router.get("/excel")
+def exportar(nivel: str = "item", criterio: str = "margen", meses: int = 12, corte_a: float = 80, corte_b: float = 95,
+             empresa: str | None = None, bodegas: str | None = None, labs: str | None = None, crit: str | None = None, q: str | None = None,
+             abc: str | None = None, xyz: str | None = None, user=Depends(usuario_actual)):
+    items, meta = _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, labs, crit, q)
+    m = cl.matriz(items)
+    vis = _filtrar_salida(items, abc, xyz)
+    vis.sort(key=lambda i: (cl.ORDEN_ABC.index(i["abc"]), i["puesto"] or 10**9, i["producto_id"]))
+    cols = [c for c in COLS if nivel == "tienda_item" or c["k"] not in ("bodega_id", "bodega_nombre")]
+    wb = excel.libro()
+    # hoja resumen: una fila por celda de la matriz
+    res_cols = [{"t": "ABC", "k": "abc", "w": 8}, {"t": "XYZ", "k": "xyz", "w": 8}, {"t": "Items", "k": "n", "f": "int"}, {"t": "Venta neta $", "k": "venta", "f": "cop"},
+                {"t": "Margen $", "k": "margen", "f": "cop"}, {"t": "Inventario a costo $", "k": "inv_costo", "f": "cop"}, {"t": "Inventario (u.)", "k": "inventario", "f": "int"}]
+    excel.hoja(wb, "Resumen", res_cols, m["celdas"] + [{"abc": "TOTAL", "xyz": "", **m["total"], "inventario": None}])
+    excel.hoja(wb, "Detalle", cols, vis, fijar=5)
+    ctx = {"desde": meta["desde"], "hasta": meta["hasta"], "meses": meta["meses"], "dias": meta["dias"], "criterio": meta["criterio_nombre"], "corte_a": corte_a,
+           "corte_b": corte_b, "c1": meta["cortes_iv"][0], "c2": meta["cortes_iv"][1], "nuevo_desde": meta["nuevo_desde"] or "(no aplica)"}
+    excel.hoja_texto(wb, "Metodologia", [(k, v.format(**ctx)) for k, v in METODOLOGIA], ancho=(24, 120))
+    excel.hoja_texto(wb, "Filtros", [("Reporte", "Clasificacion ABC x XYZ"), ("Generado", datetime.now().strftime("%Y-%m-%d %H:%M")),
+                                     ("Usuario", f"{user.get('nombre', '')} ({user.get('id', '')})"), ("Nivel", cl.NIVELES[nivel]), ("Criterio", meta["criterio_nombre"]),
+                                     ("Empresa", empresa or "todas"), ("Tiendas", bodegas or "todas"), ("Laboratorios", labs or "todos"), ("Criterios de items", crit or ""),
+                                     ("Busqueda", q or ""), ("Clases mostradas en Detalle", f"ABC: {abc or 'todas'} · XYZ: {xyz or 'todas'}"),
+                                     ("Filas en Detalle", f"{len(vis)} de {len(items)}")])
+    return Response(excel.a_bytes(wb), media_type=excel.XLSX,
+                    headers={"Content-Disposition": f'attachment; filename="clasificacion_{nivel}_{criterio}_{datetime.now():%Y%m%d_%H%M}.xlsx"'})

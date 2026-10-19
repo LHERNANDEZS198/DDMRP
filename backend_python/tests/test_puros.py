@@ -62,3 +62,39 @@ def test_pivotear():
     r = mapa_calor.pivotear(f, [("B1", "P1"), ("B2", "P1")], h, "inventario")
     assert r[("B1", "P1")] == ([3.0, 9.0], "RV") and r[("B2", "P1")] == ([None, 50.0], " E")
     assert mapa_calor.pivotear(f, [("B1", "P1")], h, "pct_buffer")[("B1", "P1")][0] == [10.0, 120.0]
+
+
+def test_clasificacion_abc_xyz():
+    from app import clasificacion as cl
+    filas = []
+    def fila(p, b, cant, valor, costo, inv=10, iv=0.3, adu=10, pm="202601"):
+        filas.append({"producto_id": p, "bodega_id": b, "descripcion": p, "cant": cant, "valor": valor, "costo": costo, "inventario": inv, "iv": iv, "adu": adu, "primer_mes": pm})
+    fila("P1", "T1", 100, 10000, 50)      # margen 5000
+    fila("P1", "T2", 100, 10000, 50)      # P1 total 10000
+    fila("P2", "T1", 50, 4000, 70)        # margen 500
+    fila("P3", "T1", 10, 500, 80)         # margen -300 -> C
+    fila("P4", "T1", 0, 0, 10)            # D
+    fila("P5", "T1", 5, 300, 10, pm="202610")   # N
+    fila("P6", "T1", 5, 300, None)        # S
+    fila("P7", "T1", 40, 1000, 10, iv=0.9)  # margen 600 -> Z
+    it = cl.agregar(filas, "item"); cl.calcular(it, 365); cl.clasificar(it, "margen", 80, 95, mes_nuevo="202608")
+    d = {x["producto_id"]: x for x in it}
+    assert d["P1"]["margen"] == 10000 and d["P1"]["abc"] == "A" and d["P1"]["puesto"] == 1
+    assert d["P7"]["abc"] in ("B", "C") and d["P7"]["xyz"] == "Z" and d["P7"]["clase"] in ("BZ", "CZ")
+    assert d["P3"]["abc"] == "C" and d["P4"]["abc"] == "D" and d["P5"]["abc"] == "N" and d["P6"]["abc"] == "S"
+    assert d["P1"]["tiendas"] == 2 and d["P1"]["inventario"] == 20
+    assert abs(d["P1"]["gmroi"] - 10000 / (20 * 50)) < 1e-9          # margen anual / inventario a costo
+    m = cl.matriz(it); assert m["total"]["n"] == 7 and sum(c["n"] for c in m["celdas"]) == 7
+    ti = cl.agregar(filas, "tienda_item"); cl.calcular(ti, 365); cl.clasificar(ti, "venta", 80, 95)
+    assert len(ti) == 8 and next(x for x in ti if x["producto_id"] == "P6")["abc"] != "S"   # con criterio venta no hace falta el costo
+
+
+def test_clasificacion_validaciones_y_cortes_iv():
+    import pytest
+    from app import clasificacion as cl
+    assert cl.clase_xyz(0.49) == "X" and cl.clase_xyz(0.5) == "Y" and cl.clase_xyz(0.8) == "Y" and cl.clase_xyz(0.81) == "Z" and cl.clase_xyz(None) == "-"
+    with pytest.raises(ValueError):
+        cl.clasificar([], "margen", 95, 80)
+    with pytest.raises(ValueError):
+        cl.clasificar([], "otro")
+    assert cl.mes_nuevo(date(2026, 10, 19), 3) == "202608" and cl.mes_nuevo(date(2026, 2, 1), 3) == "202512"
