@@ -6,3 +6,9 @@
   --ag-active-color: #6e8a37;
   --ag-font-family: inherit;
 }
+
+/* selección de celdas por rango (clic y arrastre, Ctrl+C copia) */
+.ag-theme-quartz .ag-cell.celda-rango {
+  background-color: rgba(110, 138, 55, .22) !important;
+  user-select: none;
+}
