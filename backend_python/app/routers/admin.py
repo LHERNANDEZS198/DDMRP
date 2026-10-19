@@ -57,7 +57,7 @@ def ventas(user=Depends(requiere("sincronizar_siesa"))):
 @router.get("/motor-hoy")
 def motor_hoy(user=Depends(requiere("correr_motor"))):
     """Para advertir antes de volver a correr el motor el mismo dia: cada corrida nueva crea una ejecucion y la matriz solo
-    muestra la ultima, asi que lo aprobado/enviado de la anterior deja de verse y el plano solo exporta la ultima."""
+    muestra la ultima: lo aprobado sin enviar vuelve a PENDIENTE (lo ENVIADO se hereda) y el plano solo exporta la ultima."""
     from datetime import date
     from sqlalchemy import text
     from ..db import pg

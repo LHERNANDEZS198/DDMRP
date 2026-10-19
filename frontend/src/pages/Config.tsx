@@ -13,23 +13,13 @@ import { api, apiLista, bajar, subir, conProgreso } from '../api'
 import Aviso from '../Aviso'
 import { useYo } from '../Yo'
 import { confirmar, confirmarEscribiendo, esc } from '../alertas'
+import PegarGrilla, { ColPegar } from '../PegarGrilla'
 
 type Filtros = { tienda: boolean; item: boolean; lab: boolean; texto: boolean; empresa?: boolean; empresa_opc?: boolean; mes?: boolean }
 type Tienda = { bodega_id: string; nombre: string | null; empresa: string | null }
 type Lab = { codigo: string; nombre: string | null }
 type Def = { ayuda: string; filtros: Filtros; todas?: boolean; clave: string; label: string; llave: string[]; editable: string[]; tipos: Record<string, string>; sin_reemplazo: boolean; puede_vaciar?: boolean }
 
-// Pega filas desde Excel (con encabezados). Separador: tab, ; o coma.
-function parsear(txt: string): Record<string, string>[] {
-  const lineas = txt.split(/\r?\n/).map(l => l.trim()).filter(Boolean)
-  if (lineas.length < 2) return []
-  const sep = lineas[0].includes('\t') ? '\t' : lineas[0].includes(';') ? ';' : ','
-  const cab = lineas[0].split(sep).map(c => c.trim())
-  return lineas.slice(1).map(l => {
-    const v = l.split(sep).map(c => c.trim())
-    return Object.fromEntries(cab.map((c, i) => [c, v[i] ?? '']))
-  })
-}
 
 const OPERADORES: { v: string; t: string; solo?: 'txt' | 'num' }[] = [
   { v: 'contiene', t: 'contiene', solo: 'txt' }, { v: 'eq', t: '=' }, { v: 'ne', t: '≠' },
@@ -78,7 +68,7 @@ export default function Config() {
   const [nueva, setNueva] = useState<Record<string, string>>({})
   const [msg, setMsg] = useState('')
   const [pegar, setPegar] = useState(false)
-  const [txt, setTxt] = useState('')
+  const [enviando, setEnviando] = useState(false)
   const [modo, setModo] = useState<'actualizar' | 'reemplazar'>('actualizar')
   const [omitir, setOmitir] = useState(false)
   const [grid, setGrid] = useState<GridApi | null>(null)
@@ -150,15 +140,23 @@ export default function Config() {
     catch (x: any) { setMsg('Error: ' + x.message) }
     if (fileRef.current) fileRef.current.value = ''
   }
-  const enviar = async () => {
-    const filas = parsear(txt)
-    if (!filas.length) { setMsg('Pega encabezados y al menos una fila'); return }
+  // columnas de la grilla de pegado: las mismas que acepta el Excel (tienda, empresa, resto de la llave y los campos editables)
+  const colsPegar = useMemo<ColPegar[]>(() => !def ? [] : [
+    ...(def.filtros.tienda ? [{ key: 'bodega_id', titulo: 'Tienda (código)', obligatoria: !def.todas, ayuda: def.todas ? 'Código de Siesa (ej. SV021). Vacía o * = todas las tiendas' : 'Código de Siesa (ej. SV021)' }] : []),
+    ...(def.llave.includes('empresa') ? [{ key: 'empresa', titulo: 'Empresa', ayuda: '05 Funat · 21 Stores. Vacía = se deduce de la tienda (obligatoria si el código existe en las dos empresas, ej. Melonn)' }] : []),
+    ...def.llave.filter(k => k !== 'empresa' && !(def.filtros.tienda && k === 'bodega_id')).map(k => ({ key: k, titulo: k.replace(/_/g, ' '), obligatoria: true,
+      ayuda: k === 'producto_id' ? 'Referencia de 6 dígitos (ej. 019901)' : undefined })),
+    ...def.editable.map(k => ({ key: k, titulo: k.replace(/_/g, ' ') })),
+  ], [def])
+  const enviarGrilla = async (filas: Record<string, string>[]) => {
+    if (!filas.length) { setMsg('Pega al menos una fila'); return }
     if (!(await confirmarModo())) return
+    setEnviando(true)
     try {
       setMsg(`Cargando ${filas.length.toLocaleString()} filas pegadas…`)
       const r = await api('/maestros/' + sel + '/carga', { method: 'POST', body: JSON.stringify({ filas, modo, omitir_invalidas: omitir }) })
-      setMsg(resumen(r)); setPegar(false); setTxt(''); cargar()
-    } catch (x: any) { setMsg('Error: ' + x.message) }
+      setMsg(resumen(r)); setPegar(false); cargar()
+    } catch (x: any) { setMsg('Error: ' + x.message) } finally { setEnviando(false) }
   }
   const traerTiendas = async () => {
     try { setMsg('Trayendo las tiendas de Siesa…'); const r = await conProgreso(setMsg, () => api('/admin/sincronizar-bodegas', { method: 'POST' })); setMsg(`Tiendas sincronizadas: ${r.tiendas}`) }
@@ -307,11 +305,7 @@ export default function Config() {
           <Chip size="small" label={total > rows.length ? `Mostrando ${rows.length.toLocaleString('es-CO')} de ${total.toLocaleString('es-CO')} filas` : `${rows.length.toLocaleString('es-CO')} ${rows.length === 1 ? 'fila' : 'filas'}`} color={total > rows.length ? 'warning' : 'default'} />
         </Paper>)}
       {total > rows.length && <Alert severity="warning" sx={{ py: 0 }}>Este maestro tiene {total.toLocaleString('es-CO')} filas y la pantalla solo muestra las primeras {rows.length.toLocaleString('es-CO')}: usa los filtros de arriba (tienda, item, empresa, columna…: los resuelve el servidor sobre todas las filas) para ver y editar lo que buscas. “Descargar Excel” baja todo lo filtrado, sin ese tope, y “Eliminar todo lo filtrado” borra todo lo filtrado.</Alert>}
-      {pegar && def && (
-        <Stack spacing={1}>
-          <TextField multiline minRows={4} fullWidth value={txt} onChange={e => setTxt(e.target.value)} placeholder="Pega aquí con la fila de encabezados" />
-          <Box><Button variant="contained" onClick={enviar}>Cargar</Button></Box>
-        </Stack>)}
+      {pegar && def && <PegarGrilla key={sel} titulo={def.label} columnas={colsPegar} ocupado={enviando} onFinalizar={enviarGrilla} onCancelar={() => setPegar(false)} />}
       <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 300 }}>
         <Tabla cargando={cargando} vacio="Este maestro está vacío: carga datos con Excel, pegando o trayendo de Siesa" rowData={rows} columnDefs={cols} onCellValueChanged={onChange} rowBuffer={20} rowSelection="multiple"
           onGridReady={e => setGrid(e.api)} onSortChanged={onSort} defaultColDef={{ resizable: true, sortable: true, filter: false }} />
