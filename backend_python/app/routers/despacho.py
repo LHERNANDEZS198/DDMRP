@@ -141,6 +141,19 @@ def tiendas_bajo_minimo(c, eid: int, bodegas: list[str] | None = None) -> tuple[
     return {b: v for b, v in rows if v < minimo}, minimo, True
 
 
+def consumir_derrame(c, eid, empresa, bodegas):
+    """Regla 'vectorizacion_un_solo_uso' = 1: el derrame (vectorizacion) se pone en 0 en el maestro al marcar la fila como ENVIADA,
+    para que no se vuelva a sumar en la siguiente corrida. Con 0 (por defecto) el derrame se sigue sumando mientras exista en el maestro."""
+    if not (c.execute(text("SELECT valor FROM ddmrp.parametro WHERE clave='vectorizacion_un_solo_uso'")).scalar() or 0) >= 1 or not bodegas:
+        return 0
+    return c.execute(text("""UPDATE ddmrp.abast_vectorizacion v SET vectorizacion = 0
+                             FROM ddmrp.sugerencias_envio s
+                             WHERE s.ejecucion_id = :e AND s.estado = 'APROBADA' AND s.empresa = :emp AND s.bodega_id = ANY(:b)
+                               AND COALESCE(s.cantidad_aprobada, s.cantidad_sugerida) >= 0.5
+                               AND v.empresa = s.empresa AND v.bodega_id = s.bodega_id AND v.producto_id = s.producto_id AND v.vectorizacion <> 0"""),
+                     {"e": eid, "emp": empresa, "b": list(bodegas)}).rowcount
+
+
 class MarcarReq(BaseModel):
     ejecucion_id: int | None = None
     bodegas: list[str] | None = None     # solo estas tiendas; None = todas las que tengan aprobadas
@@ -164,6 +177,7 @@ def marcar_enviadas(req: MarcarReq, user=Depends(requiere("aprobar_despacho", "d
             exigir(user, b, None, "aprobacion")
         bajo, minimo, _ = tiendas_bajo_minimo(c, eid, req.bodegas)
         ok = [b for b in tiendas if b not in bajo]
+        consumir_derrame(c, eid, req.empresa, ok)
         n = c.execute(text("""UPDATE ddmrp.sugerencias_envio SET estado = 'ENVIADA'::ddmrp.estado_sugerencia
                               WHERE ejecucion_id = :e AND estado = 'APROBADA' AND bodega_id = ANY(:b) AND empresa = :emp"""), {"e": eid, "b": ok, "emp": req.empresa}).rowcount if ok else 0
     bitacora.evento("aprobacion", bitacora.usuario_de(user), f"Marcó como enviadas {n} filas de {len(ok)} tiendas" + (f"; {len(bajo)} tiendas bajo el mínimo no se enviaron" if bajo else ""),
@@ -214,6 +228,7 @@ def exportar_plano(req: PlanoReq, user=Depends(requiere("descargar_planos"))):
         data = generar_xlsx(lineas, fecha=fecha, consec_inicial=req.consec_inicial,
                             notas=req.notas or notas_por_defecto(fecha, req.dia))
         if req.marcar_enviadas:
+            consumir_derrame(c, eid, req.empresa, sorted({r[0] for r in rows}))
             c.execute(text("""UPDATE ddmrp.sugerencias_envio SET estado = 'ENVIADA'::ddmrp.estado_sugerencia
                               WHERE ejecucion_id = :e AND estado = 'APROBADA'
                                 AND COALESCE(cantidad_aprobada, cantidad_sugerida) >= 0.5 AND bodega_id = ANY(:b)

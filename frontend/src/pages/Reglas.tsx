@@ -11,7 +11,7 @@ type Regla = { clave: string; titulo: string; ayuda: string; opciones: { valor: 
 
 const grupos: [string, string[]][] = [
   ['Decisión de pedido', ['regla_disparo', 'regla_objetivo', 'regla_redondeo', 'cantidad_minima']],
-  ['Qué entra al flujo neto y a lo sugerido', ['incluir_transito', 'restar_demanda_calificada', 'sumar_vectorizacion']],
+  ['Qué entra al flujo neto y a lo sugerido', ['incluir_transito', 'restar_demanda_calificada', 'sumar_vectorizacion', 'vectorizacion_un_solo_uso']],
   ['Inventario del CEDI (cuando no alcanza)', ['cedi_regla_reparto']],
   ['Envío a las tiendas (Matriz de despacho)', ['valor_minimo_envio']],
   ['Datos de Siesa', ['etl_traer_ventas', 'inv_tiendas_resta_comprometido', 'inv_tiendas_resta_sin_acumular']],
