@@ -9,6 +9,7 @@ import Dashboard from './pages/Dashboard'
 import Config from './pages/Config'
 import Despacho from './pages/Despacho'
 import Reglas from './pages/Reglas'
+import Motor from './pages/Motor'
 import Usuarios from './pages/Usuarios'
 import Log from './pages/Log'
 import Auditoria from './pages/Auditoria'
@@ -27,6 +28,7 @@ export const PANTALLAS = [
   { to: '/dashboard', req: ['ver_alertas'] },
   { to: '/despacho', req: ['ver_despacho'] },
   { to: '/auditoria', req: ['ver_auditoria'] },
+  { to: '/motor', req: ['correr_motor'] },
   { to: '/reglas', req: ['editar_reglas', 'correr_motor'] },
   { to: '/config', req: ['ver_maestros', 'cargar_maestros', 'sincronizar_siesa'] },
   { to: '/usuarios', req: ['admin_usuarios'] },
@@ -70,6 +72,7 @@ export default function App() {
           <Route path="/lanzamientos" element={<Req to="/lanzamientos"><Lanzamientos /></Req>} />
           <Route path="/dashboard" element={<Req to="/dashboard"><Dashboard /></Req>} />
           <Route path="/despacho" element={<Req to="/despacho"><Despacho /></Req>} />
+          <Route path="/motor" element={<Req to="/motor"><Motor /></Req>} />
           <Route path="/reglas" element={<Req to="/reglas"><Reglas /></Req>} />
           <Route path="/config" element={<Req to="/config"><Config /></Req>} />
           <Route path="/usuarios" element={<Req to="/usuarios"><Usuarios /></Req>} />

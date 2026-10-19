@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { AppBar, Avatar, Box, Divider, Drawer, IconButton, List, ListItemButton, ListItemIcon, ListItemText, Menu, MenuItem,
+import { AppBar, Avatar, Box, Divider, Drawer, IconButton, List, ListItemButton, ListItemIcon, ListItemText, ListSubheader, Menu, MenuItem,
   Toolbar, Typography, useMediaQuery, useTheme, Button } from '@mui/material'
 import ExpandMore from '@mui/icons-material/ExpandMore'
 import MenuIcon from '@mui/icons-material/Menu'
 import LogoutIcon from '@mui/icons-material/Logout'
-import WarningAmber from '@mui/icons-material/WarningAmber'
+import Calculate from '@mui/icons-material/Calculate'
 import LocalShipping from '@mui/icons-material/LocalShipping'
 import Rule from '@mui/icons-material/Rule'
 import Insights from '@mui/icons-material/Insights'
@@ -13,28 +13,27 @@ import Storage from '@mui/icons-material/Storage'
 import ManageAccounts from '@mui/icons-material/ManageAccounts'
 import History from '@mui/icons-material/History'
 import FactCheck from '@mui/icons-material/FactCheck'
-import RocketLaunch from '@mui/icons-material/RocketLaunch'
-import Category from '@mui/icons-material/Category'
-import MonitorHeart from '@mui/icons-material/MonitorHeart'
 import { useYo } from './Yo'
 import { BannerSalud } from './Salud'
 import Errores from './Errores'
 import { getUser, logout } from './api'
 
+/** Menú «Informes»: todo lo que se consulta (no se opera). Agrupado en el desplegable. */
 export const VISTAS = [
-  { to: '/control', label: 'Foto actual', ayuda: 'Estado del buffer hoy' },
-  { to: '/control/cambios', label: 'Cambios en un periodo', ayuda: 'Cómo se movió el semáforo entre dos fechas' },
-  { to: '/control/tendencia', label: 'Tendencia en el tiempo', ayuda: 'Curva del buffer, inventario y flujo neto' },
-  { to: '/control/mapa', label: 'Mapa de calor', ayuda: 'Item × tienda × fecha con el color de la zona, como el Excel' },
+  { grupo: 'Control DDMRP', to: '/control', label: 'Foto actual', ayuda: 'Estado del buffer hoy', req: ['ver_control'] },
+  { grupo: 'Control DDMRP', to: '/control/cambios', label: 'Cambios en un periodo', ayuda: 'Cómo se movió el semáforo entre dos fechas', req: ['ver_control'] },
+  { grupo: 'Control DDMRP', to: '/control/tendencia', label: 'Tendencia en el tiempo', ayuda: 'Curva del buffer, inventario y flujo neto', req: ['ver_control'] },
+  { grupo: 'Control DDMRP', to: '/control/mapa', label: 'Mapa de calor', ayuda: 'Item × tienda × fecha con el color de la zona, como el Excel', req: ['ver_control'] },
+  { grupo: 'Análisis', to: '/dashboard', label: 'Alertas', ayuda: 'Zona roja y lo que hay que atender', req: ['ver_alertas'] },
+  { grupo: 'Análisis', to: '/salud-inventario', label: 'Salud del inventario', ayuda: 'Zona de hoy × importancia del item: qué atender primero', req: ['ver_control'] },
+  { grupo: 'Análisis', to: '/clasificacion', label: 'Clasificación ABC', ayuda: 'ABC por margen × XYZ por variabilidad, con filtros', req: ['ver_control'] },
+  { grupo: 'Análisis', to: '/lanzamientos', label: 'Lanzamientos', ayuda: 'Items nuevos y reingresos al CEDI', req: ['ver_control'] },
 ]
 export const NAV = [
-  { to: '/control', label: 'Control DDMRP', icon: <Insights />, vistas: true, req: ['ver_control'] },
-  { to: '/salud-inventario', label: 'Salud del inventario', icon: <MonitorHeart />, req: ['ver_control'] },
-  { to: '/clasificacion', label: 'Clasificación ABC', icon: <Category />, req: ['ver_control'] },
-  { to: '/lanzamientos', label: 'Lanzamientos', icon: <RocketLaunch />, req: ['ver_control'] },
-  { to: '/dashboard', label: 'Alertas', icon: <WarningAmber />, req: ['ver_alertas'] },
+  { to: '/control', label: 'Informes', icon: <Insights />, vistas: true, req: ['ver_control', 'ver_alertas'] },
   { to: '/despacho', label: 'Matriz de despacho', icon: <LocalShipping />, req: ['ver_despacho'] },
   { to: '/auditoria', label: 'Auditoría', icon: <FactCheck />, req: ['ver_auditoria'] },
+  { to: '/motor', label: 'Motor DDMRP', icon: <Calculate />, req: ['correr_motor'] },
   { to: '/reglas', label: 'Reglas de pedido', icon: <Rule />, req: ['editar_reglas', 'correr_motor'] },
   { to: '/config', label: 'Maestros', icon: <Storage />, req: ['ver_maestros', 'cargar_maestros', 'sincronizar_siesa'] },
   { to: '/usuarios', label: 'Usuarios', icon: <ManageAccounts />, req: ['admin_usuarios'] },
@@ -44,11 +43,14 @@ export const NAV = [
 export default function Shell() {
   const { yo, puede } = useYo()
   const NAV_OK = NAV.filter(n => puede(...n.req))
+  const VISTAS_OK = VISTAS.filter(v => puede(...v.req))
   const theme = useTheme(); const movil = useMediaQuery(theme.breakpoints.down('md'))
   const [abierto, setAbierto] = useState(false); const [ancla, setAncla] = useState<HTMLElement | null>(null)
   const loc = useLocation(); const user = getUser(); const nav = useNavigate()
   const [anclaV, setAnclaV] = useState<HTMLElement | null>(null)
-  const titulo = NAV.find(n => loc.pathname.startsWith(n.to))?.label ?? ''
+  const enInformes = VISTAS.some(v => v.to === '/control' ? loc.pathname === '/control' : loc.pathname.startsWith(v.to))
+  const titulo = VISTAS.find(v => loc.pathname === v.to)?.label ?? NAV.find(n => !(n as any).vistas && loc.pathname.startsWith(n.to))?.label ?? ''
+  const activo = (n: any) => n.vistas ? enInformes : loc.pathname.startsWith(n.to)
   return (
     <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
       <AppBar position="static" color="primary">
@@ -59,14 +61,16 @@ export default function Shell() {
           {!movil ? NAV_OK.map(n => (n as any).vistas ? (
             <Box key={n.to}>
               <Button color="inherit" startIcon={n.icon} endIcon={<ExpandMore />} onClick={e => setAnclaV(e.currentTarget)}
-                sx={{ opacity: loc.pathname.startsWith(n.to) ? 1 : .75, borderBottom: loc.pathname.startsWith(n.to) ? '2px solid #fff' : '2px solid transparent', borderRadius: 0 }}>{n.label}</Button>
+                sx={{ opacity: activo(n) ? 1 : .75, borderBottom: activo(n) ? '2px solid #fff' : '2px solid transparent', borderRadius: 0 }}>{n.label}</Button>
               <Menu anchorEl={anclaV} open={!!anclaV} onClose={() => setAnclaV(null)}>
-                {VISTAS.map(v => <MenuItem key={v.to} selected={loc.pathname === v.to} onClick={() => { setAnclaV(null); nav(v.to) }}>
-                  <Box><Box sx={{ fontWeight: 600 }}>{v.label}</Box><Box sx={{ fontSize: 12, color: 'text.secondary' }}>{v.ayuda}</Box></Box></MenuItem>)}
+                {[...new Set(VISTAS_OK.map(v => v.grupo))].flatMap(g => [
+                  <ListSubheader key={'g' + g} sx={{ lineHeight: '30px', fontWeight: 700, color: 'primary.main' }}>{g}</ListSubheader>,
+                  ...VISTAS_OK.filter(v => v.grupo === g).map(v => <MenuItem key={v.to} selected={loc.pathname === v.to} onClick={() => { setAnclaV(null); nav(v.to) }}>
+                    <Box><Box sx={{ fontWeight: 600 }}>{v.label}</Box><Box sx={{ fontSize: 12, color: 'text.secondary' }}>{v.ayuda}</Box></Box></MenuItem>)])}
               </Menu>
             </Box>) : (
             <Button key={n.to} component={NavLink} to={n.to} color="inherit" startIcon={n.icon}
-              sx={{ opacity: loc.pathname.startsWith(n.to) ? 1 : .75, borderBottom: loc.pathname.startsWith(n.to) ? '2px solid #fff' : '2px solid transparent', borderRadius: 0 }}>
+              sx={{ opacity: activo(n) ? 1 : .75, borderBottom: activo(n) ? '2px solid #fff' : '2px solid transparent', borderRadius: 0 }}>
               {n.label}</Button>))
             : <Typography sx={{ flex: 1 }}>{titulo}</Typography>}
           <Box sx={{ flex: 1 }} />
@@ -81,7 +85,7 @@ export default function Shell() {
       </AppBar>
       <Drawer open={abierto} onClose={() => setAbierto(false)}>
         <List sx={{ width: 250 }}>
-          {NAV_OK.flatMap(n => (n as any).vistas ? VISTAS.map(v => ({ to: v.to, label: 'Control · ' + v.label, icon: n.icon })) : [n]).map(n => (
+          {NAV_OK.flatMap(n => (n as any).vistas ? VISTAS_OK.map(v => ({ to: v.to, label: 'Informes · ' + v.label, icon: n.icon })) : [n]).map(n => (
             <ListItemButton key={n.to} component={NavLink} to={n.to} onClick={() => setAbierto(false)} selected={loc.pathname === n.to}>
               <ListItemIcon>{n.icon}</ListItemIcon><ListItemText primary={n.label} /></ListItemButton>))}
         </List>

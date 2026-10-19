@@ -1,11 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Alert, Box, Button, Card, CardContent, CardHeader, Chip, Dialog, DialogActions, DialogContent, DialogTitle, MenuItem, Stack, Table, TableBody, TableCell, TableRow, TextField, Typography } from '@mui/material'
-import Calculate from '@mui/icons-material/Calculate'
-import PlayCircle from '@mui/icons-material/PlayCircle'
-import { api, conProgreso, seguirTarea } from '../api'
+import { Alert, Box, Button, Card, CardContent, CardHeader, Chip, MenuItem, Stack, Table, TableBody, TableCell, TableRow, TextField, Typography } from '@mui/material'
+import { Link as RouterLink } from 'react-router-dom'
+import { api } from '../api'
 import Aviso from '../Aviso'
 import { useYo } from '../Yo'
-import { useSalud } from '../Salud'
 
 type Regla = { clave: string; titulo: string; ayuda: string; opciones: { valor: number; label: string }[] | null; valor: number | null }
 
@@ -21,7 +19,7 @@ const grupos: [string, string[]][] = [
 ]
 
 /** A que tiendas se reparte el inventario del CEDI cuando no alcanza: todas, o solo las de los DIAs elegidos. */
-function RepartoDias({ editar, onCambio, compacto, onElegidos }: { editar: boolean; onCambio: (m: string) => void; compacto?: boolean; onElegidos?: (e: number[]) => void }) {
+export function RepartoDias({ editar, onCambio, compacto, onElegidos }: { editar: boolean; onCambio: (m: string) => void; compacto?: boolean; onElegidos?: (e: number[]) => void }) {
   const [d, setD] = useState<{ elegidos: number[]; dias: { dia: number; tiendas: number }[] } | null>(null)
   const cargar = () => api('/reglas/reparto-dias').then(x => { setD(x); onElegidos?.(x.elegidos) }).catch(() => {})
   useEffect(() => { cargar() }, [])
@@ -98,7 +96,6 @@ function Diagnostico() {
 
 export default function Reglas() {
   const { puede } = useYo(); const editar = puede('editar_reglas'); const motor = puede('correr_motor')
-  const { enCurso, refrescar } = useSalud()
   const [reglas, setReglas] = useState<Regla[]>([])
   const [msg, setMsg] = useState('')
   const cargar = () => api('/reglas').then(setReglas).catch(e => setMsg('Error: ' + e.message))
@@ -107,67 +104,14 @@ export default function Reglas() {
     try { const x = await api('/reglas/' + r.clave, { method: 'PUT', body: JSON.stringify({ valor }) }); setMsg(`${r.titulo}: guardado. ${x.aviso}`); cargar() }
     catch (e: any) { setMsg('Error: ' + e.message) }
   }
-  // Antes de correr el motor, si ya corrió hoy, avisa qué se pierde de vista y pide confirmar
-  const [aviso, setAviso] = useState<{ que: 'motor' | 'pipeline'; d: any } | null>(null)
-  const preguntar = async (que: 'motor' | 'pipeline') => {
-    try { const d = await api('/admin/motor-hoy'); setAviso({ que, d }); return } catch { /* si falla la consulta, no bloquea */ }
-    que === 'motor' ? recalcular() : pipeline()
-  }
-  const recalcular = async () => {
-    setMsg('Recalculando con el motor Rust…'); setTimeout(refrescar, 800)
-    try { const x = await conProgreso(setMsg, () => api('/admin/correr-motor', { method: 'POST' })); setMsg(`Listo: ${x.filas} combinaciones calculadas`) } catch (e: any) { setMsg('Error: ' + e.message) } finally { refrescar() }
-  }
-  const pipeline = async () => {
-    setMsg('Lanzando ETL + motor…')
-    try {
-      const previo = (await api('/admin/progreso')).inicio ?? null
-      await api('/admin/correr-pipeline', { method: 'POST' }); setTimeout(refrescar, 800)
-      const fin = await seguirTarea(setMsg, previo)
-      setMsg(fin.estado === 'error' ? fin.mensaje : `Listo: ${fin.mensaje}. Revisa Alertas y Control.`)
-    } catch (e: any) { setMsg('Error: ' + e.message) } finally { refrescar() }
-  }
   return (
     <Box sx={{ maxWidth: 860, mx: 'auto', display: 'grid', gap: 2 }}>
-      <Dialog open={!!aviso} onClose={() => setAviso(null)} maxWidth="sm" fullWidth>
-        <DialogTitle>{aviso?.d.corrio_hoy ? 'El motor ya corrió hoy' : (aviso?.que === 'pipeline' ? 'Correr ETL + motor' : 'Recalcular con el motor')}</DialogTitle>
-        <DialogContent sx={{ display: 'grid', gap: 1.5 }}>
-          <Alert severity="info" sx={{ '& .MuiAlert-message': { width: '100%' } }}>
-            <RepartoDias editar={editar} compacto onCambio={m => { if (m.startsWith('Error')) setMsg(m) }}
-              onElegidos={e => setAviso(p => p ? { ...p, d: { ...p.d, dias_reparto: e } } : p)} />
-            <Typography variant="body2" sx={{ mt: 1 }}>
-              {aviso?.d.dias_reparto?.length
-                ? <>Solo compiten por la escasez las tiendas de los <b>DIAs {aviso.d.dias_reparto.join(' + ')}</b>; las demás quedan con lo que pide su buffer.</>
-                : <>Si el CEDI no alcanza, se reparte entre <b>todas las tiendas</b>.</>}
-              {!editar && ' (No tienes permiso para cambiarlo.)'}
-            </Typography>
-          </Alert>
-          {aviso?.d.corrio_hoy && <Typography>
-            Ya hay {aviso?.d.corridas} corrida(s) de hoy (la última a las {aviso?.d.ultima ? new Date(aviso.d.ultima).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }) : ''}).
-            Si corres de nuevo:
-          </Typography>}
-          <Box component="ul" sx={{ m: 0, pl: 3, display: 'grid', gap: 0.5 }}>
-            {aviso?.d.corrio_hoy && <li>La matriz de despacho y el plano pasan a usar <b>solo la corrida nueva</b>.</li>}
-            {aviso?.d.corrio_hoy && <li>Todo vuelve a <b>Pendiente</b>: lo aprobado y las cantidades que hayas editado de la corrida anterior ya no se ven ni se exportan.</li>}
-            {aviso?.d.corrio_hoy && <li>Las cantidades pueden cambiar porque el CEDI se reparte con el stock fresco de PT001.</li>}
-            {aviso?.que === 'pipeline' && <li>También se vuelve a leer todo Siesa (inventario, tránsitos, items): tarda varios minutos.</li>}
-          </Box>
-          {(aviso?.d.aprobadas > 0 || aviso?.d.enviadas > 0) && (
-            <Alert severity="warning">
-              En la corrida actual hay <b>{aviso?.d.aprobadas}</b> fila(s) aprobada(s) y <b>{aviso?.d.enviadas}</b> enviada(s). Si aún no generaste el plano, genéralo antes de recalcular.
-            </Alert>)}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setAviso(null)} autoFocus>Cancelar</Button>
-          <Button color={aviso?.d.corrio_hoy ? 'warning' : 'primary'} variant="contained" onClick={() => { const q = aviso!.que; setAviso(null); q === 'motor' ? recalcular() : pipeline() }}>{aviso?.d.corrio_hoy ? 'Correr de todos modos' : 'Correr'}</Button>
-        </DialogActions>
-      </Dialog>
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ alignItems: { sm: 'center' } }}>
         <Typography variant="h6" sx={{ flex: 1, fontWeight: 700 }}>Reglas de pedido</Typography>
-        {motor && <Button variant="outlined" startIcon={<Calculate />} disabled={enCurso} onClick={() => preguntar('motor')}>Recalcular ahora (solo motor)</Button>}
-        {motor && <Button variant="contained" startIcon={<PlayCircle />} disabled={enCurso} onClick={() => preguntar('pipeline')}>Correr ETL + motor completo</Button>}
+        {motor && <Button variant="outlined" component={RouterLink} to="/motor">Ir a Motor DDMRP (recalcular / ETL)</Button>}
       </Stack>
       <Typography variant="body2" color="text.secondary">
-        Los cambios se aplican en la siguiente corrida del motor (cada noche, o con “Recalcular ahora”). Flujo neto = inventario + tránsito − demanda calificada.
+        Los cambios se aplican en la siguiente corrida del motor (cada noche, o cuando recalcules en Motor DDMRP). Flujo neto = inventario + tránsito − demanda calificada.
       </Typography>
       {grupos.map(([titulo, claves]) => (
         <Card key={titulo} variant="outlined">

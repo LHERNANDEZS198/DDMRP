@@ -56,7 +56,7 @@ export function BannerSalud() {
   const base = salud.ultimo_motor_ok
     ? `Lo que ves es de la última corrida buena del motor (${fechaCorta(salud.ultimo_motor_ok.fecha)}).`
     : 'Todavía no hay ninguna corrida buena del motor, así que no hay datos para mostrar.'
-  const accion = (<Button color="inherit" size="small" variant="outlined" component={RouterLink} to="/reglas">Correr de nuevo</Button>)
+  const accion = (<Button color="inherit" size="small" variant="outlined" component={RouterLink} to="/motor">Correr de nuevo</Button>)
   if (salud.problemas.length) {
     return (
       <Alert severity="warning" action={accion} sx={{ mb: 1.5 }}>
@@ -69,14 +69,14 @@ export function BannerSalud() {
               {p.estado === 'error' && p.mensaje ? `: ${p.mensaje.slice(0, 180)}` : '.'}
             </li>))}
         </Box>
-        {base} Vuelve a correr <b>ETL + motor completo</b> en Reglas de pedido.
+        {base} Vuelve a correr <b>ETL + motor completo</b> en Motor DDMRP.
       </Alert>)
   }
   if (salud.sin_corridas || (salud.horas_sin_motor ?? 0) > 30) {
     return (
       <Alert severity="info" action={accion} sx={{ mb: 1.5 }}>
         {salud.sin_corridas ? 'Todavía no se ha corrido el motor.' : `El motor no corre hace ${Math.round(salud.horas_sin_motor!)} horas: la corrida automática de la noche no parece haber ocurrido.`}
-        {' '}Corre <b>ETL + motor completo</b> en Reglas de pedido.
+        {' '}Corre <b>ETL + motor completo</b> en Motor DDMRP.
       </Alert>)
   }
   return null
