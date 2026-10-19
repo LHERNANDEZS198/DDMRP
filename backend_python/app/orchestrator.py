@@ -6,6 +6,7 @@ from .config import settings
 from .db import pg
 from .etl.replicacion import correr_etl, refrescar_cedi
 from .reparto import aplicar_a_ejecucion
+from .activos import purgas_fuera_del_maestro
 from . import progreso, bitacora
 
 log = logging.getLogger("orq")
@@ -29,8 +30,8 @@ def guardar_historia(eid: int):
                            WHERE e.fecha_calculo NOT IN (SELECT DISTINCT fecha FROM ddmrp.buffer_historia)
                            ON CONFLICT DO NOTHING"""))
         # items fuera del maestro (no pasan el filtro de criterios, ej. materia prima) que quedaron en fotos de corridas anteriores
-        c.execute(text("DELETE FROM ddmrp.buffer_historia h WHERE EXISTS (SELECT 1 FROM ddmrp.maestro_item) "
-                       "AND NOT EXISTS (SELECT 1 FROM ddmrp.maestro_item m WHERE m.producto_id = h.producto_id)"))
+        for sql in purgas_fuera_del_maestro():
+            c.execute(text(sql))
         dias = c.execute(text("SELECT valor FROM ddmrp.parametro WHERE clave = 'retener_dias'")).scalar()
         c.execute(text("DELETE FROM ddmrp.buffer_historia WHERE fecha < current_date - :d"), {"d": int(dias) if dias else 180})
         c.execute(text("""DELETE FROM ddmrp.sugerencias_envio s USING ddmrp.ejecucion_motor e

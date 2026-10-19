@@ -23,6 +23,7 @@ from ..config import settings
 from .. import progreso, bitacora, lanzamientos
 from ..db import pg, siesa_engine
 from ..rec import detectar_rec
+from ..activos import purgas_fuera_del_maestro
 
 log = logging.getLogger("etl")
 CHUNK = 50_000
@@ -126,6 +127,16 @@ GROUP BY i.f120_referencia, be.f150_id, bs.f150_id
 HAVING SUM(t.f406_cant_base_pendiente) > 0"""
 
 ACTIVO_RE = re.compile(r"/\*ACTIVO:(\w+),(\w+)\*/")
+
+
+def _purgar_fuera_del_maestro(cur) -> int:
+    """Quita de ventas, inventario, transitos, demanda y fotos lo que no esta en maestro_item (p.ej. materia prima MP...). Devuelve cuantas filas."""
+    n = 0
+    for sql in purgas_fuera_del_maestro():
+        cur.execute(sql); n += max(cur.rowcount, 0)
+    if n:
+        log.info("Se sacaron %s filas de items que no estan en el maestro de items", n)
+    return n
 
 
 def _col_estado() -> str:
@@ -578,6 +589,7 @@ def _sincronizar_ventas() -> dict:
                                SELECT empresa, mes, bodega_id, producto_id, SUM(cantidad), COALESCE(SUM(valor), 0) FROM stg_vm
                                WHERE mes >= %s GROUP BY 1, 2, 3, 4""", (f"{desde:%Y%m}",))
                 res["meses_desde"] = f"{desde:%Y%m}"
+                res["fuera_del_maestro"] = _purgar_fuera_del_maestro(cur)
             raw.commit()
         except Exception:
             raw.rollback()
@@ -660,6 +672,7 @@ def _correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
                     if isinstance(e, psycopg.Error):
                         raise
                     log.warning("Inventario del CEDI no leido: %s", e); res["cedi_error"] = str(e)[:200]
+            res["fuera_del_maestro"] = _purgar_fuera_del_maestro(cur)
         raw.commit()
     except Exception:
         raw.rollback()
