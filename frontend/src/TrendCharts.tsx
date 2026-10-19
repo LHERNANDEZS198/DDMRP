@@ -77,7 +77,7 @@ export function BufferTrend({ serie }: { serie: Punto[] }) {
 /** Semáforo en el tiempo: % de combinaciones en cada zona por día, como áreas apiladas al 100% (rojo abajo, azul/exceso arriba),
  *  y la línea punteada "Disponible" = % de combinaciones con inventario > 0. */
 export function ZonaShare({ serie }: { serie: Punto[] }) {
-  const [ref, W] = useAncho(); const [hover, setHover] = useState<number | null>(null)
+  const [ref, W] = useAncho(); const [hover, setHover] = useState<number | null>(null); const [modo, setModo] = useState<'apilado' | 'cambio'>('apilado')
   const H = 300, M = { l: 52, r: 14, t: 8, b: 48 }
   if (serie.length < 1) return null
   const n = serie.length, pw = W - M.l - M.r, ph = H - M.t - M.b
@@ -93,19 +93,33 @@ export function ZonaShare({ serie }: { serie: Punto[] }) {
     return [...sup, ...inf].join(' ')
   }
   const hayDisp = serie.some(p => p.con_stock != null)
+  // modo "cambio": puntos porcentuales de cada zona frente al primer dia, con el eje ajustado a lo que realmente se mueve
+  const pc = (p: Punto, z: typeof zonas[number] | 'disp') => ((z === 'disp' ? (p.con_stock ?? 0) : p[z]) / (p.n || 1)) * 100
+  const ser = [...zonas, ...(hayDisp ? ['disp' as const] : [])]
+  const delta = ser.map(z => serie.map(p => pc(p, z) - pc(serie[0], z)))
+  const dmax = Math.max(0.5, ...delta.flat().map(Math.abs)), lim = Math.ceil(dmax * 1.15 * 2) / 2
+  const yd = (v: number) => M.t + ph / 2 - (v / lim) * (ph / 2)
+  const colS = (z: string) => (z === 'disp' ? '#000' : C[z as keyof typeof C])
   const disp = serie.map((p, i) => `${x(i)},${ypc((p.con_stock ?? 0) / (p.n || 1))}`).join(' ')
   return (
     <Box ref={ref} sx={{ width: '100%', position: 'relative' }}>
+      <Box sx={{ display: 'flex', gap: 1, fontSize: 12, mb: .5, alignItems: 'center' }}>Vista:
+        {([['apilado', 'Participación (100%)'], ['cambio', 'Cambio vs. primer día (puntos %)']] as const).map(([m, l]) =>
+          <span key={m} onClick={() => setModo(m)} style={{ cursor: 'pointer', padding: '2px 8px', borderRadius: 10, border: '1px solid #999', background: modo === m ? '#2e7d32' : '#fff', color: modo === m ? '#fff' : '#333' }}>{l}</span>)}
+      </Box>
       <svg width={W} height={H} onMouseLeave={() => setHover(null)}
         onMouseMove={e => { const r = (e.currentTarget as SVGElement).getBoundingClientRect(); const f = (e.clientX - r.left - M.l) / (n === 1 ? pw : pw / (n - 1)); const i = Math.round(f); setHover(i >= 0 && i < n && e.clientX - r.left > M.l - 6 ? i : null) }}>
-        {[0, 20, 40, 60, 80, 100].map(t => { const y = ypc(t / 100)
+        {modo === 'cambio' && [-lim, -lim / 2, 0, lim / 2, lim].map(t => <g key={t}><line x1={M.l} x2={W - M.r} y1={yd(t)} y2={yd(t)} stroke={t === 0 ? '#888' : '#e0e0e0'} /><text x={M.l - 6} y={yd(t) + 4} fontSize="11" textAnchor="end" fill="#555">{t > 0 ? '+' : ''}{t.toFixed(1)}</text></g>)}
+        {modo === 'cambio' && ser.map((z, k) => <polyline key={z} points={serie.map((_, i) => `${x(i)},${yd(delta[k][i])}`).join(' ')} fill="none" stroke={colS(z)} strokeWidth="2.2" strokeDasharray={z === 'disp' ? '6 4' : undefined} />)}
+        {modo === 'cambio' && ser.map((z, k) => serie.map((_, i) => <circle key={z + i} cx={x(i)} cy={yd(delta[k][i])} r="3" fill={colS(z)} />))}
+        {modo === 'apilado' && [0, 20, 40, 60, 80, 100].map(t => { const y = ypc(t / 100)
           return <g key={t}><line x1={M.l} x2={W - M.r} y1={y} y2={y} stroke="#e0e0e0" /><text x={M.l - 6} y={y + 4} fontSize="11" textAnchor="end" fill="#555">{t}%</text></g> })}
-        {n === 1
+        {modo === 'apilado' && (n === 1
           ? zonas.map((z, k) => { const lo = k === 0 ? 0 : acum[0][k - 1], hi = acum[0][k]
               return <rect key={z} x={M.l} width={pw} y={ypc(hi)} height={Math.max(ypc(lo) - ypc(hi), 0)} fill={C[z]} /> })
-          : zonas.map((z, k) => <polygon key={z} points={area(k)} fill={C[z]} />)}
-        {hayDisp && n > 1 && <polyline points={disp} fill="none" stroke="#000" strokeWidth="2" strokeDasharray="6 4" />}
-        {hayDisp && n === 1 && <line x1={M.l} x2={W - M.r} y1={ypc((serie[0].con_stock ?? 0) / (serie[0].n || 1))} y2={ypc((serie[0].con_stock ?? 0) / (serie[0].n || 1))} stroke="#000" strokeWidth="2" strokeDasharray="6 4" />}
+          : zonas.map((z, k) => <polygon key={z} points={area(k)} fill={C[z]} />))}
+        {modo === 'apilado' && hayDisp && n > 1 && <polyline points={disp} fill="none" stroke="#000" strokeWidth="2" strokeDasharray="6 4" />}
+        {modo === 'apilado' && hayDisp && n === 1 && <line x1={M.l} x2={W - M.r} y1={ypc((serie[0].con_stock ?? 0) / (serie[0].n || 1))} y2={ypc((serie[0].con_stock ?? 0) / (serie[0].n || 1))} stroke="#000" strokeWidth="2" strokeDasharray="6 4" />}
         {serie.map((p, i) => i % paso === 0 && <text key={p.fecha} transform={`translate(${x(i)},${H - M.b + 12}) rotate(-45)`} fontSize="11" textAnchor="end" fill="#555">{dm(p.fecha)}</text>)}
         {hover != null && <line x1={x(hover)} x2={x(hover)} y1={M.t} y2={H - M.b} stroke="#000" strokeDasharray="3 3" />}
       </svg>
