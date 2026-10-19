@@ -10,6 +10,8 @@ use std::io::Write;
 /// Universo: bodega/producto con ventas en la ventana, vectorizacion, pronostico, inventario o cotas.
 /// Items REC (ddmrp.v_item_rec): su venta, inventario y transitos se suman al item ORIGINAL y el REC no se calcula aparte.
 /// Items inactivos o bloqueados en Siesa (ddmrp.item_estado) no entran, salvo que la regla solo_items_activos este en 0.
+/// Solo entran items del maestro (ddmrp.maestro_item = los que pasan el filtro de criterios SIESA_CRITERIOS_ITEMS): lo que este en
+/// inventario/ventas pero fuera de la seleccion (ej. materia prima) no se calcula. Con el maestro vacio (antes del primer ETL) no se filtra.
 const SQL_ENTRADA: &str = r#"
 WITH meses AS (
   SELECT n, to_char(date_trunc('month', $1::text::date) - make_interval(months => 11 - n), 'YYYYMM') AS mes
@@ -86,6 +88,7 @@ LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = k.producto_id
 LEFT JOIN ddmrp.reposicion_item oi ON oi.producto_id = k.producto_id
 LEFT JOIN ddmrp.reposicion_laboratorio ol ON ol.laboratorio = mi.categoria
 WHERE NOT EXISTS (SELECT 1 FROM rec r2 WHERE r2.empresa = b.empresa AND r2.rec_id = k.producto_id)
+  AND (mi.producto_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM ddmrp.maestro_item))
   AND ((SELECT COALESCE(max(valor), 1) FROM ddmrp.parametro WHERE clave = 'solo_items_activos') = 0
        OR NOT EXISTS (SELECT 1 FROM ddmrp.item_estado ie WHERE ie.empresa = b.empresa AND ie.producto_id = k.producto_id AND ie.estado <> 1))
 "#;
