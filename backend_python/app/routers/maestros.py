@@ -72,7 +72,7 @@ MAESTROS = {
         llave=["empresa", "rec_id"], editable={"original_id": "txt"}, bodega=None, producto=None, global_=True),
     "centro-operacion": dict(
         label="Centro de operacion por bodega (archivo plano)", tabla="ddmrp.bodega_centro_operacion",
-        llave=["bodega_id"], editable={"id_co": "txt"}, bodega="bodega_id", producto=None),
+        llave=["empresa", "bodega_id"], editable={"id_co": "txt"}, bodega="bodega_id", producto=None),
     "reposicion-laboratorio": dict(
         label="Hasta donde se repone, por laboratorio (1 TOG aj · 2 TOY aj · 3 TOY aj + mitad de la zona verde)", tabla="ddmrp.reposicion_laboratorio",
         llave=["laboratorio"], editable={"regla": "int"}, bodega=None, producto=None, global_=True),
@@ -109,8 +109,8 @@ AYUDA = {
     "reserva-cedi": "Porcentaje del inventario del CEDI que se guarda por item: no se reparte a las tiendas. Solo importa cuando el CEDI no alcanza para todas.",
     "promocion": "Indicativo de promoción por referencia. 0 = sin promoción. 1 = promoción fuerte: las cotas se agrandan (máxima × 1,2 y mínima × 1,1, parámetros del modelo), así el buffer crece y se sugiere más. "
                  "2 = promoción moderada: se aplican las cotas normales aunque la venta diaria sea baja (la mínima × 1,1 solo en tiendas GN). "
-                 "Excepción: la promoción NO aplica en las tiendas cuyo código de bodega empieza por TC o DM (ej. TC001, DM010): ahí el indicativo se ignora (se toma como 0) y el buffer se calcula sin promoción. "
-                 "GN, TC y DM son los dos primeros caracteres del código de la bodega en Siesa.",
+                 "Excepción: la promoción NO aplica en las tiendas de confianza (código de bodega que empieza por TC) ni en los domicilios (DM): ahí el indicativo se ignora (se toma como 0) y el buffer se calcula sin promoción. "
+                 "Los prefijos son los dos primeros caracteres del código de bodega: GN Global Nutrition, SV Sol Verde, NS Natures Stores, MN Melonn (tiendas reales); TC tiendas de confianza y DM domicilios (sin promoción).",
     "factores": "Tablas de tramos del modelo. LT: factor de la zona roja base según el lead time. VAR: factor de la zona roja de seguridad según la variabilidad de la demanda. Cambian los buffers de todos los productos.",
     "parametros": "Parámetros del modelo: multiplicadores de cota en promoción y rango de venta diaria baja (ADU). Solo se editan los que ya existen. Las reglas de pedido están en la pantalla Reglas de pedido.",
     "dias-bodega": "DÍA(S) de abastecimiento de cada tienda. Sirve para armar la corrida del día en la Matriz de despacho y, si lo eliges en Reglas de pedido, para repartir el inventario del CEDI solo entre las tiendas de esos días.",
@@ -453,8 +453,7 @@ def _preparar(d: dict, filas: list[dict], omitir: bool = False, malas_out: list 
                 llave[d["bodega"]] = hit[0]
                 if "empresa" in d["llave"]:
                     emp_arch = _valor_llave("empresa", f.get("empresa"))
-                    if emp_arch and hit[1] and emp_arch != hit[1]:   # una tienda es de una sola empresa: si no, la fila queda huerfana (el motor no la usa)
-                        raise ValueError(f"la tienda {hit[0]} es de la empresa {hit[1]}, no de {emp_arch}")
+                    # el mismo codigo de bodega puede existir en las dos empresas (Melonn: MBG01 en Funat y en Stores): manda la empresa del archivo
                     emp = emp_arch or hit[1] or ""
                     if not emp:
                         raise ValueError("no se pudo deducir la empresa de la tienda " + repr(hit[0]) + ": esta base aun no conoce las tiendas. "
@@ -657,7 +656,7 @@ def bajar_excel(nombre: str, bodega_id: str | None = None, q: str | None = None,
             if con_emp and empresa in ("05", "21"):
                 w2 += " AND mb.empresa = :emp"; p2["emp"] = empresa
             filas = c.execute(text(f"SELECT mb.bodega_id, mb.descripcion{', mb.empresa' if con_emp else ''}{ed} FROM ddmrp.maestro_bodega mb "
-                                   f"LEFT JOIN {d['tabla']} t ON t.{bod} = mb.bodega_id WHERE {w2} ORDER BY mb.bodega_id"), p2).all()
+                                   f"LEFT JOIN {d['tabla']} t ON t.{bod} = mb.bodega_id{' AND t.empresa = mb.empresa' if con_emp else ''} WHERE {w2} ORDER BY mb.bodega_id"), p2).all()
         else:
             w, p = w + wf, {**p, **pf}
             filas = c.execute(text(f"SELECT {sel} FROM {d['tabla']} t {join} WHERE {w} ORDER BY "

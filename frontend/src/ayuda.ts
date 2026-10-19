@@ -60,7 +60,7 @@ export const AYUDA: Record<string, string> = {
   Bodega: 'Tienda que recibe el envío (código de Siesa).',
   Producto: 'Referencia del producto.',
   Descripcion: 'Nombre del producto.',
-  Estado: 'PENDIENTE: por revisar. APROBADA: lista para el plano. ENVIADA: ya generada con “Marcar como enviadas”. Al correr el motor de nuevo todo vuelve a PENDIENTE (los estados viven en la corrida).',
+  Estado: 'PENDIENTE: por revisar. APROBADA: lista para el plano. ENVIADA: ya generada con “Marcar como enviadas”. Al correr el motor de nuevo el mismo día se conservan las ENVIADAS; lo aprobado sin enviar vuelve a PENDIENTE (los estados viven en la corrida).',
   Forecast: 'Pronóstico ajustado a 30–60 días de inventario; entra al ADU junto con las ventas recientes.',
   TOR: 'Tope rojo: por debajo o igual a este nivel la referencia está en zona ROJA.',
   'TOY aj.': 'Tope amarillo ajustado por cotas y promoción.',

@@ -104,7 +104,7 @@ export function GuiaClasificacion({ abierta, cerrar, meta }: { abierta: boolean;
 
 const PEND = '#757575'; const APRO = '#1565c0'; const ENV = '#2e7d32'
 
-/** Cómo funcionan los estados de la Matriz de despacho y por qué se reinician al correr el motor. */
+/** Cómo funcionan los estados de la Matriz de despacho y qué se conserva al correr el motor. */
 export function GuiaDespacho({ abierta, cerrar }: { abierta: boolean; cerrar: () => void }) {
   return (
     <Guia abierta={abierta} cerrar={cerrar} titulo="Pendientes, Aprobadas y Enviadas">
@@ -127,14 +127,14 @@ export function GuiaDespacho({ abierta, cerrar }: { abierta: boolean; cerrar: ()
       <P>Flujo habitual: <b>Pendientes → Aprobar → Aprobadas → Generar plano (marcando enviadas) → Enviadas</b>. Las tiendas cuyo despacho vale menos del mínimo configurado no se envían ni entran al plano.</P>
 
       <Alert severity="warning" sx={{ my: 2 }}>
-        <b>Los estados se borran cuando el motor corre de nuevo.</b> Las aprobaciones y los envíos viven dentro de la corrida en que se hicieron. Al correr el motor otra vez
-        (de noche, “Recalcular solo motor” o “ETL + motor completo”) se crea una corrida nueva y <b>todo vuelve a PENDIENTE</b>: las Aprobadas y las Enviadas ya no aparecen en la matriz.
-        No se heredan; la corrida anterior solo se conserva unos días para consulta y auditoría.
+        <b>Al correr el motor otra vez, solo las ENVIADAS se conservan.</b> Cada corrida es un cálculo nuevo. Si lo corres de nuevo <b>el mismo día</b>, lo que ya está <b>ENVIADO</b> sigue
+        como Enviada (con la cantidad que se envió) y lo demás —<b>Aprobadas y cantidades editadas a mano— vuelve a PENDIENTE</b>. Si la corrida es de <b>otro día</b> (p. ej. la nocturna), todo empieza en PENDIENTE.
+        La corrida anterior solo se conserva unos días para consulta y auditoría.
       </Alert>
       <P><b>Qué implica en la práctica:</b></P>
       <L items={[
-        <>Aprueba y genera el plano <b>en la misma sesión</b>, antes de volver a correr el motor. No corras el motor entre aprobar y bajar el plano: perderías las aprobaciones.</>,
-        <>Lo que ya enviaste <b>vuelve a salir como pendiente</b> en la corrida siguiente mientras el motor no “vea” esa mercancía. Si ya creaste el traslado en Siesa, el siguiente ETL lo trae como <b>tránsito</b> y el motor deja de sugerirlo (mientras la regla “Contar traslados abiertos” esté en Sí); si el traslado aún no existe, la sugerencia reaparece.</>,
+        <>Aprueba y genera el plano <b>en la misma sesión</b>, antes de volver a correr el motor. No corras el motor entre aprobar y bajar el plano: perderías las aprobaciones (las enviadas no).</>,
+        <>Lo que ya enviaste <b>queda como Enviada</b> si recalculas el mismo día, así nadie lo despacha dos veces. Aun así, el motor solo deja de <i>sugerirlo</i> cuando ve esa mercancía: si ya creaste el traslado en Siesa, el siguiente ETL lo trae como <b>tránsito</b> (mientras la regla “Contar traslados abiertos” esté en Sí).</>,
         <>Por eso el archivo plano que descargas es el registro real de lo enviado: guárdalo, no confíes en que la matriz recuerde lo despachado.</>,
         <>La corrida nocturna también reinicia los estados: lo que no despachaste ayer aparece de nuevo en pendientes con las cifras de hoy.</>,
       ]} />
@@ -142,8 +142,8 @@ export function GuiaDespacho({ abierta, cerrar }: { abierta: boolean; cerrar: ()
       <L items={[
         <>Termina el DÍA 1: aprueba, genera el plano marcando enviadas y <b>cárgalo en Siesa</b> (si el traslado no existe, el CEDI sigue viéndose lleno).</>,
         <>Antes del DÍA 2 corre <b>Motor DDMRP → Recalcular ahora</b> y, en la ventana que abre, deja elegido <b>solo el DÍA 2</b> en el reparto del CEDI. Así las tiendas del DÍA 1 no compiten por el stock que quedó.</>,
-        <>Elige la corrida del DÍA 2 aquí. Las tiendas del DÍA 1 vuelven a salir en Pendientes: no las apruebes otra vez.</>,
-        <>Si el reparto del CEDI de la mañana ya incluía los DÍAs 1 + 2, puedes seguir sin recalcular y no pierdes lo aprobado.</>,
+        <>Elige la corrida del DÍA 2 aquí. Las tiendas del DÍA 1 que ya marcaste como enviadas siguen en <b>Enviadas</b>; si solo las aprobaste y no bajaste el plano, vuelven a Pendientes.</>,
+        <>Si el reparto del CEDI de la mañana ya incluía los DÍAs 1 + 2, puedes seguir sin recalcular y no mueves nada.</>,
       ]} />
     </Guia>)
 }

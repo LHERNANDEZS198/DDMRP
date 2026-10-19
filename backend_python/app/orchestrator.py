@@ -43,6 +43,21 @@ def guardar_historia(eid: int):
 DETALLE_DIAS = 7
 
 
+def heredar_enviadas(c, eid: int) -> int:
+    """Corrida repetida el mismo dia: lo que ya se ENVIO (plano bajado y marcado como enviado) sigue ENVIADO en la corrida nueva, con la cantidad
+    que se envio, para que nadie lo vuelva a despachar. Lo aprobado o editado a mano sin enviar si vuelve a PENDIENTE."""
+    r = c.execute(text("""
+        UPDATE ddmrp.sugerencias_envio n SET estado = 'ENVIADA'::ddmrp.estado_sugerencia, cantidad_aprobada = o.cant
+        FROM (SELECT DISTINCT ON (s.empresa, s.bodega_id, s.producto_id) s.empresa, s.bodega_id, s.producto_id,
+                     COALESCE(s.cantidad_aprobada, s.cantidad_sugerida) AS cant
+              FROM ddmrp.sugerencias_envio s JOIN ddmrp.ejecucion_motor e ON e.id = s.ejecucion_id
+              WHERE s.estado = 'ENVIADA' AND s.ejecucion_id < :e AND e.estado = 'ok'
+                AND e.fecha_calculo = (SELECT fecha_calculo FROM ddmrp.ejecucion_motor WHERE id = :e)
+              ORDER BY s.empresa, s.bodega_id, s.producto_id, s.ejecucion_id DESC) o
+        WHERE n.ejecucion_id = :e AND n.empresa = o.empresa AND n.bodega_id = o.bodega_id AND n.producto_id = o.producto_id"""), {"e": eid})
+    return r.rowcount or 0
+
+
 def ejecutar_motor(fecha: date | None = None, origen: str = "manual", usuario: str | None = None) -> dict:
     with progreso.tarea("Motor", "Motor listo"), bitacora.registrar("motor", origen, usuario) as r:
         r.resumen = res = _ejecutar_motor(fecha)
@@ -73,6 +88,11 @@ def _ejecutar_motor(fecha: date | None = None) -> dict:
         except Exception as e:
             log.exception("No se pudo repartir el inventario del CEDI")
             reparto = {"aplicado": False, "error": str(e)[:200]}
+        try:
+            with pg.begin() as c:
+                reparto["enviadas_heredadas"] = heredar_enviadas(c, eid)
+        except Exception:
+            log.exception("No se pudieron heredar las filas ENVIADAS de la corrida anterior")
         progreso.avance("Guardando la foto diaria para las vistas de cambios y tendencia…")
         try:
             guardar_historia(eid)

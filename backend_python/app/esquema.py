@@ -43,6 +43,19 @@ SENTENCIAS = [
            ALTER TABLE ddmrp.inventario_cedi ADD PRIMARY KEY (empresa, producto_id);
          END IF;
        END $$""",
+    # centro de operacion por (empresa, bodega): un mismo codigo de bodega (ej. MBG01 de Melonn) existe en Funat y en Stores con CO distinto
+    "ALTER TABLE ddmrp.bodega_centro_operacion ADD COLUMN IF NOT EXISTS empresa TEXT",
+    """UPDATE ddmrp.bodega_centro_operacion co SET empresa = COALESCE(
+         (SELECT mb.empresa FROM ddmrp.maestro_bodega mb WHERE mb.bodega_id = co.bodega_id),
+         (SELECT min(b.empresa) FROM ddmrp.abast_bitacora b WHERE b.bodega_id = co.bodega_id), '05') WHERE empresa IS NULL""",
+    "ALTER TABLE ddmrp.bodega_centro_operacion ALTER COLUMN empresa SET NOT NULL",
+    """DO $$ BEGIN
+         IF NOT EXISTS (SELECT 1 FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+                        WHERE i.indrelid = 'ddmrp.bodega_centro_operacion'::regclass AND i.indisprimary AND a.attname = 'empresa') THEN
+           ALTER TABLE ddmrp.bodega_centro_operacion DROP CONSTRAINT IF EXISTS bodega_centro_operacion_pkey;
+           ALTER TABLE ddmrp.bodega_centro_operacion ADD PRIMARY KEY (empresa, bodega_id);
+         END IF;
+       END $$""",
     # a que empresa(s) pertenece cada item (lo llena "Traer items"); sirve al filtro por empresa de Maestros
     "CREATE TABLE IF NOT EXISTS ddmrp.item_empresa (empresa TEXT NOT NULL, producto_id TEXT NOT NULL, PRIMARY KEY (empresa, producto_id))",
     "INSERT INTO ddmrp.item_empresa SELECT DISTINCT empresa, producto_id FROM ddmrp.sugerencias_envio WHERE NOT EXISTS (SELECT 1 FROM ddmrp.item_empresa) ON CONFLICT DO NOTHING",
@@ -150,32 +163,6 @@ def normalizar_empresas(c) -> int:
     return n
 
 
-# (tienda, referencia) es unica en estos maestros, sin importar la empresa: una tienda es de UNA sola empresa (bitacora), asi que una fila
-# con la empresa equivocada solo puede quedar huerfana (el motor la une por empresa) o duplicar a la buena
-UNICOS_BODEGA_PRODUCTO = ("abast_vectorizacion", "abast_control_referencias", "pronostico")
-
-
-def unicos_bodega_producto() -> int:
-    """Limpia los duplicados (tienda, referencia) con empresas distintas y crea el indice unico. Gana la fila con la empresa de la tienda
-    en la bitacora; si ninguna la tiene, la de menor codigo. Solo trabaja si el indice aun no existe."""
-    n = 0
-    for t in UNICOS_BODEGA_PRODUCTO:
-        try:
-            with pg.begin() as c:
-                if c.execute(text("SELECT to_regclass(:i)"), {"i": f"ddmrp.uq_{t}_bodega_producto"}).scalar():
-                    continue
-                r = c.execute(text(f"""DELETE FROM ddmrp.{t} x USING (
-                        SELECT t.ctid AS id, row_number() OVER (PARTITION BY t.bodega_id, t.producto_id
-                               ORDER BY (t.empresa = COALESCE(b.empresa, '')) DESC, t.empresa) AS rn
-                        FROM ddmrp.{t} t LEFT JOIN ddmrp.abast_bitacora b ON b.bodega_id = t.bodega_id) d
-                        WHERE x.ctid = d.id AND d.rn > 1"""))
-                n += r.rowcount or 0
-                c.execute(text(f"CREATE UNIQUE INDEX IF NOT EXISTS uq_{t}_bodega_producto ON ddmrp.{t} (bodega_id, producto_id)"))
-        except Exception:
-            log.exception("No se pudo garantizar la unicidad (tienda, referencia) en %s", t)
-    return n
-
-
 def asegurar_esquema():
     try:
         with pg.begin() as c:
@@ -186,6 +173,3 @@ def asegurar_esquema():
                 log.warning("Empresas corregidas (Funat/Stores -> 05/21): %s fila(s)", n)
     except Exception:
         log.exception("No se pudo actualizar el esquema")
-    borradas = unicos_bodega_producto()
-    if borradas:
-        log.warning("Filas repetidas (misma tienda y referencia con otra empresa) eliminadas: %s", borradas)

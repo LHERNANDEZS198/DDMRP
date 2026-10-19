@@ -62,7 +62,7 @@ export default function Motor() {
           </Typography>}
           <Box component="ul" sx={{ m: 0, pl: 3, display: 'grid', gap: 0.5 }}>
             {aviso?.d.corrio_hoy && <li>La matriz de despacho y el plano pasan a usar <b>solo la corrida nueva</b>.</li>}
-            {aviso?.d.corrio_hoy && <li>Todo vuelve a <b>Pendiente</b>: lo aprobado y las cantidades que hayas editado de la corrida anterior ya no se ven ni se exportan.</li>}
+            {aviso?.d.corrio_hoy && <li>Lo <b>Enviado</b> se conserva; lo aprobado sin enviar y las cantidades editadas a mano vuelven a <b>Pendiente</b>.</li>}
             {aviso?.d.corrio_hoy && <li>Las cantidades pueden cambiar porque el CEDI se reparte con el stock fresco de PT001.</li>}
             {aviso?.que === 'pipeline' && <li>También se vuelve a leer todo Siesa (inventario, tránsitos, items): tarda varios minutos.</li>}
           </Box>
@@ -140,7 +140,7 @@ export default function Motor() {
       <Seccion titulo="Qué pasa con tu trabajo cuando se vuelve a correr">
         <Lista>
           <li>Cada corrida crea un <b>cálculo nuevo</b>. La Matriz de despacho, los Informes y el plano de Siesa usan siempre <b>solo el último</b>.</li>
-          <li>Por eso, si corres de nuevo el mismo día, lo que habías aprobado o editado a mano en la matriz <b>vuelve a Pendiente</b>. El sistema te avisa antes de correr y te dice cuántas filas aprobadas o enviadas hay. <b>Genera el plano antes de recalcular.</b></li>
+          <li>Por eso, si corres de nuevo el mismo día, lo que habías <b>aprobado o editado a mano</b> en la matriz <b>vuelve a Pendiente</b>, pero lo que ya <b>marcaste como enviado</b> se conserva. El sistema te avisa antes de correr y te dice cuántas filas aprobadas o enviadas hay. <b>Genera el plano antes de recalcular.</b></li>
           <li>Las cantidades pueden cambiar entre una corrida y otra porque el CEDI se reparte con el stock fresco.</li>
           <li>Solo corre una cosa a la vez (ETL, motor o carga de ventas). Si algo está corriendo, los botones se bloquean y arriba ves el avance; puedes cambiar de pantalla o cerrar la ventana, sigue en el servidor.</li>
           <li>Si una corrida se interrumpe (por ejemplo, se reinició el servidor), un aviso lo dice y los Informes siguen mostrando la última corrida buena. Se arregla corriendo de nuevo el ETL + motor.</li>
@@ -151,7 +151,7 @@ export default function Motor() {
         <Lista>
           <li><b>1 · Termina el DÍA 1 completo:</b> aprueba, genera el plano (marcando enviadas) y cárgalo en Siesa. Hasta que el traslado exista en Siesa, el motor sigue viendo esa mercancía como libre en el CEDI y se la volvería a ofrecer al DÍA 2.</li>
           <li><b>2 · Antes del DÍA 2, recalcula:</b> «Recalcular ahora» basta, porque lee de nuevo el inventario del CEDI; y en la ventana que se abre deja elegido <b>solo el DÍA 2</b> en el reparto del CEDI. Así las tiendas del DÍA 1 no compiten por lo que quedó. Usa «ETL + motor» solo si además necesitas inventario o tránsitos frescos de las tiendas.</li>
-          <li><b>3 · En la Matriz de despacho</b> elige la corrida del DÍA 2. Las tiendas del DÍA 1 aparecerán otra vez en Pendientes (los estados se reinician): <b>no las vuelvas a aprobar</b>, ya salieron.</li>
+          <li><b>3 · En la Matriz de despacho</b> elige la corrida del DÍA 2. Las tiendas del DÍA 1 que marcaste como enviadas siguen en Enviadas; si no las marcaste, aparecerán otra vez en Pendientes: <b>no las vuelvas a aprobar</b>, ya salieron.</li>
           <li><b>Sin recalcular:</b> si en la corrida de la mañana el reparto del CEDI ya incluía los DÍAs 1 + 2, el DÍA 2 ya tiene su parte calculada y puedes seguir con esa misma corrida sin perder nada de lo aprobado. Recalcula solo si entró mercancía al CEDI o el DÍA 1 salió muy distinto de lo asignado.</li>
         </Lista>
       </Seccion>

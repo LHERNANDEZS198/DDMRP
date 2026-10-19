@@ -644,8 +644,8 @@ def _correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
                 try:  # descripciones, laboratorio, criterios y centro de operacion: utiles pero no criticos
                     res[f"items_{empresa}"] = _items_de_siesa(cur, eng, primera=(empresa == "05"), empresa=empresa)
                     for b, co in _stream(eng, SQL_CO, prm, expanding="bodegas"):
-                        cur.execute("INSERT INTO ddmrp.bodega_centro_operacion (bodega_id, id_co) VALUES (%s, %s) "
-                                    "ON CONFLICT (bodega_id) DO UPDATE SET id_co = EXCLUDED.id_co", (b, co))
+                        cur.execute("INSERT INTO ddmrp.bodega_centro_operacion (empresa, bodega_id, id_co) VALUES (%s, %s, %s) "
+                                    "ON CONFLICT (empresa, bodega_id) DO UPDATE SET id_co = EXCLUDED.id_co", (empresa, b, co))
                 except Exception as e:  # solo fallos del origen; un error de Postgres si debe abortar
                     if isinstance(e, psycopg.Error):
                         raise

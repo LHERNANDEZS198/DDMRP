@@ -99,7 +99,7 @@ def construir(filas: list[dict], meses: list[str], params: dict, factores: list[
     col("toy", "TOY", "Tope amarillo = TOR + ZA (AJ)", "f", 8)
     col("zv", "ZV", "Zona verde = máx(frecuencia × ADU/30 arriba, unidad de despacho, ZRB) (AH)", "f", 8)
     col("tog", "TOG", "Tope verde = TOY + ZV (AK)", "f", 8)
-    col("pe", "Promo efectiva", "La promoción se anula en bodegas TC y DM", "f", 9)
+    col("pe", "Promo efectiva", "La promoción se anula en bodegas TC (tiendas de confianza) y DM (domicilios)", "f", 9)
     col("toyaj", "TOY ajustado", "Tope amarillo con cotas / promoción (AL)", "f", 10)
     col("togaj", "TOG ajustado", "Tope verde con cotas / promoción (AM)", "f", 10)
     # --- decision

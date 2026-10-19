@@ -194,8 +194,8 @@ export default function Despacho() {
         <TextField select size="small" label="Ver" value={ver} onChange={e => setVer(e.target.value as any)} sx={{ minWidth: 130 }}>
           <MenuItem value="pendiente">Pendientes</MenuItem><MenuItem value="aprobada">Aprobadas</MenuItem><MenuItem value="enviada">Enviadas</MenuItem>
         </TextField>
-        <Tooltip title="Pendiente → Aprobada → Enviada. Los estados viven en la corrida del motor: al correrlo de nuevo todo vuelve a Pendiente. Clic para ver cómo funciona.">
-          <Button size="small" color="warning" startIcon={<HelpOutline />} onClick={() => setGuia(true)}>Estados: se reinician al correr el motor</Button></Tooltip>
+        <Tooltip title="Pendiente → Aprobada → Enviada. Los estados viven en la corrida del motor: al correrlo de nuevo el mismo día se conservan las Enviadas y lo demás vuelve a Pendiente. Clic para ver cómo funciona.">
+          <Button size="small" color="warning" startIcon={<HelpOutline />} onClick={() => setGuia(true)}>Estados: qué pasa al correr el motor</Button></Tooltip>
         {pAprobar && ver === 'pendiente' && <Button variant="contained" startIcon={<Check />} onClick={aprobar}>Aprobar seleccionados</Button>}
         {pAprobar && ver === 'aprobada' && <Button variant="outlined" color="warning" startIcon={<Undo />} onClick={devolver}>Devolver a pendiente</Button>}
         {(pAprobar || pPlano) && ver === 'aprobada' && <Tooltip title="Pasa las aprobadas (las seleccionadas, o las de las tiendas de la corrida) a ENVIADAS sin bajar el plano. Las tiendas bajo el valor mínimo no se envían.">
