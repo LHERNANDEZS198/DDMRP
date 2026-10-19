@@ -65,15 +65,17 @@ def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, l
       WHERE a.mes >= :mes_desde
       GROUP BY 1, 2, 3),
     s AS (
-      SELECT empresa, bodega_id, producto_id, inventario::float8 AS inventario, iv::float8 AS iv, adu::float8 AS adu
+      SELECT empresa, bodega_id, producto_id, inventario::float8 AS inventario, iv::float8 AS iv, adu::float8 AS adu,
+             zona::text AS zona, pct_buffer::float8 AS pct_buffer, flujo_neto::float8 AS flujo_neto, cantidad_sugerida::float8 AS sugerido
       FROM ddmrp.sugerencias_envio WHERE ejecucion_id = {ULTIMA}),
     k AS (
       SELECT COALESCE(v.empresa, s.empresa) AS empresa, COALESCE(v.bodega_id, s.bodega_id) AS bodega_id,
              COALESCE(v.producto_id, s.producto_id) AS producto_id,
-             v.cant, v.valor, v.primer_mes, s.inventario, s.iv, s.adu
+             v.cant, v.valor, v.primer_mes, s.inventario, s.iv, s.adu, s.zona, s.pct_buffer, s.flujo_neto, s.sugerido
       FROM v FULL JOIN s ON s.bodega_id = v.bodega_id AND s.producto_id = v.producto_id)
     SELECT k.bodega_id, mb.descripcion AS bodega_nombre, k.producto_id, mi.descripcion, COALESCE(mi.categoria, '(sin laboratorio)') AS laboratorio,
            COALESCE(k.cant, 0) AS cant, COALESCE(k.valor, 0) AS valor, k.primer_mes, COALESCE(k.inventario, 0) AS inventario, k.iv, COALESCE(k.adu, 0) AS adu,
+           k.zona, k.pct_buffer, k.flujo_neto, k.sugerido,
            (SELECT ci.costo::float8 FROM ddmrp.costo_item ci WHERE ci.producto_id = k.producto_id) AS costo
     FROM k LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = k.producto_id LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = k.bodega_id
     WHERE {' AND '.join(cond)}"""
@@ -179,3 +181,15 @@ def exportar(nivel: str = "item", criterio: str = "margen", meses: int = 12, cor
                                      ("Filas en Detalle", f"{len(vis)} de {len(items)}")])
     return Response(excel.a_bytes(wb), media_type=excel.XLSX,
                     headers={"Content-Disposition": f'attachment; filename="clasificacion_{nivel}_{criterio}_{datetime.now():%Y%m%d_%H%M}.xlsx"'})
+
+
+def datos_clase(user, empresa=None, bodegas=None, labs=None, crit=None, q=None, meses: int = 12) -> dict:
+    """{(bodega, producto): {clase, ranking, prom_venta, prom_unid}} por tienda x item, con los mismos filtros de una pantalla (mapa de calor).
+    Si las ventas aun no traen valor en pesos usa el consumo a costo (solo necesita unidades y costo)."""
+    meses = min(max(meses, 1), 12)
+    items, meta = _calcular(user, "tienda_item", "margen", meses, 80, 95, empresa, bodegas, labs, crit, q, con_global=False)
+    if meta["sin_valor"]:
+        items, meta = _calcular(user, "tienda_item", "costo", meses, 80, 95, empresa, bodegas, labs, crit, q, con_global=False)
+    m = max(meta["dias"] / 30.4375, 1.0)
+    return {(i["bodega_id"], i["producto_id"]): {"clase": i["clase"], "ranking": i["puesto"], "prom_venta": i["valor"] / m, "prom_unid": i["cant"] / m}
+            for i in items}

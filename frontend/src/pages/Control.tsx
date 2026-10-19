@@ -234,6 +234,10 @@ export default function Control() {
     { field: 'bodega_nombre', headerName: 'Nombre tienda', width: 150, filter: true },
     { field: 'laboratorio', headerName: 'Lab.', width: 80, filter: true },
     { field: 'adu', headerName: 'ADU', type: 'numericColumn', width: 80, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(1) },
+    { field: 'clase', headerName: 'Clase', width: 80, filter: true, headerTooltip: 'ABC × XYZ por margen (12 meses), recalculado con los filtros' },
+    { field: 'ranking', headerName: 'Ranking', type: 'numericColumn', width: 90, headerTooltip: 'Puesto dentro de lo filtrado (1 = el que más aporta)' },
+    { field: 'prom_venta', headerName: 'Prom. mes venta $', type: 'numericColumn', width: 135, valueFormatter: p => p.value == null ? '' : '$' + Math.round(p.value).toLocaleString('es-CO') },
+    { field: 'prom_unid', headerName: 'Prom. mes unid.', type: 'numericColumn', width: 120, valueFormatter: p => p.value == null ? '' : Math.round(p.value).toLocaleString('es-CO') },
     ...mapa.fechas.map((fe, i): ColDef => ({
       headerName: fe.slice(5), width: 62, sortable: false, suppressMovable: true, headerTooltip: fe,
       valueGetter: p => p.data?.v?.[i] ?? null, valueFormatter: p => p.value == null ? '' : Number(p.value).toLocaleString(),

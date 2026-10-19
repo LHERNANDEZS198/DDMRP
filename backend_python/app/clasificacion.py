@@ -34,6 +34,9 @@ def agregar(filas: list[dict], nivel: str) -> list[dict]:
                              "descripcion": r.get("descripcion"), "laboratorio": r.get("laboratorio"), "costo": r.get("costo"),
                              "cant": 0.0, "valor": 0.0, "inventario": 0.0, "adu": 0.0, "primer_mes": None, "tiendas": 0,
                              "_iv_pond": 0.0, "_iv_sum": 0.0, "_iv_n": 0}
+            if nivel == "tienda_item":      # estado del buffer: solo tiene sentido por tienda
+                for c in ("zona", "pct_buffer", "flujo_neto", "sugerido"):
+                    g[c] = r.get(c)
         g["cant"] += _f(r.get("cant")); g["valor"] += _f(r.get("valor")); g["inventario"] += max(_f(r.get("inventario")), 0.0)
         g["adu"] += _f(r.get("adu")); g["tiendas"] += 1
         pm = r.get("primer_mes")
@@ -65,6 +68,31 @@ def calcular(items: list[dict], dias: int) -> None:
         it["gmroi"] = None if it["margen"] is None or not it["inv_costo"] else it["margen"] * factor / it["inv_costo"]
         diario = it["cant"] / max(dias, 1)
         it["dias_inv"] = None if diario <= 0 else it["inventario"] / diario
+
+
+DIAGNOSTICOS = {   # clave: (etiqueta, color, que hacer)
+    "prioridad": ("Importante en rojo", "#c62828", "Item A o B con el buffer en rojo: reponer primero"),
+    "reponer": ("En rojo", "#ef6c00", "Buffer en rojo en un item de menor peso: reponer"),
+    "vigilar": ("A en amarillo", "#f9a825", "Item A en amarillo: vigilar antes de que caiga a rojo"),
+    "exceso_clave": ("Exceso en importante", "#1565c0", "Item A o B por encima del buffer: revisar si el tope es el correcto"),
+    "exceso": ("Exceso en baja rotación", "#6a1b9a", "Exceso en un item C: capital inmovilizado, frenar reposición"),
+    "dormido": ("Sin venta con inventario", "#6d4c41", "No vendió en la ventana y tiene inventario: capital dormido"),
+    "ok": ("Sano", "#2e7d32", "Sin alerta"),
+}
+
+
+def diagnostico(it: dict) -> str:
+    """Cruza la zona del buffer de hoy con la clase ABC: que atender primero. Funciona con lo que ya trae el item (zona, abc, inventario)."""
+    z, a = it.get("zona"), it.get("abc")
+    if z == "ROJA":
+        return "prioridad" if a in ("A", "B") else ("reponer" if a in ("C", "N") else "ok")
+    if a == "D" and it.get("inventario", 0) > 0:
+        return "dormido"
+    if z == "EXCESO":
+        return "exceso_clave" if a in ("A", "B") else ("exceso" if a in ("C",) else "ok")
+    if z == "AMARILLA" and a == "A":
+        return "vigilar"
+    return "ok"
 
 
 def clase_xyz(iv, c1: float = 0.5, c2: float = 0.8) -> str:

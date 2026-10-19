@@ -98,3 +98,12 @@ def test_clasificacion_validaciones_y_cortes_iv():
     with pytest.raises(ValueError):
         cl.clasificar([], "otro")
     assert cl.mes_nuevo(date(2026, 10, 19), 3) == "202608" and cl.mes_nuevo(date(2026, 2, 1), 3) == "202512"
+
+
+def test_diagnostico():
+    from app import clasificacion as cl
+    d = cl.diagnostico
+    assert d({"zona": "ROJA", "abc": "A"}) == "prioridad" and d({"zona": "ROJA", "abc": "C"}) == "reponer" and d({"zona": "ROJA", "abc": "D"}) == "ok"
+    assert d({"zona": "EXCESO", "abc": "A"}) == "exceso_clave" and d({"zona": "EXCESO", "abc": "C"}) == "exceso"
+    assert d({"zona": "VERDE", "abc": "D", "inventario": 5}) == "dormido" and d({"zona": "VERDE", "abc": "D", "inventario": 0}) == "ok"
+    assert d({"zona": "AMARILLA", "abc": "A"}) == "vigilar" and d({"zona": "VERDE", "abc": "A"}) == "ok"

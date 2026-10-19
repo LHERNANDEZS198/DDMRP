@@ -14,6 +14,7 @@ import Log from './pages/Log'
 import Auditoria from './pages/Auditoria'
 import Lanzamientos from './pages/Lanzamientos'
 import Clasificacion from './pages/Clasificacion'
+import SaludInventario from './pages/Salud'
 import { SaludProvider } from './Salud'
 import { Yo, YoCtx, useYo } from './Yo'
 
@@ -21,6 +22,7 @@ import { Yo, YoCtx, useYo } from './Yo'
 export const PANTALLAS = [
   { to: '/control', req: ['ver_control'] },
   { to: '/lanzamientos', req: ['ver_control'] },
+  { to: '/salud-inventario', req: ['ver_control'] },
   { to: '/clasificacion', req: ['ver_control'] },
   { to: '/dashboard', req: ['ver_alertas'] },
   { to: '/despacho', req: ['ver_despacho'] },
@@ -63,6 +65,7 @@ export default function App() {
           <Route path="/control/cambios" element={<Req to="/control"><Control /></Req>} />
           <Route path="/control/tendencia" element={<Req to="/control"><Control /></Req>} />
           <Route path="/control/mapa" element={<Req to="/control"><Control /></Req>} />
+          <Route path="/salud-inventario" element={<Req to="/salud-inventario"><SaludInventario /></Req>} />
           <Route path="/clasificacion" element={<Req to="/clasificacion"><Clasificacion /></Req>} />
           <Route path="/lanzamientos" element={<Req to="/lanzamientos"><Lanzamientos /></Req>} />
           <Route path="/dashboard" element={<Req to="/dashboard"><Dashboard /></Req>} />

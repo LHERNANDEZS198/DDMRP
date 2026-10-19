@@ -15,6 +15,7 @@ import History from '@mui/icons-material/History'
 import FactCheck from '@mui/icons-material/FactCheck'
 import RocketLaunch from '@mui/icons-material/RocketLaunch'
 import Category from '@mui/icons-material/Category'
+import MonitorHeart from '@mui/icons-material/MonitorHeart'
 import { useYo } from './Yo'
 import { BannerSalud } from './Salud'
 import Errores from './Errores'
@@ -28,6 +29,7 @@ export const VISTAS = [
 ]
 export const NAV = [
   { to: '/control', label: 'Control DDMRP', icon: <Insights />, vistas: true, req: ['ver_control'] },
+  { to: '/salud-inventario', label: 'Salud del inventario', icon: <MonitorHeart />, req: ['ver_control'] },
   { to: '/clasificacion', label: 'Clasificación ABC', icon: <Category />, req: ['ver_control'] },
   { to: '/lanzamientos', label: 'Lanzamientos', icon: <RocketLaunch />, req: ['ver_control'] },
   { to: '/dashboard', label: 'Alertas', icon: <WarningAmber />, req: ['ver_alertas'] },

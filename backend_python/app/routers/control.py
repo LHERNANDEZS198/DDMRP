@@ -330,10 +330,17 @@ def _mapa_datos(c, user, bodegas, labs, q, zonas, dia, empresa, crit, desde, has
                                  WHERE h.fecha = ANY(:fechas)"""),
                          {"kb": [k[0] for k in llaves], "kp": [k[1] for k in llaves], "fechas": fechas_}).all()
     piv = mapa_calor.pivotear(fechas_, llaves, hist, metrica)
+    from .clasificacion import datos_clase      # import tardio: clasificacion importa de este modulo
+    try:
+        cls = datos_clase(user, empresa, bodegas, labs, crit, q) if llaves else {}
+    except Exception:                            # la clasificacion es un extra: el mapa no debe caerse por ella
+        cls = {}
     filas = []
     for r, k in zip(combos, llaves):
         v, z = piv[k]
-        filas.append({**r, "v": [mapa_calor.redondear(x, metrica) for x in v], "z": z})
+        c = cls.get(k, {})
+        filas.append({**r, "v": [mapa_calor.redondear(x, metrica) for x in v], "z": z, "clase": c.get("clase"), "ranking": c.get("ranking"),
+                      "prom_venta": c.get("prom_venta"), "prom_unid": c.get("prom_unid")})
     return fechas_, filas, total, {"desde": fechas_[0], "hasta": fechas_[-1]}
 
 
@@ -451,11 +458,15 @@ def mapa_excel(bodegas: str | None = None, labs: str | None = None, q: str | Non
         fechas_, filas, total, per = _mapa_datos(c, user, bodegas, labs, q, zonas, dia, empresa, crit, desde, hasta, paso, metrica, orden, min(tope, 200000))
     cols = [{"t": "Tienda", "k": "bodega_id", "w": 9}, {"t": "Nombre tienda", "k": "bodega_nombre", "w": 24}, {"t": "Item", "k": "producto_id", "w": 11},
             {"t": "Descripcion", "k": "descripcion", "w": 40}, {"t": "Laboratorio", "k": "laboratorio", "w": 14},
-            {"t": "ADU", "k": "adu", "f": "dec2", "w": 8}, {"t": "Costo", "k": "costo", "f": "cop", "w": 10}]
+            {"t": "ADU", "k": "adu", "f": "dec2", "w": 8}, {"t": "Costo", "k": "costo", "f": "cop", "w": 10},
+            {"t": "Clase", "k": "clase", "w": 8}, {"t": "Ranking", "k": "ranking", "f": "int", "w": 9},
+            {"t": "Prom. mes venta $", "k": "prom_venta", "f": "cop", "w": 14}, {"t": "Prom. mes unidades", "k": "prom_unid", "f": "int", "w": 12}]
     wb = excel.libro()
     excel.hoja_mapa(wb, "Mapa", cols, fechas_, filas)
     excel.hoja_texto(wb, "Leyenda", [("Numero de la celda", mapa_calor.METRICAS[metrica]), *[(n.title(), f"zona {n}") for _, n in excel.leyenda_zonas()],
-                                     ("Celda vacia", "ese dia no hay foto del motor para la combinacion")])
+                                     ("Celda vacia", "ese dia no hay foto del motor para la combinacion"),
+                                     ("Clase / Ranking", "ABC x XYZ por margen de los ultimos 12 meses (o consumo a costo si las ventas aun no traen valor), recalculado con los filtros del mapa; ranking = puesto dentro de ese filtro"),
+                                     ("Prom. mes venta / unidades", "venta neta sin IVA y unidades vendidas por mes en la ventana de 12 meses")])
     _hoja_filtros(wb, user, "Control DDMRP - mapa de calor", [("Periodo", f"{per['desde']} a {per['hasta']}"), ("Paso (dias)", paso), ("Orden", orden),
                   ("Filas", f"{len(filas)} de {total}" + (" (recortado: filtra mas)" if total > len(filas) else "")), *_dic_filtros(bodegas, labs, q, zonas, dia, empresa, crit)])
     return _respuesta(wb, "mapa_calor")
