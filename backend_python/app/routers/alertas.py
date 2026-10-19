@@ -1,31 +1,39 @@
-from fastapi import APIRouter, Depends
+"""Alertas: resumen por zona y lista de zona roja de la ultima corrida. Mismos filtros que Control DDMRP (empresa, tienda, laboratorio,
+criterio de items, item), resueltos en el servidor y siempre limitados a lo que el usuario puede leer."""
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import text
 from ..db import pg
-from ..security import usuario_actual, filtro_sql_permisos, requiere
-from ..activos import solo_activos
+from ..security import usuario_actual, requiere
+from .control import _filtros
 
 router = APIRouter(prefix="/alertas", tags=["alertas"], dependencies=[Depends(requiere("ver_alertas"))])
 
 ULTIMA = "(SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok')"
+BASE = "FROM ddmrp.sugerencias_envio s LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = s.producto_id"
+
+
+def _donde(user, bodegas, labs, q, empresa, crit) -> tuple[str, dict]:
+    cond, p = _filtros(user, bodegas, labs, q, None, None, empresa, crit=crit)   # permisos + solo items activos + filtros elegidos
+    return " AND ".join([f"s.ejecucion_id = {ULTIMA}"] + cond), p
 
 
 @router.get("/resumen")
-def resumen(user=Depends(usuario_actual)):
-    w, p = filtro_sql_permisos(user)
-    sql = f"""SELECT s.zona::text AS zona, count(*) n FROM ddmrp.sugerencias_envio s
-              LEFT JOIN ddmrp.maestro_item mi USING (producto_id)
-              WHERE s.ejecucion_id = {ULTIMA} AND {w} AND {solo_activos('s')} GROUP BY 1"""
+def resumen(bodegas: str | None = None, labs: str | None = None, q: str | None = None, empresa: str | None = None, crit: str | None = None,
+            user=Depends(usuario_actual)):
+    w, p = _donde(user, bodegas, labs, q, empresa, crit)
     with pg.connect() as c:
-        return [dict(r) for r in c.execute(text(sql), p).mappings()]
+        return [dict(r) for r in c.execute(text(f"SELECT s.zona::text AS zona, count(*) n {BASE} WHERE {w} GROUP BY 1"), p).mappings()]
 
 
 @router.get("/zona-roja")
-def zona_roja(limit: int = 5000, user=Depends(usuario_actual)):
-    w, p = filtro_sql_permisos(user)
-    sql = f"""SELECT s.empresa, s.producto_id, mi.descripcion, s.bodega_id, s.inventario, s.en_transito,
-                     s.flujo_neto, s.tor, s.tog_aj, s.pct_buffer, s.cantidad_sugerida
-              FROM ddmrp.sugerencias_envio s LEFT JOIN ddmrp.maestro_item mi USING (producto_id)
-              WHERE s.ejecucion_id = {ULTIMA} AND s.zona='ROJA' AND NOT s.condenado AND {w} AND {solo_activos('s')}
-              ORDER BY s.pct_buffer LIMIT :lim"""
+def zona_roja(bodegas: str | None = None, labs: str | None = None, q: str | None = None, empresa: str | None = None, crit: str | None = None,
+              limit: int = Query(5000, ge=1, le=20000), user=Depends(usuario_actual)):
+    """{total, filas}: total = cuantas hay con los filtros; filas = las primeras `limit` (las mas vacias primero)."""
+    w, p = _donde(user, bodegas, labs, q, empresa, crit)
+    w += " AND s.zona = 'ROJA' AND NOT s.condenado"
     with pg.connect() as c:
-        return [dict(r) for r in c.execute(text(sql), {**p, "lim": limit}).mappings()]
+        total = c.execute(text(f"SELECT count(*) {BASE} WHERE {w}"), p).scalar()
+        filas = [dict(r) for r in c.execute(text(f"""
+            SELECT s.empresa, s.producto_id, mi.descripcion, s.bodega_id, s.inventario, s.en_transito, s.flujo_neto, s.tor, s.tog_aj, s.pct_buffer, s.cantidad_sugerida
+            {BASE} WHERE {w} ORDER BY s.pct_buffer LIMIT :lim"""), {**p, "lim": limit}).mappings()]
+    return {"total": total, "filas": filas}

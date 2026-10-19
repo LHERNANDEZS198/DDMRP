@@ -12,6 +12,9 @@ import { api, descargar } from '../api'
 import Aviso from '../Aviso'
 import { ayudar } from '../ayuda'
 import { useYo } from '../Yo'
+import { confirmar } from '../alertas'
+import { GuiaDespacho } from '../guias'
+import HelpOutline from '@mui/icons-material/HelpOutline'
 
 const cop = (v: number) => '$' + Math.round(v).toLocaleString('es-CO')
 const unidades = (r: any) => Number(r.cantidad_aprobada ?? r.cantidad_sugerida) || 0
@@ -58,6 +61,7 @@ export default function Despacho() {
   const [consec, setConsec] = useState(1)
   const [marcar, setMarcar] = useState(false)
   const [cedi, setCedi] = useState<any>(null)
+  const [guia, setGuia] = useState(false)
   // empresa obligatoria (05 Funat / 21 Stores): cada una tiene su CEDI, su matriz y su plano
   const [empresa, setEmpresa] = useState<string>(() => { try { return localStorage.getItem('despacho_empresa') ?? '' } catch { return '' } })
   const elegirEmpresa = (v: string) => { setEmpresa(v); setDia(''); setFiltrar(false); setTiendas([]); try { localStorage.setItem('despacho_empresa', v) } catch { /* sin almacenamiento */ } }
@@ -152,7 +156,7 @@ export default function Despacho() {
     const sel = grid?.getSelectedRows() ?? []
     const bodegas = sel.length ? [...new Set<string>(sel.map((x: any) => x.bodega_id))] : (filtrar ? tiendas : null)
     const n = bodegas ? bodegas.length : tot.lista.length
-    if (!window.confirm(`Marcar como ENVIADAS las aprobadas de ${bodegas ? n : 'todas las'} tienda(s)?` + (regla ? ` Las que valgan menos de ${cop(minimo)} no se envían.` : ''))) return
+    if (!(await confirmar('Marcar como enviadas', `Se marcan como ENVIADAS las aprobadas de ${bodegas ? n : 'todas las'} tienda(s).` + (regla ? ` Las que valgan menos de ${cop(minimo)} no se envían.` : '') + ' Quedan fuera de Aprobadas y ya no se pueden devolver.', { si: 'Sí, marcar como enviadas' }))) return
     try {
       const r = await api('/despacho/marcar-enviadas', { method: 'POST', body: JSON.stringify({ bodegas, empresa }) })
       setMsg(`Marcadas como enviadas: ${r.enviadas} filas de ${r.tiendas} tienda(s)`
@@ -190,6 +194,8 @@ export default function Despacho() {
         <TextField select size="small" label="Ver" value={ver} onChange={e => setVer(e.target.value as any)} sx={{ minWidth: 130 }}>
           <MenuItem value="pendiente">Pendientes</MenuItem><MenuItem value="aprobada">Aprobadas</MenuItem><MenuItem value="enviada">Enviadas</MenuItem>
         </TextField>
+        <Tooltip title="Pendiente → Aprobada → Enviada. Los estados viven en la corrida del motor: al correrlo de nuevo todo vuelve a Pendiente. Clic para ver cómo funciona.">
+          <Button size="small" color="warning" startIcon={<HelpOutline />} onClick={() => setGuia(true)}>Estados: se reinician al correr el motor</Button></Tooltip>
         {pAprobar && ver === 'pendiente' && <Button variant="contained" startIcon={<Check />} onClick={aprobar}>Aprobar seleccionados</Button>}
         {pAprobar && ver === 'aprobada' && <Button variant="outlined" color="warning" startIcon={<Undo />} onClick={devolver}>Devolver a pendiente</Button>}
         {(pAprobar || pPlano) && ver === 'aprobada' && <Tooltip title="Pasa las aprobadas (las seleccionadas, o las de las tiendas de la corrida) a ENVIADAS sin bajar el plano. Las tiendas bajo el valor mínimo no se envían.">
@@ -242,6 +248,7 @@ export default function Despacho() {
           getRowStyle={(p: any) => bajoMin.has(p.data?.bodega_id) ? { color: '#9e9e9e', background: 'rgba(158,158,158,0.12)' } : undefined}
           context={{ aprobar: pAprobar }} onCellValueChanged={() => setEdiciones(n => n + 1)} onGridReady={e => setGrid(e.api)} defaultColDef={{ resizable: true, sortable: true }} />
       </Box>
+      <GuiaDespacho abierta={guia} cerrar={() => setGuia(false)} />
       <Aviso msg={msg} onClose={() => setMsg('')} />
     </Box>)
 }

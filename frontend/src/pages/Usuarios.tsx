@@ -7,6 +7,7 @@ import DeleteOutline from '@mui/icons-material/DeleteOutline'
 import { api } from '../api'
 import Aviso from '../Aviso'
 import { useYo } from '../Yo'
+import { confirmar } from '../alertas'
 
 type Perm = { clave: string; label: string; grupo: string }
 type Perfil = { perfil_id: string; nombre: string; descripcion: string; nivel: string; permisos: string[]; sistema: boolean; usuarios: number }
@@ -54,7 +55,7 @@ function Usuarios({ perfiles, setMsg }: { perfiles: Perfil[]; setMsg: (s: string
     } catch (e: any) { setMsg('Error: ' + e.message) }
   }
   const borrar = async (u: Usr) => {
-    if (!window.confirm(`Quitar a ${u.nombre || u.usuario_id} de la aplicación? (no se borra de reloj, solo pierde el acceso aquí)`)) return
+    if (!(await confirmar(`Quitar a ${u.nombre || u.usuario_id}`, 'No se borra de reloj: solo pierde el acceso a esta aplicación.', { peligro: true, si: 'Sí, quitar' }))) return
     try { await api('/usuarios/' + encodeURIComponent(u.usuario_id), { method: 'DELETE' }); setMsg('Usuario eliminado'); cargar() }
     catch (e: any) { setMsg('Error: ' + e.message) }
   }
@@ -145,7 +146,7 @@ function Perfiles({ perfiles, permisos, recargar, setMsg }: { perfiles: Perfil[]
   const alternar = (p: Perfil, clave: string, on: boolean) =>
     guardar(p, { permisos: on ? [...p.permisos, clave] : p.permisos.filter(c => c !== clave) })
   const borrar = async (p: Perfil) => {
-    if (!window.confirm(`Borrar el perfil “${p.nombre}”?`)) return
+    if (!(await confirmar(`Borrar el perfil “${p.nombre}”`, 'Solo se puede borrar si ningún usuario lo tiene asignado.', { peligro: true, si: 'Sí, borrar' }))) return
     try { await api('/usuarios/perfiles/' + p.perfil_id, { method: 'DELETE' }); setMsg('Perfil borrado'); recargar() } catch (e: any) { setMsg('Error: ' + e.message) }
   }
   const crear = async () => {

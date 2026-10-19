@@ -59,7 +59,7 @@ MAESTROS = {
     "parametros": dict(
         label="Parametros del modelo", tabla="ddmrp.parametro",
         llave=["clave"], editable={"valor": "num"}, bodega=None, producto=None, global_=True,
-        solo_existentes=True, sin_reemplazo=True),
+        solo_existentes=True, sin_reemplazo=True, oculto=True),   # oculto: las mismas claves se editan en Reglas de pedido (con validacion y nombres claros)
     "dias-bodega": dict(
         label="DIA de abastecimiento por tienda", tabla="ddmrp.bodega_dia",
         llave=["bodega_id", "dia"], editable={}, bodega="bodega_id", producto=None),
@@ -93,6 +93,9 @@ MAESTROS = {
 }
 
 
+SIN_VACIAR = {"items", "factores", "parametros"}   # se llenan desde Siesa o son del modelo: no se vacian desde la pantalla
+OPS = {"eq": "=", "ne": "<>", "gt": ">", "lt": "<", "ge": ">=", "le": "<="}
+
 AYUDA = {
     "bitacora": "Lead time (días que tarda el producto en llegar a la tienda) y frecuencia (cada cuántos días se abastece) de cada tienda. "
                 "El lead time × la venta diaria da la zona amarilla y la frecuencia × la venta diaria da la verde; además el lead time define el factor de la zona roja (maestro Factores). "
@@ -105,7 +108,9 @@ AYUDA = {
     "unidad-despacho": "Múltiplo en que se despacha cada referencia (caja o display). Lo sugerido se redondea a este múltiplo (según la regla de redondeo) y también es el mínimo de la zona verde.",
     "reserva-cedi": "Porcentaje del inventario del CEDI que se guarda por item: no se reparte a las tiendas. Solo importa cuando el CEDI no alcanza para todas.",
     "promocion": "Indicativo de promoción por referencia. 0 = sin promoción. 1 = promoción fuerte: las cotas se agrandan (máxima × 1,2 y mínima × 1,1, parámetros del modelo), así el buffer crece y se sugiere más. "
-                 "2 = promoción moderada: se aplican las cotas normales aunque la venta diaria sea baja (la mínima × 1,1 solo en tiendas GN). No aplica a tiendas TC y DM.",
+                 "2 = promoción moderada: se aplican las cotas normales aunque la venta diaria sea baja (la mínima × 1,1 solo en tiendas GN). "
+                 "Excepción: la promoción NO aplica en las tiendas cuyo código de bodega empieza por TC o DM (ej. TC001, DM010): ahí el indicativo se ignora (se toma como 0) y el buffer se calcula sin promoción. "
+                 "GN, TC y DM son los dos primeros caracteres del código de la bodega en Siesa.",
     "factores": "Tablas de tramos del modelo. LT: factor de la zona roja base según el lead time. VAR: factor de la zona roja de seguridad según la variabilidad de la demanda. Cambian los buffers de todos los productos.",
     "parametros": "Parámetros del modelo: multiplicadores de cota en promoción y rango de venta diaria baja (ADU). Solo se editan los que ya existen. Las reglas de pedido están en la pantalla Reglas de pedido.",
     "dias-bodega": "DÍA(S) de abastecimiento de cada tienda. Sirve para armar la corrida del día en la Matriz de despacho y, si lo eliges en Reglas de pedido, para repartir el inventario del CEDI solo entre las tiendas de esos días.",
@@ -161,14 +166,30 @@ def listar_maestros(user=Depends(requiere("ver_maestros", "cargar_maestros"))):
     return [{"clave": k, "label": v["label"], "llave": v["llave"], "editable": list(v["editable"]),
              "tipos": v["editable"], "sin_reemplazo": bool(v.get("sin_reemplazo")), "todas": bool(v.get("todas")),
              "ayuda": AYUDA.get(k, ""),
+             "puede_vaciar": not v.get("sin_reemplazo") and k not in SIN_VACIAR,
              "filtros": {"tienda": bool(v.get("bodega")), "item": bool(v.get("producto")) or k == "items",
                          "lab": bool(v.get("producto")) or k in ("items", "reposicion-laboratorio", "laboratorio-sin-envio"), "texto": True,
-                         "empresa": k == "items", "mes": k == "ventas-mensual"}}
-            for k, v in MAESTROS.items()]
+                         "empresa": k == "items",                                   # items: la empresa es obligatoria (cada base tiene su catalogo)
+                         "empresa_opc": k != "items" and "empresa" in v["llave"],   # los demas: opcional (vacio = las dos)
+                         "mes": k == "ventas-mensual"}}
+            for k, v in MAESTROS.items() if not v.get("oculto")]
+
+
+@router.get("/_opciones")
+def opciones(user=Depends(requiere("ver_maestros", "cargar_maestros"))):
+    """Listas para los filtros de la pantalla: tiendas (con nombre y empresa) y laboratorios. Va antes de /{nombre}."""
+    w, p = filtro_sql_permisos(user, "mb.bodega_id", "'*'")
+    with pg.connect() as c:
+        tiendas = [dict(r) for r in c.execute(text(
+            f"SELECT mb.bodega_id, mb.descripcion AS nombre, mb.empresa FROM ddmrp.maestro_bodega mb WHERE {w} ORDER BY 1"), p).mappings()]
+        labs = [dict(r) for r in c.execute(text(
+            "SELECT l.codigo, l.nombre FROM ddmrp.laboratorio l WHERE EXISTS (SELECT 1 FROM ddmrp.maestro_item m WHERE m.categoria = l.codigo) ORDER BY 1")).mappings()]
+    return {"tiendas": tiendas, "laboratorios": labs}
 
 
 def _filtros_maestro(nombre: str, d: dict, bodega_id: str | None, q: str | None, lab: str | None,
-                     empresa: str | None = None, mes: str | None = None, estado: str | None = None) -> tuple[str, dict]:
+                     empresa: str | None = None, mes: str | None = None, estado: str | None = None,
+                     col: str | None = None, op: str | None = None, val: str | None = None) -> tuple[str, dict]:
     """Filtros de pantalla y de descarga. Supone el alias t (tabla) y mi (maestro_item) cuando el maestro tiene producto."""
     w, p = "", {}
     bod, prod = d.get("bodega"), d.get("producto")
@@ -183,14 +204,15 @@ def _filtros_maestro(nombre: str, d: dict, bodega_id: str | None, q: str | None,
         else:
             clave = next((k for k in d["llave"] if k != "empresa"), d["llave"][0])
             w += f" AND CAST(t.{clave} AS text) ILIKE :q"
-    if lab and lab.strip():
-        p["lab"] = lab.strip()
+    labs = [x.strip() for x in (lab or "").split(",") if x.strip()]
+    if labs:   # uno o varios laboratorios (codigos)
+        p["lab"] = labs
         if prod:
-            w += " AND mi.categoria = :lab"
+            w += " AND mi.categoria = ANY(:lab)"
         elif nombre == "items":
-            w += " AND t.categoria = :lab"
+            w += " AND t.categoria = ANY(:lab)"
         elif nombre in ("reposicion-laboratorio", "laboratorio-sin-envio"):
-            w += " AND t.laboratorio = :lab"
+            w += " AND t.laboratorio = ANY(:lab)"
     if nombre == "items":   # items de una sola empresa (las dos bases tienen catalogos distintos)
         if empresa not in ("05", "21"):
             raise HTTPException(400, "Elige la empresa (05 o 21) para ver los items")
@@ -206,12 +228,40 @@ def _filtros_maestro(nombre: str, d: dict, bodega_id: str | None, q: str | None,
     if nombre == "ventas-mensual" and mes and mes.strip():   # filtro de mes en el servidor (no solo sobre las filas ya cargadas)
         p["mes"] = mes.strip().replace("-", "")[:6]
         w += " AND t.mes = :mes"
+    if nombre != "items" and "empresa" in d["llave"] and empresa in ("05", "21"):   # maestros con empresa en la llave: filtro opcional
+        w += " AND t.empresa = :emp"; p["emp"] = empresa
+    if col:   # condicion sobre una columna (llave o editable), resuelta en la base: sirve igual con 400.000 filas
+        tipos = {**{k: TIPO_LLAVE.get(k, "txt") for k in d["llave"]}, **d["editable"]}
+        if col not in tipos:
+            raise HTTPException(400, f"Columna no valida para filtrar: {col}")
+        tipo, op = tipos[col], (op or "eq")
+        if op == "vacio":
+            w += f" AND (t.{col} IS NULL" + (f" OR CAST(t.{col} AS text) = ''" if tipo == "txt" else "") + ")"
+        elif op == "lleno":
+            w += f" AND t.{col} IS NOT NULL" + (f" AND CAST(t.{col} AS text) <> ''" if tipo == "txt" else "")
+        elif val is None or not str(val).strip():
+            pass                                    # condicion a medias (sin valor): no filtra
+        elif op == "contiene":
+            w += f" AND CAST(t.{col} AS text) ILIKE :cv"; p["cv"] = f"%{str(val).strip()}%"
+        elif op in OPS:
+            if tipo in ("num", "int"):
+                try:
+                    p["cv"] = float(str(val).strip().replace(",", "."))
+                except ValueError:
+                    raise HTTPException(400, f"{col} es numerica: {val!r} no es un numero")
+                w += f" AND t.{col} {OPS[op]} CAST(:cv AS numeric)"
+            else:
+                p["cv"] = str(val).strip()
+                w += f" AND CAST(t.{col} AS text) {OPS[op]} :cv"
+        else:
+            raise HTTPException(400, f"Operador no valido: {op}")
     return w, p
 
 
 @router.get("/{nombre}")
 def leer(nombre: str, response: Response, bodega_id: str | None = None, producto_id: str | None = None, q: str | None = None,
          lab: str | None = None, empresa: str | None = None, mes: str | None = None, estado: str | None = None, limit: int = 20000,
+         col: str | None = None, op: str | None = None, val: str | None = None, orden: str | None = None, desc: bool = False,
          user=Depends(requiere("ver_maestros", "cargar_maestros"))):
     d = _def(nombre)
     cols = d["llave"] + [c for c in d["editable"] if c not in d["llave"]]
@@ -228,12 +278,15 @@ def leer(nombre: str, response: Response, bodega_id: str | None = None, producto
         sel += ", mi.descripcion"
     if producto_id and d.get("producto"):
         w += f" AND t.{d['producto']} = :pr"; p["pr"] = producto_id
-    wf, pf = _filtros_maestro(nombre, d, bodega_id, q, lab, empresa, mes, estado)
+    wf, pf = _filtros_maestro(nombre, d, bodega_id, q, lab, empresa, mes, estado, col, op, val)
     w, p = w + wf, {**p, **pf}
     if nombre == "items":   # costo promedio por instalacion (lo trae el ETL) y estado en Siesa: solo lectura
         join += " LEFT JOIN ddmrp.costo_item ci ON ci.producto_id = t.producto_id"
         sel += ", ci.costo::float8 AS costo, " + "(SELECT CASE ix2.estado WHEN 1 THEN \'Activo\' WHEN 0 THEN \'Inactivo\' WHEN 2 THEN \'Bloqueado\' END FROM ddmrp.item_estado ix2 WHERE ix2.empresa = :emp AND ix2.producto_id = t.producto_id) AS estado"
-    sql = f"SELECT {sel} FROM {d['tabla']} t {join} WHERE {w} ORDER BY {', '.join('t.' + c for c in d['llave'])} LIMIT :lim"
+    # orden en el servidor (la pantalla solo trae un pedazo cuando el maestro es grande): solo por columnas de la tabla
+    propias = set(d["llave"]) | set(d["editable"])
+    primero = f"t.{orden} {'DESC' if desc else 'ASC'}, " if orden in propias else ""
+    sql = f"SELECT {sel} FROM {d['tabla']} t {join} WHERE {w} ORDER BY {primero}{', '.join('t.' + c for c in d['llave'])} LIMIT :lim"
     with pg.connect() as c:
         filas = [dict(r) for r in c.execute(text(sql), {**p, "lim": limit}).mappings()]
         # total real (con los mismos filtros): la pantalla avisa si solo muestra una parte
@@ -399,7 +452,10 @@ def _preparar(d: dict, filas: list[dict], omitir: bool = False, malas_out: list 
                         raise ValueError(f"tienda no reconocida: {cod or f.get(nom_h)!r}")
                 llave[d["bodega"]] = hit[0]
                 if "empresa" in d["llave"]:
-                    emp = _valor_llave("empresa", f.get("empresa")) or hit[1] or ""
+                    emp_arch = _valor_llave("empresa", f.get("empresa"))
+                    if emp_arch and hit[1] and emp_arch != hit[1]:   # una tienda es de una sola empresa: si no, la fila queda huerfana (el motor no la usa)
+                        raise ValueError(f"la tienda {hit[0]} es de la empresa {hit[1]}, no de {emp_arch}")
+                    emp = emp_arch or hit[1] or ""
                     if not emp:
                         raise ValueError("no se pudo deducir la empresa de la tienda " + repr(hit[0]) + ": esta base aun no conoce las tiendas. "
                                      "Agrega la columna empresa (05 Funat, 21 Store) al archivo, o carga primero la bitacora con esa columna")
@@ -470,7 +526,7 @@ def _importar(nombre: str, d: dict, filas: list[dict], modo: str, user, omitir: 
         res = _importar_(nombre, d, filas, modo, user, omitir)
         bitacora.evento("carga", bitacora.usuario_de(user), f"{d['label']}: {modo}, {res.get('filas')} filas "
                         f"({res.get('creadas', 0)} nuevas, {res.get('actualizadas', 0)} actualizadas, {res.get('omitidas', 0)} omitidas)",
-                        {"maestro": nombre, "modo": modo, **{k: res.get(k) for k in ("filas", "unicas", "creadas", "actualizadas", "omitidas")}})
+                        {"maestro": nombre, "modo": modo, **{k: res.get(k) for k in ("filas", "unicas", "repetidas", "creadas", "actualizadas", "omitidas")}})
         return res
     except DBAPIError as e:  # p.ej. NOT NULL o valor fuera de rango: es error del archivo, no del servidor
         raise HTTPException(400, "El archivo tiene datos que la base rechaza: " + str(e.orig).splitlines()[0][:300])
@@ -529,7 +585,7 @@ def _importar_(nombre: str, d: dict, filas: list[dict], modo: str, user, omitir:
         c.execute(text("INSERT INTO ddmrp.config_audit (tabla, llave, campo, valor_anterior, valor_nuevo, usuario) "
                        "VALUES (:t, '*', :m, NULL, :n, :u)"),
                   {"t": nombre, "m": "carga_" + modo, "n": f"{len(filas)} filas ({creadas} nuevas)", "u": user["nombre"]})
-    return {"ok": True, "modo": modo, "filas": len(filas), "unicas": n_unicas, "creadas": creadas,
+    return {"ok": True, "modo": modo, "filas": len(filas), "unicas": n_unicas, "repetidas": len(filas) - n_unicas, "creadas": creadas,
             "actualizadas": 0 if reemplazo else existentes, "ignoradas": ignoradas, "condenados_nxp": len(cond_nxp),
             "omitidas": len(malas), "ejemplos_omitidas": malas[:5]}
 
@@ -562,6 +618,7 @@ async def subir_excel(nombre: str, archivo: UploadFile = File(...), modo: str = 
 @router.get("/{nombre}/excel")
 def bajar_excel(nombre: str, bodega_id: str | None = None, q: str | None = None, lab: str | None = None,
                 empresa: str | None = None, mes: str | None = None, estado: str | None = None,
+                col: str | None = None, op: str | None = None, val: str | None = None,
                 user=Depends(requiere("ver_maestros", "cargar_maestros"))):
     """Descarga lo que el usuario puede ver, con los mismos encabezados que acepta la carga (sirve de plantilla).
     Maestros por tienda: la tienda va con su codigo y su nombre (la empresa se deduce) y, si el maestro es solo por
@@ -573,8 +630,8 @@ def bajar_excel(nombre: str, bodega_id: str | None = None, q: str | None = None,
     cols_t = [k for k in d["llave"] if k != "empresa"] if bod else d["llave"]
     sel = ", ".join(f"t.{c}" for c in cols_t + list(d["editable"]))
     join, w, p = "", "TRUE", {}
-    solo_tienda = bool(bod) and not llave_xl and not d.get("producto")
-    wf, pf = _filtros_maestro(nombre, d, bodega_id, q, lab, empresa, mes, estado)   # los mismos filtros de la pantalla: se baja lo que se ve (sin tope de 20.000)
+    solo_tienda = bool(bod) and not llave_xl and not d.get("producto") and not col   # con filtro por columna se baja lo filtrado, no la plantilla
+    wf, pf = _filtros_maestro(nombre, d, bodega_id, q, lab, empresa, mes, estado, col, op, val)   # los mismos filtros de la pantalla: se baja lo filtrado (sin tope de 20.000)
     if d.get("producto"):
         join = f"LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = t.{d['producto']}"
     if bod:
@@ -597,6 +654,8 @@ def bajar_excel(nombre: str, bodega_id: str | None = None, q: str | None = None,
                 w2 += " AND mb.bodega_id = ANY(:fb)"; p2["fb"] = [x.strip() for x in bodega_id.split(",") if x.strip()]
             if q and q.strip():
                 w2 += " AND (mb.bodega_id ILIKE :q OR mb.descripcion ILIKE :q)"; p2["q"] = f"%{q.strip()}%"
+            if con_emp and empresa in ("05", "21"):
+                w2 += " AND mb.empresa = :emp"; p2["emp"] = empresa
             filas = c.execute(text(f"SELECT mb.bodega_id, mb.descripcion{', mb.empresa' if con_emp else ''}{ed} FROM ddmrp.maestro_bodega mb "
                                    f"LEFT JOIN {d['tabla']} t ON t.{bod} = mb.bodega_id WHERE {w2} ORDER BY mb.bodega_id"), p2).all()
         else:
@@ -631,26 +690,75 @@ def bajar_excel(nombre: str, bodega_id: str | None = None, q: str | None = None,
                     headers={"Content-Disposition": f'attachment; filename="{nombre}.xlsx"'})
 
 
+MAX_ELIMINAR = 200_000
+
+
 class Eliminar(BaseModel):
     llaves: list[dict[str, str]]
 
 
 @router.post("/{nombre}/eliminar")
 def eliminar(nombre: str, body: Eliminar, user=Depends(requiere("cargar_maestros"))):
-    """Borra filas por su llave (p.ej. quitar una tienda de un DIA). No aplica a factores ni parametros."""
+    """Borra filas por su llave (p.ej. quitar una tienda de un DIA), de a miles en una sola sentencia. No aplica a factores ni parametros.
+    Para borrar todo lo que cumple un filtro (sin pasar por la seleccion de la pantalla) esta /vaciar."""
     d = _def(nombre)
     if d.get("sin_reemplazo") or nombre == "factores":
         raise HTTPException(400, "Este maestro no admite eliminar filas")
-    if len(body.llaves) > 5000:
-        raise HTTPException(400, "Maximo 5.000 filas por eliminacion")
-    n = 0
+    if len(body.llaves) > MAX_ELIMINAR:
+        raise HTTPException(400, f"Maximo {MAX_ELIMINAR:,} filas por eliminacion: para mas usa 'Eliminar todo lo filtrado'")
+    if not body.llaves:
+        return {"ok": True, "eliminadas": 0}
+    for ll in body.llaves:
+        if set(ll) != set(d["llave"]):
+            raise HTTPException(400, f"La llave debe ser {d['llave']}")
+    cols = d["llave"]
     with pg.begin() as c:
-        for ll in body.llaves:
-            if set(ll) != set(d["llave"]):
-                raise HTTPException(400, f"La llave debe ser {d['llave']}")
-            _autorizar(user, d, ll, c)
-            donde = " AND ".join(f"{k} = CAST(:k_{k} AS {CAST[TIPO_LLAVE.get(k, 'txt')]})" for k in d["llave"])
-            n += c.execute(text(f"DELETE FROM {d['tabla']} WHERE {donde}"), {f"k_{k}": ll[k] for k in d["llave"]}).rowcount
+        _autorizar_lote(user, d, body.llaves, c, False)   # permisos de todo el lote con una sola consulta
+        arr = ", ".join(f"CAST(:a{i} AS text[])" for i in range(len(cols)))
+        als = ", ".join(f"c{i}" for i in range(len(cols)))
+        donde = " AND ".join(f"t.{k} = CAST(s.c{i} AS {CAST[TIPO_LLAVE.get(k, 'txt')]})" for i, k in enumerate(cols))
+        n = c.execute(text(f"DELETE FROM {d['tabla']} t USING unnest({arr}) AS s({als}) WHERE {donde}"),
+                      {f"a{i}": [ll[k] for ll in body.llaves] for i, k in enumerate(cols)}).rowcount
         c.execute(text("INSERT INTO ddmrp.config_audit (tabla, llave, campo, valor_anterior, valor_nuevo, usuario) "
                        "VALUES (:t, '*', 'eliminar', :n, NULL, :u)"), {"t": nombre, "n": f"{n} filas", "u": user["nombre"]})
     return {"ok": True, "eliminadas": n}
+
+
+class Vaciar(BaseModel):
+    bodega_id: str | None = None
+    q: str | None = None
+    lab: str | None = None
+    empresa: str | None = None
+    mes: str | None = None
+    col: str | None = None
+    op: str | None = None
+    val: str | None = None
+    solo_contar: bool = False   # True: solo dice cuantas filas se borrarian (para pedir confirmacion)
+    todo: bool = False          # True: confirma que se vacia el maestro completo (sin ningun filtro)
+
+
+@router.post("/{nombre}/vaciar")
+def vaciar(nombre: str, body: Vaciar, user=Depends(requiere("cargar_maestros"))):
+    """Borra TODAS las filas que cumplen los filtros de la pantalla (no solo las que se ven ni las seleccionadas), sin tope de filas.
+    Sin filtros vacia el maestro completo y exige todo=true. Es la forma de dejar un maestro limpio para volverlo a subir."""
+    d = _def(nombre)
+    if d.get("sin_reemplazo") or nombre in SIN_VACIAR:
+        raise HTTPException(400, "Este maestro no se vacia desde aqui")
+    if not _puede_global(user):
+        raise HTTPException(403, "Vaciar por filtro requiere admin o permiso de edicion sobre todas las bodegas y categorias; con permisos parciales usa 'Eliminar seleccionadas'")
+    wf, pf = _filtros_maestro(nombre, d, body.bodega_id, body.q, body.lab, body.empresa, body.mes, None, body.col, body.op, body.val)
+    if not wf and not body.solo_contar and not body.todo:
+        raise HTTPException(400, "Sin filtros se vacia el maestro completo: confirma con todo=true")
+    prod = d.get("producto")
+    join = f"LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = t.{prod}" if prod else ""
+    base = f"FROM {d['tabla']} t {join} WHERE TRUE{wf}"
+    with pg.begin() as c:
+        n = c.execute(text(f"SELECT count(*) {base}"), pf).scalar()
+        if body.solo_contar:
+            return {"ok": True, "filas": n, "con_filtro": bool(wf)}
+        n = c.execute(text(f"DELETE FROM {d['tabla']} WHERE ctid IN (SELECT t.ctid {base})"), pf).rowcount
+        desc = ", ".join(f"{k}={v}" for k, v in body.model_dump(exclude={"solo_contar", "todo"}).items() if v) or "sin filtros (todo)"
+        c.execute(text("INSERT INTO ddmrp.config_audit (tabla, llave, campo, valor_anterior, valor_nuevo, usuario) "
+                       "VALUES (:t, '*', 'vaciar', :n, :f, :u)"), {"t": nombre, "n": f"{n} filas", "f": desc[:500], "u": user["nombre"]})
+    bitacora.evento("carga", bitacora.usuario_de(user), f"{d['label']}: vaciado ({desc[:200]}), {n} filas eliminadas", {"maestro": nombre, "eliminadas": n})
+    return {"ok": True, "eliminadas": n, "con_filtro": bool(wf)}

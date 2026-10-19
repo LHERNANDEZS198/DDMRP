@@ -75,10 +75,13 @@ export default function Shell() {
             : <Typography sx={{ flex: 1 }}>{titulo}</Typography>}
           <Box sx={{ flex: 1 }} />
           <IconButton onClick={e => setAncla(e.currentTarget)} size="small">
-            <Avatar sx={{ width: 32, height: 32, bgcolor: '#fff', color: 'primary.main', fontSize: 14, fontWeight: 700 }}>{(user[0] || '?').toUpperCase()}</Avatar>
+            <Avatar sx={{ width: 32, height: 32, bgcolor: '#fff', color: 'primary.main', fontSize: 14, fontWeight: 700 }}>{(((yo?.nombre || '').trim() || user)[0] || '?').toUpperCase()}</Avatar>
           </IconButton>
           <Menu anchorEl={ancla} open={!!ancla} onClose={() => setAncla(null)}>
-            <MenuItem disabled>{yo?.nombre || user || 'Usuario'} · {user}</MenuItem><Divider />
+            <Box sx={{ px: 2, py: 1, maxWidth: 300 }}>
+              <Typography sx={{ fontWeight: 700, fontSize: 14, lineHeight: 1.3, textTransform: 'capitalize' }}>{(yo?.nombre || user || 'Usuario').toLowerCase()}</Typography>
+              {yo?.nombre && user && yo.nombre !== user && <Typography variant="caption" color="text.secondary">Usuario {user}</Typography>}
+            </Box><Divider />
             <MenuItem onClick={logout}><ListItemIcon><LogoutIcon fontSize="small" /></ListItemIcon>Cerrar sesión</MenuItem>
           </Menu>
         </Toolbar>

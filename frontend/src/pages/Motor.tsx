@@ -69,6 +69,7 @@ export default function Motor() {
           {(aviso?.d.aprobadas > 0 || aviso?.d.enviadas > 0) && (
             <Alert severity="warning">
               En la corrida actual hay <b>{aviso?.d.aprobadas}</b> fila(s) aprobada(s) y <b>{aviso?.d.enviadas}</b> enviada(s). Si aún no generaste el plano, genéralo antes de recalcular.
+              {aviso?.d.enviadas > 0 && <> Si vas a trabajar <b>otro DÍA</b> (ej. el DÍA 2 en la tarde), elige arriba solo ese DÍA: si no, las tiendas que ya enviaste vuelven a competir por el stock del CEDI y le quitan a las de ahora. Además, el plano que cargaste en Siesa debe estar ya registrado, o el motor sigue viendo ese stock como libre.</>}
             </Alert>)}
         </DialogContent>
         <DialogActions>
@@ -143,6 +144,15 @@ export default function Motor() {
           <li>Las cantidades pueden cambiar entre una corrida y otra porque el CEDI se reparte con el stock fresco.</li>
           <li>Solo corre una cosa a la vez (ETL, motor o carga de ventas). Si algo está corriendo, los botones se bloquean y arriba ves el avance; puedes cambiar de pantalla o cerrar la ventana, sigue en el servidor.</li>
           <li>Si una corrida se interrumpe (por ejemplo, se reinició el servidor), un aviso lo dice y los Informes siguen mostrando la última corrida buena. Se arregla corriendo de nuevo el ETL + motor.</li>
+        </Lista>
+      </Seccion>
+
+      <Seccion titulo="Si trabajas por DÍAs el mismo día (ej. DÍA 1 en la mañana y DÍA 2 en la tarde)">
+        <Lista>
+          <li><b>1 · Termina el DÍA 1 completo:</b> aprueba, genera el plano (marcando enviadas) y cárgalo en Siesa. Hasta que el traslado exista en Siesa, el motor sigue viendo esa mercancía como libre en el CEDI y se la volvería a ofrecer al DÍA 2.</li>
+          <li><b>2 · Antes del DÍA 2, recalcula:</b> «Recalcular ahora» basta, porque lee de nuevo el inventario del CEDI; y en la ventana que se abre deja elegido <b>solo el DÍA 2</b> en el reparto del CEDI. Así las tiendas del DÍA 1 no compiten por lo que quedó. Usa «ETL + motor» solo si además necesitas inventario o tránsitos frescos de las tiendas.</li>
+          <li><b>3 · En la Matriz de despacho</b> elige la corrida del DÍA 2. Las tiendas del DÍA 1 aparecerán otra vez en Pendientes (los estados se reinician): <b>no las vuelvas a aprobar</b>, ya salieron.</li>
+          <li><b>Sin recalcular:</b> si en la corrida de la mañana el reparto del CEDI ya incluía los DÍAs 1 + 2, el DÍA 2 ya tiene su parte calculada y puedes seguir con esa misma corrida sin perder nada de lo aprobado. Recalcula solo si entró mercancía al CEDI o el DÍA 1 salió muy distinto de lo asignado.</li>
         </Lista>
       </Seccion>
 

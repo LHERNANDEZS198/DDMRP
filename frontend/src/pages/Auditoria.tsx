@@ -29,17 +29,18 @@ const cols: ColDef[] = [
   { field: 'estado', headerName: 'Estado', width: 110 },
 ]
 
-type Opc = { tiendas: { bodega_id: string; nombre: string }[]; laboratorios: { codigo: string; nombre: string }[]; ejecucion: any }
+type Opc = { tiendas: { bodega_id: string; nombre: string }[]; laboratorios: { codigo: string; nombre: string }[]; empresas: string[]; ejecucion: any }
 
 export default function Auditoria() {
-  const [opc, setOpc] = useState<Opc>({ tiendas: [], laboratorios: [], ejecucion: null })
-  const [f, setF] = useState({ bodegas: [] as string[], labs: [] as string[], q: '', zonas: [] as string[], solo: true, limite: 10000 })
+  const [opc, setOpc] = useState<Opc>({ tiendas: [], laboratorios: [], empresas: [], ejecucion: null })
+  const [f, setF] = useState({ empresas: [] as string[], bodegas: [] as string[], labs: [] as string[], q: '', zonas: [] as string[], solo: true, limite: 10000 })
   const [d, setD] = useState<{ total: number; filas: any[]; tope_excel: number; ejecucion: any } | null>(null)
   const [cargando, setCargando] = useState(true)
   const [msg, setMsg] = useState(''); const [bajando, setBajando] = useState(false)
   useEffect(() => { api('/control/filtros').then(setOpc).catch(() => {}) }, [])
   const qs = useMemo(() => {
     const p = new URLSearchParams()
+    if (f.empresas.length) p.set('empresa', f.empresas.join(','))
     if (f.bodegas.length) p.set('bodegas', f.bodegas.join(','))
     if (f.labs.length) p.set('labs', f.labs.join(','))
     if (f.q.trim()) p.set('q', f.q.trim())
@@ -72,6 +73,8 @@ export default function Auditoria() {
         </Typography>
       </Box>
       <Paper variant="outlined" sx={{ p: 1.5, display: 'flex', flexWrap: 'wrap', gap: 1.5, alignItems: 'center' }}>
+        <Autocomplete multiple size="small" limitTags={1} sx={{ minWidth: 170, flex: '1 1 170px' }} options={opc.empresas} value={f.empresas}
+          getOptionLabel={o => o === '05' ? 'Funat (05)' : o === '21' ? 'Stores (21)' : o} onChange={(_, v) => setF(x => ({ ...x, empresas: v }))} renderInput={p => <TextField {...p} label="Empresa" />} />
         <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 240, flex: '2 1 240px' }} options={opc.tiendas.map(t => t.bodega_id)} value={f.bodegas}
           getOptionLabel={id => { const t = opc.tiendas.find(x => x.bodega_id === id); return t?.nombre ? `${id} · ${t.nombre}` : id }}
           onChange={(_, v) => setF(x => ({ ...x, bodegas: v }))} renderInput={p => <TextField {...p} label="Tienda" />} />

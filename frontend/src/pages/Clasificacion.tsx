@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { ColDef, ICellRendererParams } from 'ag-grid-community'
 import { Alert, Autocomplete, Box, Button, Chip, MenuItem, Paper, TextField, Tooltip, Typography } from '@mui/material'
 import Tabla from '../Tabla'
+import HelpOutline from '@mui/icons-material/HelpOutline'
 import { api, bajar } from '../api'
+import { GuiaClasificacion } from '../guias'
 
 const COLOR_ABC: Record<string, string> = { A: '#2e7d32', B: '#f9a825', C: '#9e9e9e', N: '#1565c0', D: '#6d4c41', S: '#8e24aa' }
 const NOMBRE_ABC: Record<string, string> = {
@@ -24,6 +26,7 @@ export default function Clasificacion() {
   const [opc, setOpc] = useState<any>({ tiendas: [], laboratorios: [], empresas: [], criterios: [] })
   const [d, setD] = useState<any>(null)
   const [cargando, setCargando] = useState(false); const [err, setErr] = useState(''); const [bajando, setBajando] = useState(false)
+  const [guia, setGuia] = useState(false)
 
   useEffect(() => { api('/control/filtros').then(setOpc).catch(e => setErr(e.message)) }, [])
   useEffect(() => { const t = setTimeout(() => setQ(qd), 400); return () => clearTimeout(t) }, [qd])
@@ -51,41 +54,43 @@ export default function Clasificacion() {
   const valores = opc.criterios.find((p: any) => p.plan_id === plan)?.valores ?? []
   const alternar = (arr: string[], set: (v: string[]) => void, v: string) => set(arr.includes(v) ? arr.filter(x => x !== v) : [...arr, v])
 
+  const [cx, cy] = d?.meta.cortes_iv ?? [0.5, 0.8]
   const cols: ColDef[] = useMemo(() => [
-    { field: 'puesto', headerName: '#', width: 75, pinned: 'left', type: 'numericColumn' },
-    { field: 'clase', headerName: 'Clase', width: 90, pinned: 'left', cellRenderer: pill, filter: true, headerTooltip: 'ABC por el criterio elegido + XYZ por variabilidad (IV)' },
-    { field: 'clase_global', headerName: 'Clase global', width: 115, cellRenderer: pill, filter: true, headerTooltip: 'Clase que tendría con todo lo que puedes ver, sin los filtros de pantalla' },
-    ...(nivel === 'tienda_item' ? [{ field: 'bodega_id', headerName: 'Tienda', width: 90, filter: true } as ColDef] : []),
-    { field: 'producto_id', headerName: 'Item', width: 100, filter: true },
-    { field: 'descripcion', headerName: 'Descripción', width: 280, filter: true },
-    { field: 'laboratorio', headerName: 'Lab.', width: 90, filter: true },
-    { field: 'valor', headerName: 'Venta neta $', type: 'numericColumn', width: 130, valueFormatter: p => COP(p.value) },
-    { field: 'margen', headerName: 'Margen $', type: 'numericColumn', width: 125, valueFormatter: p => COP(p.value), cellStyle: p => (p.value ?? 0) < 0 ? { color: '#c62828' } : null },
-    { field: 'margen_pct', headerName: 'Margen %', type: 'numericColumn', width: 105, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(1) + '%' },
-    { field: 'pct_acum', headerName: '% acum.', type: 'numericColumn', width: 95, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(1) + '%' },
-    { field: 'cant', headerName: 'Unidades', type: 'numericColumn', width: 100, valueFormatter: p => NUM(p.value) },
-    { field: 'inventario', headerName: 'Inventario', type: 'numericColumn', width: 105, valueFormatter: p => NUM(p.value) },
-    { field: 'inv_costo', headerName: 'Inv. a costo $', type: 'numericColumn', width: 135, valueFormatter: p => COP(p.value) },
-    { field: 'gmroi', headerName: 'GMROI', type: 'numericColumn', width: 95, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(2), headerTooltip: 'Margen anualizado / inventario a costo' },
-    { field: 'dias_inv', headerName: 'Días inv.', type: 'numericColumn', width: 100, valueFormatter: p => NUM(p.value) },
-    { field: 'iv', headerName: 'IV', type: 'numericColumn', width: 80, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(2) },
-    { field: 'costo', headerName: 'Costo unit.', type: 'numericColumn', width: 115, valueFormatter: p => COP(p.value) },
-  ], [nivel])
+    { field: 'puesto', headerName: '#', width: 75, pinned: 'left', type: 'numericColumn', headerTooltip: 'Puesto en el ranking ABC según el criterio elegido (1 = el que más aporta). Los apartes D, N y S no tienen puesto.' },
+    { field: 'clase', headerName: 'Clase', width: 90, pinned: 'left', cellRenderer: pill, filter: true, headerTooltip: 'ABC (cuánto aporta, según el criterio elegido) + XYZ (qué tan predecible es su venta). Ej.: AX = importante y estable. Sin letra XYZ = aún sin IV. Apartes: N nuevo, D sin venta, S sin costo.' },
+    { field: 'clase_global', headerName: 'Clase global', width: 115, cellRenderer: pill, filter: true, headerTooltip: 'La clase que tendría con todo lo que puedes ver, sin los filtros de pantalla (tienda, laboratorio, criterio…). “Clase” es el ABC dentro de lo filtrado; esta es la importancia real del item.' },
+    ...(nivel === 'tienda_item' ? [{ field: 'bodega_id', headerName: 'Tienda', width: 90, filter: true, headerTooltip: 'Tienda (código de Siesa). Solo aparece al clasificar por tienda × item.' } as ColDef] : []),
+    { field: 'producto_id', headerName: 'Item', width: 100, filter: true, headerTooltip: 'Referencia del producto. Un item REC se suma a su original.' },
+    { field: 'descripcion', headerName: 'Descripción', width: 280, filter: true, headerTooltip: 'Nombre del producto en Siesa.' },
+    { field: 'laboratorio', headerName: 'Lab.', width: 90, filter: true, headerTooltip: 'Código del laboratorio (plan 006 de Siesa).' },
+    { field: 'valor', headerName: 'Venta neta $', type: 'numericColumn', width: 130, valueFormatter: p => COP(p.value), headerTooltip: 'Venta de la ventana sin IVA: valor bruto − descuentos de línea − descuentos globales. Las devoluciones restan.' },
+    { field: 'margen', headerName: 'Margen $', type: 'numericColumn', width: 125, valueFormatter: p => COP(p.value), cellStyle: p => (p.value ?? 0) < 0 ? { color: '#c62828' } : null, headerTooltip: 'Venta neta − (unidades × costo promedio actual). Es el criterio ABC por defecto. En rojo: se vendió por debajo del costo.' },
+    { field: 'margen_pct', headerName: 'Margen %', type: 'numericColumn', width: 105, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(1) + '%', headerTooltip: 'Margen $ ÷ venta neta × 100.' },
+    { field: 'pct_acum', headerName: '% acum.', type: 'numericColumn', width: 95, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(1) + '%', headerTooltip: 'Porcentaje acumulado del criterio hasta este item, de mayor a menor. A = hasta el corte A, B = hasta el corte B, C = el resto.' },
+    { field: 'cant', headerName: 'Unidades', type: 'numericColumn', width: 100, valueFormatter: p => NUM(p.value), headerTooltip: 'Unidades vendidas en la ventana.' },
+    { field: 'inventario', headerName: 'Inventario', type: 'numericColumn', width: 105, valueFormatter: p => NUM(p.value), headerTooltip: 'Unidades disponibles hoy en las tiendas filtradas (último corte de Siesa). Los negativos cuentan como 0.' },
+    { field: 'inv_costo', headerName: 'Inv. a costo $', type: 'numericColumn', width: 135, valueFormatter: p => COP(p.value), headerTooltip: 'Inventario × costo promedio actual: el dinero parado en stock.' },
+    { field: 'gmroi', headerName: 'GMROI', type: 'numericColumn', width: 95, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(2), headerTooltip: 'Margen anualizado ÷ inventario a costo: pesos de margen por cada peso invertido en stock en un año. Más alto es mejor; bajo 1 el margen anual no cubre lo invertido.' },
+    { field: 'dias_inv', headerName: 'Días inv.', type: 'numericColumn', width: 100, valueFormatter: p => NUM(p.value), headerTooltip: 'Inventario ÷ venta diaria promedio de la ventana: para cuántos días alcanza el stock actual.' },
+    { field: 'iv', headerName: 'IV', type: 'numericColumn', width: 80, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(2), headerTooltip: `Índice de variabilidad del motor (desviación ÷ promedio de la venta mensual). Define XYZ: X si es menor que ${cx}, Y hasta ${cy}, Z si es mayor. A nivel item pondera por la venta diaria de cada tienda.` },
+    { field: 'costo', headerName: 'Costo unit.', type: 'numericColumn', width: 115, valueFormatter: p => COP(p.value), headerTooltip: 'Costo promedio actual por unidad (Siesa, por instalación). Si falta, el item queda como S (sin costo).' },
+  ], [nivel, cx, cy])
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 1.5, minHeight: 600 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         <Typography variant="h6" sx={{ fontWeight: 700, flex: 1 }}>Clasificación de items · ABC × XYZ</Typography>
+        <Button size="small" startIcon={<HelpOutline />} onClick={() => setGuia(true)}>¿Cómo se calcula?</Button>
         <Button size="small" variant="outlined" disabled={bajando || !valido} onClick={excel}>{bajando ? 'Generando…' : 'Descargar Excel'}</Button>
       </Box>
       {d?.meta.sin_valor && <Alert severity="warning" sx={{ flexShrink: 0 }}>Las ventas aún no traen el valor en pesos: actualiza el esquema y corre “Traer ventas por mes” (o el ETL) para llenarlo. Mientras tanto el ABC por margen/venta no es confiable.</Alert>}
       <Paper variant="outlined" sx={{ flexShrink: 0, p: 1.25, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
-        <TextField select size="small" label="Clasificar" value={nivel} onChange={e => setNivel(e.target.value)} sx={{ width: 200 }}>
-          <MenuItem value="item">Por item (suma de lo filtrado)</MenuItem><MenuItem value="tienda_item">Por tienda × item</MenuItem></TextField>
-        <TextField select size="small" label="ABC según" value={criterio} onChange={e => setCriterio(e.target.value)} sx={{ width: 210 }}>
-          <MenuItem value="margen">Margen bruto $ (recomendado)</MenuItem><MenuItem value="venta">Venta neta $ (sin IVA)</MenuItem><MenuItem value="costo">Consumo a costo $</MenuItem></TextField>
-        <TextField select size="small" label="Ventana" value={meses} onChange={e => setMeses(Number(e.target.value))} sx={{ width: 120 }}>
-          {[3, 6, 9, 12].map(m => <MenuItem key={m} value={m}>{m} meses</MenuItem>)}</TextField>
+        <Tooltip title="Por item: una clase por item sumando las tiendas filtradas. Por tienda × item: una clase por cada item dentro de cada tienda."><TextField select size="small" label="Clasificar" value={nivel} onChange={e => setNivel(e.target.value)} sx={{ width: 200 }}>
+          <MenuItem value="item">Por item (suma de lo filtrado)</MenuItem><MenuItem value="tienda_item">Por tienda × item</MenuItem></TextField></Tooltip>
+        <Tooltip title="Con qué se ordena y acumula el ABC: el margen mide lo que realmente deja el item (recomendado); la venta solo lo facturado; el consumo a costo, el capital que mueve."><TextField select size="small" label="ABC según" value={criterio} onChange={e => setCriterio(e.target.value)} sx={{ width: 210 }}>
+          <MenuItem value="margen">Margen bruto $ (recomendado)</MenuItem><MenuItem value="venta">Venta neta $ (sin IVA)</MenuItem><MenuItem value="costo">Consumo a costo $</MenuItem></TextField></Tooltip>
+        <Tooltip title="Meses de venta que se miran, terminando en el mes actual. Con menos de 6 no se detectan items nuevos (N)."><TextField select size="small" label="Ventana" value={meses} onChange={e => setMeses(Number(e.target.value))} sx={{ width: 120 }}>
+          {[3, 6, 9, 12].map(m => <MenuItem key={m} value={m}>{m} meses</MenuItem>)}</TextField></Tooltip>
         <Tooltip title="A = lo que junta hasta este % acumulado del criterio"><TextField size="small" type="number" label="Corte A %" value={corteA} onChange={e => setCorteA(Number(e.target.value))} error={!valido} sx={{ width: 100 }} /></Tooltip>
         <Tooltip title="B = hasta este % acumulado; el resto es C"><TextField size="small" type="number" label="Corte B %" value={corteB} onChange={e => setCorteB(Number(e.target.value))} error={!valido} sx={{ width: 100 }} /></Tooltip>
         <Autocomplete multiple size="small" limitTags={1} sx={{ minWidth: 170, flex: '1 1 170px' }} options={opc.empresas} value={empresa}
@@ -111,8 +116,9 @@ export default function Clasificacion() {
         </Typography>
         <Box component="table" sx={{ borderCollapse: 'collapse', mt: .5, width: '100%', '& td, & th': { border: '1px solid #e0e0e0', px: 1.25, py: .5, fontSize: 13, textAlign: 'right' } }}>
           <thead><tr><th style={{ textAlign: 'left' }}>Clase</th>
-            {['X', 'Y', 'Z'].map(x => <th key={x}>{x} · {x === 'X' ? 'estable' : x === 'Y' ? 'media' : 'variable'}</th>)}
-            <th>Items</th><th>Venta neta</th><th>Margen</th><th>Inv. a costo</th></tr></thead>
+            {['X', 'Y', 'Z'].map(x => <Tooltip key={x} title={`${x === 'X' ? `Estable: IV menor que ${cx}` : x === 'Y' ? `Variación media: IV entre ${cx} y ${cy}` : `Variable: IV mayor que ${cy}`}. IV = desviación ÷ promedio de la venta mensual.`}><th>{x} · {x === 'X' ? 'estable' : x === 'Y' ? 'media' : 'variable'}</th></Tooltip>)}
+            <Tooltip title="Cuántos items hay en esa clase."><th>Items</th></Tooltip><Tooltip title="Venta neta (sin IVA) de la clase en la ventana."><th>Venta neta</th></Tooltip>
+            <Tooltip title="Venta neta − costo de lo vendido. Rojo = pierde plata."><th>Margen</th></Tooltip><Tooltip title="Inventario actual a costo promedio: dinero parado en stock."><th>Inv. a costo</th></Tooltip></tr></thead>
           <tbody>
             {['A', 'B', 'C', 'N', 'D', 'S'].map(a => {
               const t = d.matriz.por_abc.find((x: any) => x.abc === a); if (!t) return null
@@ -142,5 +148,6 @@ export default function Clasificacion() {
       <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 320 }}>
         <Tabla textoCargando="Clasificando…" vacio="Sin resultados con estos filtros" key={nivel} rowData={d?.filas ?? []} columnDefs={cols} cargando={cargando} defaultColDef={{ resizable: true, sortable: true }} />
       </Box>
+      <GuiaClasificacion abierta={guia} cerrar={() => setGuia(false)} meta={d?.meta} />
     </Box>)
 }
