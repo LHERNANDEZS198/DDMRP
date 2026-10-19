@@ -87,6 +87,7 @@ pub struct Parametros {
     // --- ventana de historia ---
     pub meses_historia: usize, // meses de venta para BK/variabilidad (Excel: 7, incluye el mes en curso)
     pub meses_adu: usize,      // ultimos meses (+ forecast) que entran al ADU (Excel: 4)
+    pub pron_meses_minimos: usize, // con menos meses de venta que esto, el pronostico se usa tal cual (0 = nunca; tienda/lab nuevo)
 }
 
 impl Default for Parametros {
@@ -95,7 +96,7 @@ impl Default for Parametros {
             mult_cota_max_promo: 1.2, mult_cota_min_promo: 1.1, adu_bajo_min: 1.0, adu_bajo_max: 4.0,
             regla_disparo: 1, regla_objetivo: 1, regla_redondeo: 1,
             sumar_vectorizacion: true, incluir_transito: true, restar_demanda_calificada: true, cantidad_minima: 0.0,
-            meses_historia: 7, meses_adu: 4,
+            meses_historia: 7, meses_adu: 4, pron_meses_minimos: 3,
         }
     }
 }
@@ -228,11 +229,17 @@ pub fn calcular(e: &Entrada, f: &Factores, p: &Parametros) -> Resultado {
     let n = p.meses_historia.clamp(2, e.ventas.len().max(2)).min(e.ventas.len());
     let hist = &e.ventas[e.ventas.len() - n..];
     let bk = adu_referencia(hist);
-    let q = forecast_ajustado(e.pronostico, bk);
+    // meses con historia = desde la primera venta de la ventana hasta hoy (los meses en cero antes de abrir no cuentan)
+    let meses_hist = hist.iter().position(|x| *x > 0.0).map_or(0, |i| hist.len() - i);
+    let pron_directo = p.pron_meses_minimos > 0 && e.pronostico > 0.0 && meses_hist < p.pron_meses_minimos;
+    // Pronostico ajustado: normalmente queda entre 1 y 2 veces el ADU de referencia (si no hay historial da 0). En un caso nuevo
+    // (pocos meses de venta) el historial no es confiable: se usa el pronostico tal cual y solo se promedian los meses con venta.
+    let q = if pron_directo { e.pronostico } else { forecast_ajustado(e.pronostico, bk) };
 
     // Bloque principal: ultimos `meses_adu` meses (Excel: 4, M..P) + forecast
     let k = p.meses_adu.clamp(1, n);
-    let mut v: Vec<f64> = hist[n - k..].to_vec();
+    let mut v: Vec<f64> = if pron_directo { hist[hist.len() - meses_hist.min(k)..].to_vec() } else { hist[n - k..].to_vec() };
+    if pron_directo && meses_hist == 0 { v.clear(); }
     v.push(q);
     let u = promedio(&v);
     let y = div(desvest_m(&v), u);
@@ -401,6 +408,25 @@ mod tests {
         assert_eq!(roundup(1.3), 2.0);
         assert_eq!(roundup(0.0), 0.0);
         assert_eq!(round_xl(2.5), 3.0);
+    }
+
+    #[test]
+    fn pronostico_directo_en_caso_nuevo() {
+        let p = Parametros::default(); let f = factores();
+        // tienda nueva: sin ventas, pronostico 30/mes -> ADU = 30 (antes quedaba en 0)
+        let mut e = base(); e.ventas = vec![0.0; 7]; e.pronostico = 30.0;
+        assert_eq!(calcular(&e, &f, &p).adu, 30.0);
+        // un mes de venta (10) y pronostico 30: se usa el pronostico tal cual, promediando con el mes que si vendio
+        let mut e = base(); e.ventas = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 10.0]; e.pronostico = 30.0;
+        assert!(calcular(&e, &f, &p).adu >= 20.0);
+        // historial de 7 meses: se mantiene el ajuste normal (pronostico 30 con ADU ref 10 -> Q = 20)
+        let mut e = base(); e.pronostico = 30.0;
+        let r = calcular(&e, &f, &p);
+        assert!((r.forecast - 20.0).abs() < 1e-9, "{}", r.forecast);
+        // regla apagada: tienda nueva vuelve a 0
+        let mut p0 = Parametros::default(); p0.pron_meses_minimos = 0;
+        let mut e = base(); e.ventas = vec![0.0; 7]; e.pronostico = 30.0;
+        assert_eq!(calcular(&e, &f, &p0).adu, 0.0);
     }
 
     #[test]

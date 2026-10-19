@@ -15,7 +15,7 @@ const grupos: [string, string[]][] = [
   ['Inventario del CEDI (cuando no alcanza)', ['cedi_regla_reparto']],
   ['Envío a las tiendas (Matriz de despacho)', ['valor_minimo_envio']],
   ['Datos de Siesa', ['etl_traer_ventas', 'inv_tiendas_resta_comprometido', 'inv_tiendas_resta_sin_acumular']],
-  ['Parámetros del modelo (hoja Modelo)', ['meses_historia', 'meses_adu', 'mult_cota_max_promo', 'mult_cota_min_promo', 'adu_bajo_min', 'adu_bajo_max']],
+  ['Parámetros del modelo (hoja Modelo)', ['meses_historia', 'meses_adu', 'pron_meses_minimos', 'mult_cota_max_promo', 'mult_cota_min_promo', 'adu_bajo_min', 'adu_bajo_max']],
   ['Historial (vistas de cambios y tendencia)', ['retener_dias']],
 ]
 

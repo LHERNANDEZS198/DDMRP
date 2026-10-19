@@ -310,7 +310,7 @@ export default function Control() {
       {tendModo && (
         <Paper variant="outlined" sx={{ p: 1.5, flexShrink: 0 }}>
           <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>Semáforo en el tiempo (% de combinaciones por zona){serie.length ? ` · ${serie[serie.length - 1].n.toLocaleString()} combinación(es)` : ''}</Typography>
-          <Typography variant="caption" color="text.secondary">Cada día es la foto de la corrida del motor; la línea punteada es el % de combinaciones con inventario. Necesitas al menos 2 días de historia para ver la curva.</Typography>
+          <Typography variant="caption" color="text.secondary">Cada día es la foto de la corrida del motor; la línea punteada es el % disponible (todas las zonas menos la roja). Necesitas al menos 2 días de historia para ver la curva.</Typography>
           <ZonaShare serie={serie} />
           <Typography variant="subtitle2" sx={{ fontWeight: 700, mt: 2 }}>Buffer en el tiempo (unidades)</Typography>
           <Typography variant="caption" color="text.secondary">Para la curva de un solo item en una sola tienda, elige esa tienda y escribe el código del item. Si no, las unidades de todo lo filtrado se suman.</Typography>

@@ -92,15 +92,15 @@ export function ZonaShare({ serie }: { serie: Punto[] }) {
     const inf = serie.map((_, i) => `${x(i)},${ypc(k === 0 ? 0 : acum[i][k - 1])}`).reverse()
     return [...sup, ...inf].join(' ')
   }
-  const hayDisp = serie.some(p => p.con_stock != null)
+  const hayDisp = serie.length > 0   // Disponible = todas las zonas menos la roja
   // modo "cambio": puntos porcentuales de cada zona frente al primer dia, con el eje ajustado a lo que realmente se mueve
-  const pc = (p: Punto, z: typeof zonas[number] | 'disp') => ((z === 'disp' ? (p.con_stock ?? 0) : p[z]) / (p.n || 1)) * 100
+  const pc = (p: Punto, z: typeof zonas[number] | 'disp') => ((z === 'disp' ? p.n - p.roja : p[z]) / (p.n || 1)) * 100
   const ser = [...zonas, ...(hayDisp ? ['disp' as const] : [])]
   const delta = ser.map(z => serie.map(p => pc(p, z) - pc(serie[0], z)))
   const dmax = Math.max(0.5, ...delta.flat().map(Math.abs)), lim = Math.ceil(dmax * 1.15 * 2) / 2
   const yd = (v: number) => M.t + ph / 2 - (v / lim) * (ph / 2)
   const colS = (z: string) => (z === 'disp' ? '#000' : C[z as keyof typeof C])
-  const disp = serie.map((p, i) => `${x(i)},${ypc((p.con_stock ?? 0) / (p.n || 1))}`).join(' ')
+  const disp = serie.map((p, i) => `${x(i)},${ypc((p.n - p.roja) / (p.n || 1))}`).join(' ')
   return (
     <Box ref={ref} sx={{ width: '100%', position: 'relative' }}>
       <Box sx={{ display: 'flex', gap: 1, fontSize: 12, mb: .5, alignItems: 'center' }}>Vista:
@@ -119,18 +119,18 @@ export function ZonaShare({ serie }: { serie: Punto[] }) {
               return <rect key={z} x={M.l} width={pw} y={ypc(hi)} height={Math.max(ypc(lo) - ypc(hi), 0)} fill={C[z]} /> })
           : zonas.map((z, k) => <polygon key={z} points={area(k)} fill={C[z]} />))}
         {modo === 'apilado' && hayDisp && n > 1 && <polyline points={disp} fill="none" stroke="#000" strokeWidth="2" strokeDasharray="6 4" />}
-        {modo === 'apilado' && hayDisp && n === 1 && <line x1={M.l} x2={W - M.r} y1={ypc((serie[0].con_stock ?? 0) / (serie[0].n || 1))} y2={ypc((serie[0].con_stock ?? 0) / (serie[0].n || 1))} stroke="#000" strokeWidth="2" strokeDasharray="6 4" />}
+        {modo === 'apilado' && hayDisp && n === 1 && <line x1={M.l} x2={W - M.r} y1={ypc((serie[0].n - serie[0].roja) / (serie[0].n || 1))} y2={ypc((serie[0].n - serie[0].roja) / (serie[0].n || 1))} stroke="#000" strokeWidth="2" strokeDasharray="6 4" />}
         {serie.map((p, i) => i % paso === 0 && <text key={p.fecha} transform={`translate(${x(i)},${H - M.b + 12}) rotate(-45)`} fontSize="11" textAnchor="end" fill="#555">{dm(p.fecha)}</text>)}
         {hover != null && <line x1={x(hover)} x2={x(hover)} y1={M.t} y2={H - M.b} stroke="#000" strokeDasharray="3 3" />}
       </svg>
       {h && <Box sx={{ position: 'absolute', top: 4, left: Math.min(Math.max(x(hover!) + 10, 8), W - 210), bgcolor: 'rgba(255,255,255,.96)', border: '1px solid #bbb', borderRadius: 1, p: 1, fontSize: 12, pointerEvents: 'none', boxShadow: 2, minWidth: 190 }}>
         <b>{h.fecha}</b> · {h.n.toLocaleString()} combinaciones
         {(['exceso', 'verde', 'amarilla', 'roja'] as const).map(z => <div key={z} style={{ color: z === 'amarilla' ? '#b8860b' : C[z] }}>{z === 'exceso' ? 'AZUL (exceso)' : z.toUpperCase()}: {h[z].toLocaleString()} ({((h[z] / (h.n || 1)) * 100).toFixed(1)}%)</div>)}
-        {h.con_stock != null && <div><b>Disponible:</b> {((h.con_stock / (h.n || 1)) * 100).toFixed(1)}% con inventario</div>}
+        <div><b>Disponible:</b> {(((h.n - h.roja) / (h.n || 1)) * 100).toFixed(1)}% (todo menos zona roja)</div>
       </Box>}
       <Box sx={{ display: 'flex', gap: 2, justifyContent: 'center', flexWrap: 'wrap', fontSize: 12, mt: .5 }}>
         {[['Rojo', C.roja], ['Amarillo', C.amarilla], ['Verde', C.verde], ['Azul (exceso)', C.exceso]].map(([l, c]) => <span key={l}><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, background: c, marginRight: 4 }} />{l}</span>)}
-        {hayDisp && <span><span style={{ display: 'inline-block', width: 18, borderTop: '2px dashed #000', marginRight: 4, verticalAlign: 'middle' }} />Disponible (% con inventario &gt; 0)</span>}
+        {hayDisp && <span><span style={{ display: 'inline-block', width: 18, borderTop: '2px dashed #000', marginRight: 4, verticalAlign: 'middle' }} />Disponible (% fuera de zona roja)</span>}
       </Box>
     </Box>)
 }

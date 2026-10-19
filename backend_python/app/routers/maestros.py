@@ -99,8 +99,6 @@ AYUDA = {
     "vectorizacion": "Unidades extra (derrame) que se suman a lo sugerido de esa tienda y referencia, p. ej. producto nuevo o campaña. Solo cuenta si la regla 'Sumar vectorización' está en Sí. "
                      "Escribir NxP condena el item en esa tienda (pasa al maestro Condenados).",
     "condenados": "Items que NO se despachan: el buffer se calcula y se ve, pero la cantidad sugerida queda en 0. Tienda * = el item queda condenado en todas las tiendas.",
-    "pronostico": "Pronóstico estático (unidades/mes) que cargan los analistas por tienda y referencia. Se compara con la venta de la ventana y se ajusta a entre 30 y 60 días de inventario; "
-                  "ese valor entra, junto con las ventas recientes, al cálculo de la venta diaria (ADU). Sin pronóstico, solo cuentan las ventas.",
     "unidad-despacho": "Múltiplo en que se despacha cada referencia (caja o display). Lo sugerido se redondea a este múltiplo (según la regla de redondeo) y también es el mínimo de la zona verde.",
     "reserva-cedi": "Porcentaje del inventario del CEDI que se guarda por item: no se reparte a las tiendas. Solo importa cuando el CEDI no alcanza para todas.",
     "promocion": "Indicativo de promoción por referencia. 0 = sin promoción. 1 = promoción fuerte: las cotas se agrandan (máxima × 1,2 y mínima × 1,1, parámetros del modelo), así el buffer crece y se sugiere más. "
@@ -113,6 +111,7 @@ AYUDA = {
     "items": "Descripción y laboratorio de cada item; los demás criterios vienen de Siesa con 'Traer items'. El laboratorio define los permisos por categoría y los filtros del Control.",
     "centro-operacion": "Centro de operación de cada tienda para el archivo plano de Siesa. Si falta, se deduce con la regla observada en el ejemplo.",
     "demanda-calificada": "Pedidos abiertos o picos conocidos por tienda y referencia. Se restan del flujo neto cuando la regla 'Restar demanda calificada' está en Sí.",
+    "pronostico": "Venta mensual esperada (unidades/mes) por tienda y referencia. Sirve sobre todo para tiendas, referencias o laboratorios NUEVOS: si la combinacion tiene menos meses de venta que la regla 'Pronostico directo en casos nuevos' (por defecto 3), el motor usa este valor tal cual, aunque no haya historial. Con mas historial el pronostico solo ajusta: el motor lo lleva entre 1 y 2 veces el ADU de referencia (nunca baja el historial). Para campanas o promociones usa Promocion y las cotas.",
     "ventas-mensual": "Unidades vendidas por mes, tienda y referencia: base de la venta diaria (ADU) y de la variabilidad. Se traen de Siesa con 'Traer ventas por mes' o se cargan por Excel.",
     "reposicion-laboratorio": "Hasta dónde se repone cuando se pide, para todos los items de un laboratorio (código del laboratorio): 1 = TOG ajustado (tope verde), 2 = TOY ajustado (tope amarillo), "
                               "3 = tope amarillo + la mitad de la zona verde ajustada. Sobrescribe la regla general de Reglas de pedido; la del item gana sobre la del laboratorio. Aplica en la siguiente corrida del motor.",

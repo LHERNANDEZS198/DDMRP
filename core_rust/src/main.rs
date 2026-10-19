@@ -115,6 +115,7 @@ fn leer_parametros(client: &mut Client) -> Result<Parametros> {
             "cantidad_minima" => p.cantidad_minima = v,
             "meses_historia" => p.meses_historia = (v as usize).clamp(2, 12),
             "meses_adu" => p.meses_adu = (v as usize).clamp(1, 12),
+            "pron_meses_minimos" => p.pron_meses_minimos = (v as usize).min(12),
             _ => {}
         }
     }
