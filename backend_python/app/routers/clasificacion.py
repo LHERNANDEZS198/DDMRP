@@ -34,7 +34,7 @@ def _cortes_iv(c) -> tuple[float, float]:
         return 0.5, 0.8
 
 
-def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, labs=None, crit=None, q=None, hist: bool = True) -> list[dict]:
+def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, labs=None, crit=None, q=None, hist: bool = True, planes=None, solo_con: bool = False) -> list[dict]:
     """Una fila por tienda x item (REC ya sumado al original) con la venta de la ventana, el buffer de la ultima corrida y el costo."""
     w, p = filtro_sql_permisos(user, "k.bodega_id", "mi.categoria")
     cond = [w, solo_activos("k")]
@@ -54,6 +54,10 @@ def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, l
         for i, (pl, crs) in enumerate(por_plan.items()):
             cond.append(f"EXISTS (SELECT 1 FROM ddmrp.item_criterio ic{i} WHERE ic{i}.producto_id = k.producto_id AND ic{i}.plan_id = :cp{i} AND ic{i}.criterio_id = ANY(:cc{i}))")
             p[f"cp{i}"] = pl; p[f"cc{i}"] = crs
+        if solo_con:    # excluir los items que no tienen valor en los criterios elegidos (los del filtro ya lo exigen)
+            for j, pl in enumerate(dict.fromkeys(_csv(planes))):
+                cond.append(f"EXISTS (SELECT 1 FROM ddmrp.item_criterio is{j} WHERE is{j}.producto_id = k.producto_id AND is{j}.plan_id = :sp{j})")
+                p[f"sp{j}"] = pl
     p["mes_desde"] = mes_desde
     # inventario promedio de la ventana: lo resume el orquestador por mes (inventario_mes) para no recorrer la historia diaria completa; sin el (clase global) no se usa
     sql = f"""
@@ -88,7 +92,7 @@ def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, l
     return [dict(r) for r in c.execute(text(sql), p).mappings()]
 
 
-def _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, labs, crit, q, con_global=True):
+def _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, labs, crit, q, con_global=True, planes=None, solo_con=False):
     if nivel not in cl.NIVELES:
         raise HTTPException(400, f"nivel debe ser uno de {list(cl.NIVELES)}")
     if criterio not in cl.CRITERIOS:
@@ -99,8 +103,8 @@ def _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, 
     nuevo = cl.mes_nuevo(date.today(), 3) if meses >= 6 else None     # con ventanas cortas todo seria 'nuevo'
     with pg.connect() as c:
         cortes = _cortes_iv(c)
-        filas = _filas(c, user, mes_desde, True, empresa, bodegas, labs, crit, q)
-        hay_filtro = bool(_csv(empresa) or _csv(bodegas) or _csv(labs) or _csv(crit) or (q and q.strip()))
+        filas = _filas(c, user, mes_desde, True, empresa, bodegas, labs, crit, q, planes=planes, solo_con=solo_con)
+        hay_filtro = bool(_csv(empresa) or _csv(bodegas) or _csv(labs) or _csv(crit) or (q and q.strip()) or (solo_con and _csv(planes)))
         filas_g = _filas(c, user, mes_desde, False, hist=False) if (con_global and hay_filtro) else None
     items = cl.agregar(filas, nivel); cl.calcular(items, dias); cl.clasificar(items, criterio, corte_a, corte_b, nuevo, cortes)
     if filas_g is not None:       # clase de cada item contra TODO el universo que el usuario puede ver (sin los filtros de pantalla)
@@ -161,8 +165,8 @@ def _por_grupo(items: list[dict], plan: str | None, dentro: bool = False, criter
 @router.get("")
 def clasificar(nivel: str = "item", criterio: str = "margen", meses: int = 12, corte_a: float = 80, corte_b: float = 95,
                empresa: str | None = None, bodegas: str | None = None, labs: str | None = None, crit: str | None = None, q: str | None = None,
-               abc: str | None = None, xyz: str | None = None, agrupar: str | None = None, dentro: bool = False, limit: int = Query(3000, le=20000), user=Depends(usuario_actual)):
-    items, meta = _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, labs, crit, q)
+               abc: str | None = None, xyz: str | None = None, agrupar: str | None = None, dentro: bool = False, planes: str | None = None, solo_con: bool = False, limit: int = Query(3000, le=20000), user=Depends(usuario_actual)):
+    items, meta = _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, labs, crit, q, planes=planes, solo_con=solo_con)
     m = cl.matriz(items)                                                  # la matriz siempre es del filtro completo (no del filtro de clase)
     vis = _filtrar_salida(items, abc, xyz)
     vis.sort(key=lambda i: (cl.ORDEN_ABC.index(i["abc"]), i["puesto"] or 10**9, i["producto_id"]))
@@ -210,7 +214,7 @@ def _norm(t: str | None) -> str:
     return "".join(c for c in unicodedata.normalize("NFD", (t or "").strip().upper()) if unicodedata.category(c) != "Mn")
 
 
-def _nombres_para_excel(items: list[dict]) -> list[dict]:
+def _nombres_para_excel(items: list[dict], planes_sel: str | None = None) -> list[dict]:
     """Agrega a cada fila el nombre del laboratorio y los criterios CATEGORIA y LINEA (los planes de Siesa con ese nombre) para poder armar tablas dinamicas
     sin cruzar codigos a mano. Devuelve las columnas extra que si se pudieron llenar (si no existe el plan, no sale la columna)."""
     with pg.connect() as c:
@@ -227,24 +231,35 @@ def _nombres_para_excel(items: list[dict]) -> list[dict]:
         it["lab_nombre"] = (lab.get(cod) or "").strip() or None
         for clave, mapa in por_plan.items():
             it[clave.lower()] = (mapa.get(it["producto_id"]) or "").strip() or None
+    extra_pl = []
+    with pg.connect() as c:    # ademas, una columna por cada criterio elegido en la pantalla (filtro o agrupar), con el valor de cada item
+        for pl in dict.fromkeys(_csv(planes_sel)):
+            nom = c.execute(text("SELECT nombre FROM ddmrp.criterio_plan WHERE plan_id = :p"), {"p": pl}).scalar()
+            if nom is None or _norm(nom) in ("CATEGORIA", "LINEA") and _norm(nom) in por_plan:
+                continue
+            mapa = dict(c.execute(text("SELECT ic.producto_id, cr.nombre FROM ddmrp.item_criterio ic JOIN ddmrp.criterio cr "
+                                       "ON cr.plan_id = ic.plan_id AND cr.criterio_id = ic.criterio_id WHERE ic.plan_id = :p"), {"p": pl}).all())
+            for it in items:
+                it["crit_" + pl] = (mapa.get(it["producto_id"]) or "").strip() or None
+            extra_pl.append({"t": nom.strip().capitalize(), "k": "crit_" + pl, "w": 24})
     extra = [{"t": "Nombre laboratorio", "k": "lab_nombre", "w": 28}]
     if "CATEGORIA" in por_plan:
         extra.append({"t": "Categoria", "k": "categoria", "w": 24})
     if "LINEA" in por_plan:
         extra.append({"t": "Linea", "k": "linea", "w": 24})
-    return extra
+    return extra + extra_pl
 
 
 @router.get("/excel")
 def exportar(nivel: str = "item", criterio: str = "margen", meses: int = 12, corte_a: float = 80, corte_b: float = 95,
              empresa: str | None = None, bodegas: str | None = None, labs: str | None = None, crit: str | None = None, q: str | None = None,
-             abc: str | None = None, xyz: str | None = None, agrupar: str | None = None, dentro: bool = False, user=Depends(usuario_actual)):
-    items, meta = _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, labs, crit, q)
+             abc: str | None = None, xyz: str | None = None, agrupar: str | None = None, dentro: bool = False, planes: str | None = None, solo_con: bool = False, user=Depends(usuario_actual)):
+    items, meta = _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, labs, crit, q, planes=planes, solo_con=solo_con)
     m = cl.matriz(items)
     vis = _filtrar_salida(items, abc, xyz)
     vis.sort(key=lambda i: (cl.ORDEN_ABC.index(i["abc"]), i["puesto"] or 10**9, i["producto_id"]))
     cols = [c for c in COLS if nivel == "tienda_item" or c["k"] not in ("empresa", "bodega_id", "bodega_nombre")]
-    extra = _nombres_para_excel(vis)
+    extra = _nombres_para_excel(vis, planes)
     i_lab = next(i for i, c in enumerate(cols) if c["k"] == "laboratorio")
     cols = cols[:i_lab + 1] + extra + cols[i_lab + 1:]
     wb = excel.libro()
@@ -266,7 +281,7 @@ def exportar(nivel: str = "item", criterio: str = "margen", meses: int = 12, cor
     excel.hoja_texto(wb, "Metodologia", [(k, v.format(**ctx)) for k, v in METODOLOGIA], ancho=(24, 120))
     excel.hoja_texto(wb, "Filtros", [("Reporte", "Clasificacion ABC x XYZ"), ("Generado", datetime.now().strftime("%Y-%m-%d %H:%M")),
                                      ("Usuario", f"{user.get('nombre', '')} ({user.get('id', '')})"), ("Nivel", cl.NIVELES[nivel]), ("Criterio", meta["criterio_nombre"]),
-                                     ("Empresa", empresa or "todas"), ("Tiendas", bodegas or "todas"), ("Laboratorios", labs or "todos"), ("Criterios de items", crit or ""), ("Agrupado por", (agrupar or "") + (" (ABC recalculado dentro de cada grupo)" if agrupar and dentro else "")),
+                                     ("Empresa", empresa or "todas"), ("Tiendas", bodegas or "todas"), ("Laboratorios", labs or "todos"), ("Criterios de items", crit or ""), ("Excluir items sin el criterio elegido", "si" if (solo_con and planes) else "no"), ("Agrupado por", (agrupar or "") + (" (ABC recalculado dentro de cada grupo)" if agrupar and dentro else "")),
                                      ("Busqueda", q or ""), ("Clases mostradas en Detalle", f"ABC: {abc or 'todas'} · XYZ: {xyz or 'todas'}"),
                                      ("Filas en Detalle", f"{len(vis)} de {len(items)}")])
     return Response(excel.a_bytes(wb), media_type=excel.XLSX,

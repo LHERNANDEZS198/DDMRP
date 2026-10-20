@@ -29,7 +29,8 @@ export default function Clasificacion() {
   const [corteA, setCorteA] = useState(80); const [corteB, setCorteB] = useState(95)
   const [empresa, setEmpresa] = useState<string[]>([]); const [bodegas, setBodegas] = useState<string[]>([]); const [labs, setLabs] = useState<string[]>([])
   const [fc, setFc] = useState<{ plan: string; vals: string[] }[]>([{ plan: '', vals: [] }])   // filtros por criterio de items: planes distintos se combinan (Y), valores del mismo plan (O)
-  const [agrupar, setAgrupar] = useState(''); const [dentro, setDentro] = useState(false)   // vista por dentro de un criterio; dentro = ABC recalculado en cada grupo
+  const [agrupar, setAgrupar] = useState(''); const [dentro, setDentro] = useState(false); const [soloCon, setSoloCon] = useState(false)   // soloCon: excluir items sin valor en los criterios elegidos
+     // vista por dentro de un criterio; dentro = ABC recalculado en cada grupo
   const [q, setQ] = useState(''); const [qd, setQd] = useState('')
   const [abc, setAbc] = useState<string[]>([]); const [xyz, setXyz] = useState<string[]>([])
   const [opc, setOpc] = useState<any>({ tiendas: [], laboratorios: [], empresas: [], criterios: [] })
@@ -38,7 +39,7 @@ export default function Clasificacion() {
   const [guia, setGuia] = useState(false)
   const [verFiltros, setVerFiltros] = useState(() => { try { return localStorage.getItem('clas_filtros') !== '0' } catch { return true } })
   const cambiarFiltros = (v: boolean) => { setVerFiltros(v); try { localStorage.setItem('clas_filtros', v ? '1' : '0') } catch { /* sin almacenamiento */ } }
-  const nActivos = [empresa.length, bodegas.length, labs.length, q.trim() ? 1 : 0, agrupar ? 1 : 0].filter(Boolean).length + fc.filter(f => f.plan && f.vals.length).length
+  const nActivos = [soloCon && (agrupar || fc.some(f => f.plan)) ? 1 : 0, empresa.length, bodegas.length, labs.length, q.trim() ? 1 : 0, agrupar ? 1 : 0].filter(Boolean).length + fc.filter(f => f.plan && f.vals.length).length
 
   useEffect(() => { api('/control/filtros').then(setOpc).catch(e => setErr(e.message)) }, [])
   useEffect(() => { const t = setTimeout(() => setQ(qd), 400); return () => clearTimeout(t) }, [qd])
@@ -51,11 +52,11 @@ export default function Clasificacion() {
   const claveV = (v: Vista) => `${v.mia ? 'm' : 'o'}|${v.dueno ?? ''}|${v.nombre}`
   const cargarVistas = () => api('/vistas/clasificacion').then(setVistas).catch(() => {})
   useEffect(() => { cargarVistas() }, [])
-  const instantanea = () => ({ nivel, criterio, meses, corteA, corteB, empresa, bodegas, labs, fc, agrupar, dentro, abc, xyz, q: qd })
+  const instantanea = () => ({ nivel, criterio, meses, corteA, corteB, empresa, bodegas, labs, fc, agrupar, dentro, soloCon, abc, xyz, q: qd })
   const aplicar = (c: any) => {
     setNivel(c.nivel ?? 'item'); setCriterio(c.criterio ?? 'margen'); setMeses(c.meses ?? 12); setCorteA(c.corteA ?? 80); setCorteB(c.corteB ?? 95)
     setEmpresa(c.empresa ?? []); setBodegas(c.bodegas ?? []); setLabs(c.labs ?? [])
-    setFc(c.fc?.length ? c.fc : [{ plan: '', vals: [] }]); setAgrupar(c.agrupar ?? ''); setDentro(!!c.dentro)
+    setFc(c.fc?.length ? c.fc : [{ plan: '', vals: [] }]); setAgrupar(c.agrupar ?? ''); setDentro(!!c.dentro); setSoloCon(!!c.soloCon)
     setAbc(c.abc ?? []); setXyz(c.xyz ?? []); setQd(c.q ?? ''); setQ(c.q ?? '')
   }
   const vistaSel = vistas.find(v => claveV(v) === sel)
@@ -74,10 +75,12 @@ export default function Clasificacion() {
   }
 
   const crit = fc.filter(f => f.plan && f.vals.length).flatMap(f => f.vals.map(v => `${f.plan}:${v}`))
+  const planes = [...new Set([...fc.map(f => f.plan), agrupar].filter(Boolean))]   // criterios elegidos en pantalla (filtro o agrupar): salen como columnas en el Excel
   const base = () => {
     const p = new URLSearchParams({ nivel, criterio, meses: String(meses), corte_a: String(corteA), corte_b: String(corteB) })
     if (empresa.length) p.set('empresa', empresa.join(',')); if (bodegas.length) p.set('bodegas', bodegas.join(',')); if (labs.length) p.set('labs', labs.join(','))
     if (q.trim()) p.set('q', q.trim()); if (crit.length) p.set('crit', crit.join(','))
+    if (planes.length) { p.set('planes', planes.join(',')); if (soloCon) p.set('solo_con', '1') }
     if (agrupar) { p.set('agrupar', agrupar); if (dentro) p.set('dentro', '1') }   // vista por dentro del criterio elegido (categoría, línea…)
     return p
   }
@@ -185,6 +188,7 @@ export default function Clasificacion() {
             <MenuItem value="">(sin agrupar)</MenuItem>{opc.criterios.map((p: any) => <MenuItem key={p.plan_id} value={p.plan_id}>{p.nombre}</MenuItem>)}</CampoSelect>
           {agrupar && <Tooltip placement="top" title="Apagado: cada item conserva su clase de la lista. Encendido: el ABC se recalcula dentro de cada grupo (cada item contra los de su mismo valor)."><FormControlLabel sx={{ mr: 0 }} control={<Checkbox size="small" checked={dentro} onChange={e => setDentro(e.target.checked)} />} label="ABC dentro de cada grupo" /></Tooltip>}
         </>}
+        {planes.length > 0 && <Tooltip placement="top" title="Deja fuera los items que no tienen valor en los criterios elegidos (los que salen como (sin valor)). El Excel también trae una columna por cada criterio elegido."><FormControlLabel sx={{ mr: 0 }} control={<Checkbox size="small" checked={soloCon} onChange={e => setSoloCon(e.target.checked)} />} label="Excluir items sin esa clasificación" /></Tooltip>}
         <TextField size="small" label="Item (código o nombre)" value={qd} onChange={e => setQd(e.target.value)} sx={{ minWidth: 190, flex: '1 1 190px' }} />
       </Paper></Collapse>
       {!valido && <Typography color="error" variant="body2">Los cortes deben cumplir 0 &lt; A &lt; B ≤ 100.</Typography>}
