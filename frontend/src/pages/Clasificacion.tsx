@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { ColDef, ICellRendererParams } from 'ag-grid-community'
 import { Alert, Autocomplete, Box, Button, Chip, MenuItem, Paper, TextField, Tooltip, Typography } from '@mui/material'
 import Tabla from '../Tabla'
+import { CampoSelect } from '../Campos'
 import HelpOutline from '@mui/icons-material/HelpOutline'
 import { api, bajar } from '../api'
 import { GuiaClasificacion } from '../guias'
@@ -34,6 +35,7 @@ export default function Clasificacion() {
     const p = new URLSearchParams({ nivel, criterio, meses: String(meses), corte_a: String(corteA), corte_b: String(corteB) })
     if (empresa.length) p.set('empresa', empresa.join(',')); if (bodegas.length) p.set('bodegas', bodegas.join(',')); if (labs.length) p.set('labs', labs.join(','))
     if (q.trim()) p.set('q', q.trim()); if (plan && crit.length) p.set('crit', crit.map(v => `${plan}:${v}`).join(','))
+    if (plan) p.set('agrupar', plan)   // vista por dentro del criterio elegido (categoría, línea…), con o sin valores
     return p
   }
   const claveBase = base().toString()
@@ -85,14 +87,14 @@ export default function Clasificacion() {
       </Box>
       {d?.meta.sin_valor && <Alert severity="warning" sx={{ flexShrink: 0 }}>Las ventas aún no traen el valor en pesos: actualiza el esquema y corre “Traer ventas por mes” (o el ETL) para llenarlo. Mientras tanto el ABC por margen/venta no es confiable.</Alert>}
       <Paper variant="outlined" sx={{ flexShrink: 0, p: 1.25, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
-        <Tooltip title="Por item: una clase por item sumando las tiendas filtradas. Por tienda × item: una clase por cada item dentro de cada tienda."><TextField select size="small" label="Clasificar" value={nivel} onChange={e => setNivel(e.target.value)} sx={{ width: 200 }}>
-          <MenuItem value="item">Por item (suma de lo filtrado)</MenuItem><MenuItem value="tienda_item">Por tienda × item</MenuItem></TextField></Tooltip>
-        <Tooltip title="Con qué se ordena y acumula el ABC: el margen mide lo que realmente deja el item (recomendado); la venta solo lo facturado; el consumo a costo, el capital que mueve."><TextField select size="small" label="ABC según" value={criterio} onChange={e => setCriterio(e.target.value)} sx={{ width: 210 }}>
-          <MenuItem value="margen">Margen bruto $ (recomendado)</MenuItem><MenuItem value="venta">Venta neta $ (sin IVA)</MenuItem><MenuItem value="costo">Consumo a costo $</MenuItem></TextField></Tooltip>
-        <Tooltip title="Meses de venta que se miran, terminando en el mes actual. Con menos de 6 no se detectan items nuevos (N)."><TextField select size="small" label="Ventana" value={meses} onChange={e => setMeses(Number(e.target.value))} sx={{ width: 120 }}>
-          {[3, 6, 9, 12].map(m => <MenuItem key={m} value={m}>{m} meses</MenuItem>)}</TextField></Tooltip>
-        <Tooltip title="A = lo que junta hasta este % acumulado del criterio"><TextField size="small" type="number" label="Corte A %" value={corteA} onChange={e => setCorteA(Number(e.target.value))} error={!valido} sx={{ width: 100 }} /></Tooltip>
-        <Tooltip title="B = hasta este % acumulado; el resto es C"><TextField size="small" type="number" label="Corte B %" value={corteB} onChange={e => setCorteB(Number(e.target.value))} error={!valido} sx={{ width: 100 }} /></Tooltip>
+        <CampoSelect tip="Por item: una clase por item sumando las tiendas filtradas. Por tienda × item: una clase por cada item dentro de cada tienda." size="small" label="Clasificar" value={nivel} onChange={e => setNivel(e.target.value)} sx={{ width: 200 }}>
+          <MenuItem value="item">Por item (suma de lo filtrado)</MenuItem><MenuItem value="tienda_item">Por tienda × item</MenuItem></CampoSelect>
+        <CampoSelect tip="Con qué se ordena y acumula el ABC: el margen mide lo que realmente deja el item (recomendado); la venta solo lo facturado; el consumo a costo, el capital que mueve." size="small" label="ABC según" value={criterio} onChange={e => setCriterio(e.target.value)} sx={{ width: 210 }}>
+          <MenuItem value="margen">Margen bruto $ (recomendado)</MenuItem><MenuItem value="venta">Venta neta $ (sin IVA)</MenuItem><MenuItem value="costo">Consumo a costo $</MenuItem></CampoSelect>
+        <CampoSelect tip="Meses de venta que se miran, terminando en el mes actual. Con menos de 6 no se detectan items nuevos (N)." size="small" label="Ventana" value={meses} onChange={e => setMeses(Number(e.target.value))} sx={{ width: 120 }}>
+          {[3, 6, 9, 12].map(m => <MenuItem key={m} value={m}>{m} meses</MenuItem>)}</CampoSelect>
+        <Tooltip placement="top" title="A = lo que junta hasta este % acumulado del criterio"><TextField size="small" type="number" label="Corte A %" value={corteA} onChange={e => setCorteA(Number(e.target.value))} error={!valido} sx={{ width: 100 }} /></Tooltip>
+        <Tooltip placement="top" title="B = hasta este % acumulado; el resto es C"><TextField size="small" type="number" label="Corte B %" value={corteB} onChange={e => setCorteB(Number(e.target.value))} error={!valido} sx={{ width: 100 }} /></Tooltip>
         <Autocomplete multiple size="small" limitTags={1} sx={{ minWidth: 170, flex: '1 1 170px' }} options={opc.empresas} value={empresa}
           getOptionLabel={(o: string) => o === '05' ? 'Funat (05)' : o === '21' ? 'Stores (21)' : o} onChange={(_, v) => setEmpresa(v)} renderInput={p => <TextField {...p} label="Empresa" />} />
         <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 230, flex: '2 1 230px' }} options={opc.tiendas.map((t: any) => t.bodega_id)} value={bodegas}
@@ -142,6 +144,29 @@ export default function Clasificacion() {
           {xyz.map(x => <Chip key={x} size="small" label={`XYZ ${x}`} onDelete={() => setXyz(xyz.filter(y => y !== x))} />)}
           <Button size="small" onClick={() => { setAbc([]); setXyz([]) }}>Quitar</Button>
         </Box>}
+      </Paper>}
+
+      {d?.por_criterio && <Paper variant="outlined" sx={{ flexShrink: 0, p: 1.25, overflow: 'auto', maxHeight: 280 }}>
+        <Typography variant="caption" color="text.secondary">
+          Por {d.por_criterio.plan_nombre} · {crit.length ? 'solo los valores elegidos' : 'todos los valores'} · cuántos {nivel === 'item' ? 'items' : 'tienda × item'} hay de cada clase · clic en una fila para filtrar todo el informe a ese valor (la clase se recalcula dentro de lo filtrado)
+        </Typography>
+        <Box component="table" sx={{ borderCollapse: 'collapse', mt: .5, width: '100%', '& td, & th': { border: '1px solid #e0e0e0', px: 1.25, py: .4, fontSize: 13, textAlign: 'right' } }}>
+          <thead><tr><th style={{ textAlign: 'left' }}>{d.por_criterio.plan_nombre}</th><th>{nivel === 'item' ? 'Items' : 'Filas'}</th>
+            {['A', 'B', 'C', 'N', 'D', 'S'].map(a => <Tooltip key={a} placement="top" title={NOMBRE_ABC[a]}><th style={{ color: COLOR_ABC[a] }}>{a}</th></Tooltip>)}
+            <th>Venta neta</th><th>Margen</th><th>Margen %</th><th>Inv. a costo</th></tr></thead>
+          <tbody>
+            {d.por_criterio.grupos.map((g: any) => {
+              const sel = crit.includes(g.id)
+              return (<tr key={g.id || 'sin'} onClick={() => g.id && alternar(crit, setCrit, g.id)}
+                style={{ cursor: g.id ? 'pointer' : 'default', background: sel ? 'rgba(110,138,55,.25)' : undefined }}>
+                <th style={{ textAlign: 'left', fontWeight: sel ? 700 : 500 }}>{g.nombre}</th><td style={{ fontWeight: 700 }}>{g.n.toLocaleString()}</td>
+                {['A', 'B', 'C', 'N', 'D', 'S'].map(a => <td key={a} style={{ color: g[a] ? undefined : '#bbb' }}>{g[a] ? g[a].toLocaleString() : '·'}</td>)}
+                <td>{M(g.venta)}</td><td style={{ color: g.margen < 0 ? '#c62828' : undefined }}>{M(g.margen)}</td>
+                <td>{g.margen_pct == null ? '' : g.margen_pct.toFixed(1) + '%'}</td><td>{M(g.inv_costo)}</td>
+              </tr>)
+            })}
+          </tbody>
+        </Box>
       </Paper>}
 
       <Typography variant="caption" color="text.secondary">{d ? (d.truncado ? `Mostrando ${d.filas.length.toLocaleString()} de ${d.total.toLocaleString()}; filtra por clase o baja el Excel` : `${d.total.toLocaleString()} filas`) : ''}</Typography>

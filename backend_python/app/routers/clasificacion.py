@@ -1,5 +1,6 @@
 """Clasificacion ABC x XYZ de items sobre las ventas de la ultima ventana de meses, recalculada con los filtros que escoja el usuario
 (tiendas, laboratorios, criterios, empresa) y descargable a Excel. Metodologia en app/clasificacion.py y en la hoja 'Metodologia' del Excel."""
+import re
 from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
@@ -116,15 +117,37 @@ def _filtrar_salida(items, abc, xyz):
     return [i for i in items if (not a or i["abc"] in a) and (not z or i["xyz"] in z)]
 
 
+def _por_grupo(items: list[dict], plan: str | None) -> dict | None:
+    """Vista por dentro de un criterio de items (CATEGORIA, LINEA...): una fila por valor del criterio con cuantos items hay de cada clase ABC
+    y su venta, margen e inventario. La clase de cada item es la de la lista (no se recalcula por grupo). Cada item tiene un solo valor por plan."""
+    if not plan or not items:
+        return None
+    with pg.connect() as c:
+        pn = c.execute(text("SELECT nombre FROM ddmrp.criterio_plan WHERE plan_id = :p"), {"p": plan}).scalar()
+        val = dict(c.execute(text("SELECT producto_id, criterio_id FROM ddmrp.item_criterio WHERE plan_id = :p"), {"p": plan}).all())
+        nom = dict(c.execute(text("SELECT criterio_id, nombre FROM ddmrp.criterio WHERE plan_id = :p"), {"p": plan}).all())
+    grupos: dict[str, dict] = {}
+    for it in items:
+        v = val.get(it["producto_id"]) or ""
+        g = grupos.setdefault(v, {"id": v, "nombre": (nom.get(v) or v).strip() if v else "(sin valor)", "n": 0, "venta": 0.0, "margen": 0.0, "inv_costo": 0.0,
+                                  **{a: 0 for a in cl.ORDEN_ABC}})
+        g["n"] += 1; g[it["abc"]] += 1
+        g["venta"] += it["valor"]; g["margen"] += it["margen"] or 0.0; g["inv_costo"] += it["inv_costo"] or 0.0
+    out = sorted(grupos.values(), key=lambda g: (-g["margen"], g["nombre"]))
+    for g in out:
+        g["margen_pct"] = None if g["venta"] <= 0 else 100.0 * g["margen"] / g["venta"]
+    return {"plan_id": plan, "plan_nombre": (pn or plan).strip(), "grupos": out}
+
+
 @router.get("")
 def clasificar(nivel: str = "item", criterio: str = "margen", meses: int = 12, corte_a: float = 80, corte_b: float = 95,
                empresa: str | None = None, bodegas: str | None = None, labs: str | None = None, crit: str | None = None, q: str | None = None,
-               abc: str | None = None, xyz: str | None = None, limit: int = Query(3000, le=20000), user=Depends(usuario_actual)):
+               abc: str | None = None, xyz: str | None = None, agrupar: str | None = None, limit: int = Query(3000, le=20000), user=Depends(usuario_actual)):
     items, meta = _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, labs, crit, q)
     m = cl.matriz(items)                                                  # la matriz siempre es del filtro completo (no del filtro de clase)
     vis = _filtrar_salida(items, abc, xyz)
     vis.sort(key=lambda i: (cl.ORDEN_ABC.index(i["abc"]), i["puesto"] or 10**9, i["producto_id"]))
-    return {"meta": meta, "matriz": m, "filas": vis[:limit], "total": len(vis), "truncado": len(vis) > limit}
+    return {"meta": meta, "matriz": m, "por_criterio": _por_grupo(items, agrupar), "filas": vis[:limit], "total": len(vis), "truncado": len(vis) > limit}
 
 
 COLS = [{"t": "Puesto", "k": "puesto", "f": "int", "w": 8}, {"t": "Clase", "k": "clase", "w": 8}, {"t": "ABC", "k": "abc", "w": 6}, {"t": "XYZ", "k": "xyz", "w": 6},
@@ -158,7 +181,7 @@ METODOLOGIA = [
 @router.get("/excel")
 def exportar(nivel: str = "item", criterio: str = "margen", meses: int = 12, corte_a: float = 80, corte_b: float = 95,
              empresa: str | None = None, bodegas: str | None = None, labs: str | None = None, crit: str | None = None, q: str | None = None,
-             abc: str | None = None, xyz: str | None = None, user=Depends(usuario_actual)):
+             abc: str | None = None, xyz: str | None = None, agrupar: str | None = None, user=Depends(usuario_actual)):
     items, meta = _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, labs, crit, q)
     m = cl.matriz(items)
     vis = _filtrar_salida(items, abc, xyz)
@@ -169,6 +192,13 @@ def exportar(nivel: str = "item", criterio: str = "margen", meses: int = 12, cor
     res_cols = [{"t": "ABC", "k": "abc", "w": 8}, {"t": "XYZ", "k": "xyz", "w": 8}, {"t": "Items", "k": "n", "f": "int"}, {"t": "Venta neta $", "k": "venta", "f": "cop"},
                 {"t": "Margen $", "k": "margen", "f": "cop"}, {"t": "Inventario a costo $", "k": "inv_costo", "f": "cop"}, {"t": "Inventario (u.)", "k": "inventario", "f": "int"}]
     excel.hoja(wb, "Resumen", res_cols, m["celdas"] + [{"abc": "TOTAL", "xyz": "", **m["total"], "inventario": None}])
+    pg_ = _por_grupo(items, agrupar)
+    if pg_:   # una fila por valor del criterio de items (categoria, linea...)
+        gcols = ([{"t": pg_["plan_nombre"], "k": "nombre", "w": 30}, {"t": "Items", "k": "n", "f": "int"}]
+                 + [{"t": a, "k": a, "f": "int", "w": 7} for a in cl.ORDEN_ABC]
+                 + [{"t": "Venta neta $", "k": "venta", "f": "cop"}, {"t": "Margen $", "k": "margen", "f": "cop"}, {"t": "Margen %", "k": "margen_pct", "f": "dec1"},
+                    {"t": "Inventario a costo $", "k": "inv_costo", "f": "cop"}])
+        excel.hoja(wb, ("Por " + re.sub(r"[\\/?*\[\]:]", " ", pg_["plan_nombre"]))[:31], gcols, pg_["grupos"])
     excel.hoja(wb, "Detalle", cols, vis, fijar=5)
     ctx = {"desde": meta["desde"], "hasta": meta["hasta"], "meses": meta["meses"], "dias": meta["dias"], "criterio": meta["criterio_nombre"], "corte_a": corte_a,
            "corte_b": corte_b, "c1": meta["cortes_iv"][0], "c2": meta["cortes_iv"][1], "nuevo_desde": meta["nuevo_desde"] or "(no aplica)"}

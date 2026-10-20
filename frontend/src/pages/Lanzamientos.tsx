@@ -70,7 +70,7 @@ export default function Lanzamientos() {
           <Button key={l as string} size="small" variant="outlined" onClick={() => { setDesde(hace(n as number)); setHasta(hoy()) }}>{l}</Button>)}
         <TextField select size="small" label="Tipo" value={tipo} onChange={e => setTipo(e.target.value)} sx={{ width: 150 }}>
           <MenuItem value="">Todos</MenuItem><MenuItem value="PRIMERA">Lanzamientos</MenuItem><MenuItem value="REINGRESO">Reingresos</MenuItem></TextField>
-        <Tooltip title="Solo reingresos que estuvieron al menos estos días sin stock (los lanzamientos siempre salen)"><TextField size="small" type="number" label="Mín. días sin stock" value={minDias} onChange={e => setMinDias(Math.max(0, Number(e.target.value)))} sx={{ width: 160 }} /></Tooltip>
+        <Tooltip placement="top" title="Solo reingresos que estuvieron al menos estos días sin stock (los lanzamientos siempre salen)"><TextField size="small" type="number" label="Mín. días sin stock" value={minDias} onChange={e => setMinDias(Math.max(0, Number(e.target.value)))} sx={{ width: 160 }} /></Tooltip>
         <TextField select size="small" label="Empresa" value={empresa} onChange={e => setEmpresa(e.target.value)} sx={{ width: 140 }}>
           <MenuItem value="">Todas</MenuItem><MenuItem value="05">05 · Funat</MenuItem><MenuItem value="21">21 · Stores</MenuItem></TextField>
         <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 240, flex: '2 1 240px' }} options={opc.laboratorios.map((l: any) => l.codigo)} value={labs}
