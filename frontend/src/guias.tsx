@@ -90,9 +90,20 @@ export function GuiaClasificacion({ abierta, cerrar, meta }: { abierta: boolean;
         <><b>Clase vs Clase global:</b> “Clase” se calcula solo con lo que dejaste filtrado (ej. una tienda, un laboratorio): es el ABC <i>dentro de ese grupo</i>. “Clase global” es la que tendría con todo lo que puedes ver, sin los filtros de pantalla; úsala para saber qué tan importante es de verdad.</>,
         <><b>Margen %:</b> margen ÷ venta neta.</>,
         <><b>% acum.:</b> porcentaje acumulado del criterio hasta ese item; define A, B y C.</>,
-        <><b>Inv. a costo $:</b> inventario actual × costo promedio. Es el dinero parado en stock.</>,
-        <><b>GMROI:</b> margen anualizado ÷ inventario a costo: cuántos pesos de margen deja cada peso invertido en inventario durante un año. Más alto es mejor; por debajo de 1 el margen anual no alcanza a cubrir lo invertido en stock.</>,
-        <><b>Días inv.:</b> inventario ÷ venta diaria promedio de la ventana: para cuántos días alcanza el stock.</>,
+        <><b>Inv. a costo $:</b> inventario de hoy × costo promedio. Es el dinero parado en stock hoy.</>,
+        <><b>Inv. promedio y Días hist.:</b> el inventario promedio sale de la foto diaria de las tiendas dentro de la ventana (resumida por mes, se conservan 13). “Días hist.” dice cuántos días respaldan ese promedio: si es 0 se usa el inventario de hoy (en rojo) y si es mucho menor que la ventana, el promedio cubre solo una parte. Crece solo con los días que el sistema lleva corriendo.</>,
+        <><b>GMROI:</b> margen anualizado ÷ inventario <i>promedio</i> a costo: cuántos pesos de margen deja cada peso invertido en inventario durante un año. Más alto es mejor; por debajo de 1 el margen anual no alcanza a cubrir lo invertido en stock. En las tablas de resumen (clases, grupos y total) se calcula con las sumas en pesos, no promediando los de cada item.</>,
+        <><b>Rotación:</b> costo de lo vendido anualizado ÷ inventario promedio a costo: cuántas veces al año se renueva el stock. Se relaciona con el GMROI así: <b>GMROI = rotación × (margen ÷ costo)</b>; si el GMROI es bajo, mirar rotación y margen dice de dónde viene.</>,
+        <><b>Días inv.:</b> inventario promedio ÷ venta diaria promedio de la ventana: para cuántos días alcanza el stock.</>,
+        <><b>% sin stock:</b> días-tienda de la ventana con inventario 0 ÷ días-tienda con historia. Un GMROI alto con muchos días sin stock suele ser un quiebre, no eficiencia: léelos juntos.</>,
+        <><b>Cobertura×margen (anterior):</b> el indicador que se calculaba a mano: (inventario promedio en unidades ÷ venta mensual en unidades) × margen %. Son meses de stock ponderados por margen; sube con más stock, así que no es un retorno y no se compara con el GMROI. Se deja solo como referencia. Al ser en unidades, tampoco se puede sumar entre items.</>,
+      ]} />
+
+      <H>6 · Referencias del GMROI</H>
+      <L items={[
+        <>Fórmula con inventario promedio a costo, GMROI &gt; 1 como mínimo y la regla de retail de ≥ 3,2, y la crítica de que favorece a los items de bajo margen y alta rotación: <a href="https://hedgescompany.com/blog/2024/10/turn-earn/" target="_blank" rel="noreferrer">Hedges Company · Turn and Earn / GMROI</a>.</>,
+        <>Inventario promedio = (inicial + final) ÷ 2, rotación = costo de ventas ÷ inventario promedio y días de inventario: <a href="https://shopify.com/retail/inventory-formulas" target="_blank" rel="noreferrer">Shopify · Inventory formulas</a>.</>,
+        <>Los umbrales (1 como piso, 3,2 en retail) son reglas generales, no de productos naturales en Colombia: úsalos como referencia y compara contra la mediana de tus propios items de la misma clase.</>,
       ]} />
 
       <Alert severity="info" sx={{ mt: 2 }}>

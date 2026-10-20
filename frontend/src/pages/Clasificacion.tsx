@@ -118,9 +118,14 @@ export default function Clasificacion() {
     { field: 'pct_acum', headerName: '% acum.', type: 'numericColumn', width: 95, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(1) + '%', headerTooltip: 'Porcentaje acumulado del criterio hasta este item, de mayor a menor. A = hasta el corte A, B = hasta el corte B, C = el resto.' },
     { field: 'cant', headerName: 'Unidades', type: 'numericColumn', width: 100, valueFormatter: p => NUM(p.value), headerTooltip: 'Unidades vendidas en la ventana.' },
     { field: 'inventario', headerName: 'Inventario', type: 'numericColumn', width: 105, valueFormatter: p => NUM(p.value), headerTooltip: 'Unidades disponibles hoy en las tiendas filtradas (último corte de Siesa). Los negativos cuentan como 0.' },
-    { field: 'inv_costo', headerName: 'Inv. a costo $', type: 'numericColumn', width: 135, valueFormatter: p => COP(p.value), headerTooltip: 'Inventario × costo promedio actual: el dinero parado en stock.' },
-    { field: 'gmroi', headerName: 'GMROI', type: 'numericColumn', width: 95, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(2), headerTooltip: 'Margen anualizado ÷ inventario a costo: pesos de margen por cada peso invertido en stock en un año. Más alto es mejor; bajo 1 el margen anual no cubre lo invertido.' },
-    { field: 'dias_inv', headerName: 'Días inv.', type: 'numericColumn', width: 100, valueFormatter: p => NUM(p.value), headerTooltip: 'Inventario ÷ venta diaria promedio de la ventana: para cuántos días alcanza el stock actual.' },
+    { field: 'inv_costo', headerName: 'Inv. a costo $', type: 'numericColumn', width: 135, valueFormatter: p => COP(p.value), headerTooltip: 'Inventario de hoy × costo promedio actual: el dinero parado en stock hoy.' },
+    { field: 'inv_prom', headerName: 'Inv. promedio', type: 'numericColumn', width: 120, valueFormatter: p => p.value == null ? '' : Number(p.value).toLocaleString('es-CO', { maximumFractionDigits: 1 }), headerTooltip: 'Inventario promedio en unidades de los días de la ventana (foto diaria de las tiendas filtradas). Donde no hay historia se usa el inventario de hoy: mira “Días con historia”.' },
+    { field: 'dias_hist', headerName: 'Días hist.', type: 'numericColumn', width: 95, valueFormatter: p => NUM(p.value), cellStyle: p => p.value ? null : { color: '#c62828' }, headerTooltip: 'Días de historia de inventario que respaldan el promedio (el de la tienda con más días). 0 = no hay historia y el GMROI usa el inventario de hoy. Si es mucho menor que la ventana, el promedio cubre solo parte de ella.' },
+    { field: 'gmroi', headerName: 'GMROI', type: 'numericColumn', width: 95, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(2), headerTooltip: 'Margen anualizado ÷ inventario PROMEDIO a costo: pesos de margen por cada peso invertido en stock en un año. Más alto es mejor; bajo 1 el margen anual no cubre lo invertido.' },
+    { field: 'rotacion', headerName: 'Rotación', type: 'numericColumn', width: 100, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(2), headerTooltip: 'Costo de lo vendido anualizado ÷ inventario promedio a costo: cuántas veces al año se renueva el stock. GMROI = rotación × (margen ÷ costo).' },
+    { field: 'dias_inv', headerName: 'Días inv.', type: 'numericColumn', width: 100, valueFormatter: p => NUM(p.value), headerTooltip: 'Inventario promedio ÷ venta diaria promedio de la ventana: para cuántos días alcanza el stock.' },
+    { field: 'pct_sin_stock', headerName: '% sin stock', type: 'numericColumn', width: 110, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(1) + '%', cellStyle: p => (p.value ?? 0) >= 20 ? { color: '#c62828' } : null, headerTooltip: 'Días-tienda de la ventana con inventario 0 ÷ días-tienda con historia. Un GMROI alto con muchos días sin stock suele ser quiebre, no eficiencia. Rojo desde 20 %.' },
+    { field: 'cob_x_margen', headerName: 'Cobertura×margen (anterior)', type: 'numericColumn', width: 200, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(1), headerTooltip: 'Indicador anterior: (inventario promedio en unidades ÷ venta mensual en unidades) × margen %. Son meses de stock ponderados por margen: NO es un retorno y no se compara con el GMROI.' },
     { field: 'iv', headerName: 'IV', type: 'numericColumn', width: 80, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(2), headerTooltip: `Índice de variabilidad del motor (desviación ÷ promedio de la venta mensual). Define XYZ: X si es menor que ${cx}, Y hasta ${cy}, Z si es mayor. A nivel item pondera por la venta diaria de cada tienda.` },
     { field: 'costo', headerName: 'Costo unit.', type: 'numericColumn', width: 115, valueFormatter: p => COP(p.value), headerTooltip: 'Costo promedio actual por unidad (Siesa, por instalación). Si falta, el item queda como S (sin costo).' },
   ], [nivel, cx, cy])
@@ -134,7 +139,7 @@ export default function Clasificacion() {
       </Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
         <CampoSelect tip="Abre una configuración que guardaste (o que otro compartió): filtros, criterios, agrupación y clases." size="small" label="Vista guardada" value={sel} sx={{ width: 280 }}
-          onChange={e => abrir(e.target.value as string)} slotProps={{ select: { displayEmpty: true, renderValue: (k: any) => vistaSel ? vistaSel.nombre + (modificada ? ' · modificada' : '') : <em>(sin vista guardada)</em> } }}>
+          onChange={e => abrir(e.target.value as string)} slotProps={{ inputLabel: { shrink: true }, select: { displayEmpty: true, renderValue: (k: any) => vistaSel ? vistaSel.nombre + (modificada ? ' · modificada' : '') : <em>(sin vista guardada)</em> } }}>
           {vistas.length === 0 && <MenuItem disabled value="">Aún no tienes vistas guardadas</MenuItem>}
           {vistas.map(v => <MenuItem key={claveV(v)} value={claveV(v)}>{v.nombre}{v.compartida && <Chip size="small" label={v.mia ? 'compartida' : `de ${v.dueno}`} sx={{ ml: 1, height: 18, fontSize: 10 }} />}</MenuItem>)}
         </CampoSelect>
@@ -185,7 +190,8 @@ export default function Clasificacion() {
           <thead><tr><th style={{ textAlign: 'left' }}>Clase</th>
             {['X', 'Y', 'Z'].map(x => <Tooltip key={x} title={`${x === 'X' ? `Estable: IV menor que ${cx}` : x === 'Y' ? `Variación media: IV entre ${cx} y ${cy}` : `Variable: IV mayor que ${cy}`}. IV = desviación ÷ promedio de la venta mensual.`}><th>{x} · {x === 'X' ? 'estable' : x === 'Y' ? 'media' : 'variable'}</th></Tooltip>)}
             <Tooltip title="Cuántos items hay en esa clase."><th>Items</th></Tooltip><Tooltip title="Venta neta (sin IVA) de la clase en la ventana."><th>Venta neta</th></Tooltip>
-            <Tooltip title="Venta neta − costo de lo vendido. Rojo = pierde plata."><th>Margen</th></Tooltip><Tooltip title="Inventario actual a costo promedio: dinero parado en stock."><th>Inv. a costo</th></Tooltip></tr></thead>
+            <Tooltip title="Venta neta − costo de lo vendido. Rojo = pierde plata."><th>Margen</th></Tooltip><Tooltip title="Inventario de hoy a costo promedio: dinero parado en stock."><th>Inv. a costo</th></Tooltip>
+            <Tooltip title="Margen anualizado ÷ inventario promedio a costo de la clase (sumas en pesos)."><th>GMROI</th></Tooltip><Tooltip title="Costo de lo vendido anualizado ÷ inventario promedio a costo: veces al año."><th>Rotación</th></Tooltip></tr></thead>
           <tbody>
             {['A', 'B', 'C', 'N', 'D', 'S'].map(a => {
               const t = d.matriz.por_abc.find((x: any) => x.abc === a); if (!t) return null
@@ -197,10 +203,10 @@ export default function Clasificacion() {
                   return <td key={x} style={{ cursor: c ? 'pointer' : 'default', background: act ? 'rgba(110,138,55,.25)' : c ? 'rgba(110,138,55,.06)' : undefined }}
                     onClick={() => { if (!c) return; setAbc([a]); setXyz([x]) }}>{c ? c.n.toLocaleString() : '·'}</td>
                 })}
-                <td style={{ fontWeight: 700 }}>{t.n.toLocaleString()}</td><td>{M(t.venta)}</td><td style={{ color: t.margen < 0 ? '#c62828' : undefined }}>{M(t.margen)}</td><td>{M(t.inv_costo)}</td>
+                <td style={{ fontWeight: 700 }}>{t.n.toLocaleString()}</td><td>{M(t.venta)}</td><td style={{ color: t.margen < 0 ? '#c62828' : undefined }}>{M(t.margen)}</td><td>{M(t.inv_costo)}</td><td>{t.gmroi == null ? '' : t.gmroi.toFixed(2)}</td><td>{t.rotacion == null ? '' : t.rotacion.toFixed(2)}</td>
               </tr>)
             })}
-            <tr><th style={{ textAlign: 'left' }}>Total</th><td colSpan={3}></td><td style={{ fontWeight: 700 }}>{tot.n.toLocaleString()}</td><td>{M(tot.venta)}</td><td>{M(tot.margen)}</td><td>{M(tot.inv_costo)}</td></tr>
+            <tr><th style={{ textAlign: 'left' }}>Total</th><td colSpan={3}></td><td style={{ fontWeight: 700 }}>{tot.n.toLocaleString()}</td><td>{M(tot.venta)}</td><td>{M(tot.margen)}</td><td>{M(tot.inv_costo)}</td><td>{tot.gmroi == null ? '' : tot.gmroi.toFixed(2)}</td><td>{tot.rotacion == null ? '' : tot.rotacion.toFixed(2)}</td></tr>
           </tbody>
         </Box>
         {(abc.length > 0 || xyz.length > 0) && <Box sx={{ mt: 1, display: 'flex', gap: 1, alignItems: 'center' }}>
@@ -218,7 +224,7 @@ export default function Clasificacion() {
         <Box component="table" sx={{ borderCollapse: 'collapse', mt: .5, width: '100%', '& td, & th': { border: '1px solid #e0e0e0', px: 1.25, py: .4, fontSize: 13, textAlign: 'right' } }}>
           <thead><tr><th style={{ textAlign: 'left' }}>{d.por_criterio.plan_nombre}</th><th>{nivel === 'item' ? 'Items' : 'Filas'}</th>
             {['A', 'B', 'C', 'N', 'D', 'S'].map(a => <Tooltip key={a} placement="top" title={NOMBRE_ABC[a]}><th style={{ color: COLOR_ABC[a] }}>{a}</th></Tooltip>)}
-            <th>Venta neta</th><th>Margen</th><th>Margen %</th><th>Inv. a costo</th></tr></thead>
+            <th>Venta neta</th><th>Margen</th><th>Margen %</th><th>Inv. a costo</th><Tooltip placement="top" title="Margen anualizado ÷ inventario promedio a costo del grupo (sumas en pesos)"><th>GMROI</th></Tooltip></tr></thead>
           <tbody>
             {d.por_criterio.grupos.map((g: any) => {
               const sel = valsAgrupar.includes(g.id)
@@ -227,7 +233,7 @@ export default function Clasificacion() {
                 <th style={{ textAlign: 'left', fontWeight: sel ? 700 : 500 }}>{g.nombre}</th><td style={{ fontWeight: 700 }}>{g.n.toLocaleString()}</td>
                 {['A', 'B', 'C', 'N', 'D', 'S'].map(a => <td key={a} style={{ color: g[a] ? undefined : '#bbb' }}>{g[a] ? g[a].toLocaleString() : '·'}</td>)}
                 <td>{M(g.venta)}</td><td style={{ color: g.margen < 0 ? '#c62828' : undefined }}>{M(g.margen)}</td>
-                <td>{g.margen_pct == null ? '' : g.margen_pct.toFixed(1) + '%'}</td><td>{M(g.inv_costo)}</td>
+                <td>{g.margen_pct == null ? '' : g.margen_pct.toFixed(1) + '%'}</td><td>{M(g.inv_costo)}</td><td>{g.gmroi == null ? '' : g.gmroi.toFixed(2)}</td>
               </tr>)
             })}
           </tbody>

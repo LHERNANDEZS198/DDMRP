@@ -12,6 +12,21 @@ from . import progreso, bitacora
 log = logging.getLogger("orq")
 
 
+def resumir_inventario_mensual(c, fecha):
+    """Resume por mes (suma de inventario, dias y dias en cero de cada tienda x item) la foto diaria: es la base del inventario promedio del GMROI.
+    Cada corrida rehace el mes de `fecha` (la historia diaria de un mes en curso siempre esta completa); la primera vez rehace todos los meses
+    que aun tenga buffer_historia. Los meses anteriores no se tocan aunque la historia diaria ya se haya purgado. Se conservan 13 meses."""
+    primera = not c.execute(text("SELECT EXISTS (SELECT 1 FROM ddmrp.inventario_mes)")).scalar()
+    desde = c.execute(text("SELECT date_trunc('month', min(fecha))::date FROM ddmrp.buffer_historia")).scalar() if primera else None
+    desde = desde or fecha.replace(day=1)
+    c.execute(text("DELETE FROM ddmrp.inventario_mes WHERE mes >= to_char(CAST(:d AS date), 'YYYYMM')"), {"d": desde})
+    c.execute(text("""INSERT INTO ddmrp.inventario_mes (mes, empresa, bodega_id, producto_id, inv_suma, dias, dias_cero)
+                      SELECT to_char(fecha, 'YYYYMM'), empresa, bodega_id, producto_id, SUM(GREATEST(inventario, 0)), COUNT(*),
+                             COUNT(*) FILTER (WHERE COALESCE(inventario, 0) <= 0)
+                      FROM ddmrp.buffer_historia WHERE fecha >= :d GROUP BY 1, 2, 3, 4"""), {"d": desde})
+    c.execute(text("DELETE FROM ddmrp.inventario_mes WHERE mes < to_char(current_date - interval '13 months', 'YYYYMM')"))
+
+
 def guardar_historia(eid: int):
     """Foto diaria liviana de la corrida (reemplaza la del mismo dia) y limpieza: la historia dura `retener_dias`; el detalle
     completo de sugerencias (que es pesado) solo se conserva `DETALLE_DIAS` dias y una corrida por dia."""
@@ -32,6 +47,7 @@ def guardar_historia(eid: int):
         # items fuera del maestro (no pasan el filtro de criterios, ej. materia prima) que quedaron en fotos de corridas anteriores
         for sql in purgas_fuera_del_maestro():
             c.execute(text(sql))
+        resumir_inventario_mensual(c, fecha)
         dias = c.execute(text("SELECT valor FROM ddmrp.parametro WHERE clave = 'retener_dias'")).scalar()
         c.execute(text("DELETE FROM ddmrp.buffer_historia WHERE fecha < current_date - :d"), {"d": int(dias) if dias else 180})
         c.execute(text("""DELETE FROM ddmrp.sugerencias_envio s USING ddmrp.ejecucion_motor e

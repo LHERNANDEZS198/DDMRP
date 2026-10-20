@@ -107,3 +107,33 @@ def test_diagnostico():
     assert d({"zona": "EXCESO", "abc": "A"}) == "exceso_clave" and d({"zona": "EXCESO", "abc": "C"}) == "exceso"
     assert d({"zona": "VERDE", "abc": "D", "inventario": 5}) == "dormido" and d({"zona": "VERDE", "abc": "D", "inventario": 0}) == "ok"
     assert d({"zona": "AMARILLA", "abc": "A"}) == "vigilar" and d({"zona": "VERDE", "abc": "A"}) == "ok"
+
+
+def test_gmroi_con_inventario_promedio_y_retornos():
+    from app import clasificacion as cl
+    # P1: dos tiendas. T1 con historia (suma 3000 en 30 dias = promedio 100), T2 sin historia (cae al inventario de hoy = 20)
+    filas = [
+        {"producto_id": "P1", "bodega_id": "T1", "cant": 100, "valor": 10000, "costo": 50, "inventario": 5, "inv_suma": 3000, "dias_hist": 30, "dias_cero": 3, "iv": .3, "adu": 1},
+        {"producto_id": "P1", "bodega_id": "T2", "cant": 100, "valor": 10000, "costo": 50, "inventario": 20, "iv": .3, "adu": 1},
+    ]
+    it = cl.agregar(filas, "item"); cl.calcular(it, 365); x = it[0]
+    assert x["inv_prom"] == 120 and x["inventario"] == 25 and x["dias_hist"] == 30
+    assert abs(x["pct_sin_stock"] - 10.0) < 1e-9                       # 3 de 30 dias-tienda con historia
+    assert abs(x["gmroi"] - 10000 / (120 * 50)) < 1e-9                  # margen anual / inventario PROMEDIO a costo, no el de hoy
+    assert abs(x["rotacion"] - (200 * 50) / (120 * 50)) < 1e-9
+    assert abs(x["gmroi"] - x["rotacion"] * (x["margen"] / x["costo_venta"])) < 1e-9   # GMROI = rotacion x (margen/costo)
+    # indicador anterior: meses de cobertura x margen %  -> 120 uds / (200 uds/12.0 meses...) 
+    meses_cob = 120 / (200 / 365 * 30.4375)
+    assert abs(x["cob_x_margen"] - meses_cob * 50.0) < 1e-6
+    # el mismo GMROI con dos items de igual retorno pero distinta cobertura/margen: el indicador anterior los distingue, el GMROI no
+    a = {"producto_id": "A", "bodega_id": "T", "cant": 120, "valor": 120 * 62.5, "costo": 50, "inventario": 10, "iv": .3, "adu": 1}      # cobertura 1 mes, margen 20 %
+    b = {"producto_id": "B", "bodega_id": "T", "cant": 120, "valor": 120 * 200, "costo": 50, "inventario": 60, "iv": .3, "adu": 1}      # cobertura 6 meses, margen 75 %
+    ai, bi = cl.agregar([a], "item")[0], cl.agregar([b], "item")[0]
+    cl.calcular([ai, bi], 365 * 1)
+    # agregados: se calculan sobre sumas en pesos
+    agg = {"margen_anual": 300.0, "costo_venta_anual": 600.0, "inv_prom_costo": 100.0}; cl.retornos(agg)
+    assert agg["gmroi"] == 3.0 and agg["rotacion"] == 6.0
+    z = {"margen_anual": 1.0, "costo_venta_anual": 1.0, "inv_prom_costo": 0.0}; cl.retornos(z); assert z["gmroi"] is None
+    # sin historia en ninguna tienda: el promedio es el inventario de hoy
+    s = cl.agregar([{"producto_id": "S", "bodega_id": "T", "cant": 10, "valor": 1000, "costo": 10, "inventario": 7, "iv": .3, "adu": 1}], "item"); cl.calcular(s, 365)
+    assert s[0]["inv_prom"] == 7 and s[0]["dias_hist"] == 0 and s[0]["pct_sin_stock"] is None

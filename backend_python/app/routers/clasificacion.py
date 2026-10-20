@@ -34,7 +34,7 @@ def _cortes_iv(c) -> tuple[float, float]:
         return 0.5, 0.8
 
 
-def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, labs=None, crit=None, q=None) -> list[dict]:
+def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, labs=None, crit=None, q=None, hist: bool = True) -> list[dict]:
     """Una fila por tienda x item (REC ya sumado al original) con la venta de la ventana, el buffer de la ultima corrida y el costo."""
     w, p = filtro_sql_permisos(user, "k.bodega_id", "mi.categoria")
     cond = [w, solo_activos("k")]
@@ -55,8 +55,12 @@ def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, l
             cond.append(f"EXISTS (SELECT 1 FROM ddmrp.item_criterio ic{i} WHERE ic{i}.producto_id = k.producto_id AND ic{i}.plan_id = :cp{i} AND ic{i}.criterio_id = ANY(:cc{i}))")
             p[f"cp{i}"] = pl; p[f"cc{i}"] = crs
     p["mes_desde"] = mes_desde
+    # inventario promedio de la ventana: lo resume el orquestador por mes (inventario_mes) para no recorrer la historia diaria completa; sin el (clase global) no se usa
     sql = f"""
-    WITH v AS (
+    WITH h AS (
+      SELECT empresa, bodega_id, producto_id, SUM(inv_suma)::float8 AS inv_suma, SUM(dias)::int AS dias_hist, SUM(dias_cero)::int AS dias_cero
+      FROM ddmrp.inventario_mes WHERE mes >= :mes_desde AND {'true' if hist else 'false'} GROUP BY 1, 2, 3),
+    v AS (
       SELECT a.empresa, a.bodega_id, COALESCE(r.original_id, a.producto_id) AS producto_id,
              SUM(a.cantidad)::float8 AS cant, SUM(a.valor)::float8 AS valor,
              MIN(a.mes) FILTER (WHERE a.cantidad > 0) AS primer_mes
@@ -71,11 +75,13 @@ def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, l
     k AS (
       SELECT COALESCE(v.empresa, s.empresa) AS empresa, COALESCE(v.bodega_id, s.bodega_id) AS bodega_id,
              COALESCE(v.producto_id, s.producto_id) AS producto_id,
-             v.cant, v.valor, v.primer_mes, s.inventario, s.iv, s.adu, s.zona, s.pct_buffer, s.flujo_neto, s.sugerido
-      FROM v FULL JOIN s ON s.empresa = v.empresa AND s.bodega_id = v.bodega_id AND s.producto_id = v.producto_id)
+             v.cant, v.valor, v.primer_mes, s.inventario, s.iv, s.adu, s.zona, s.pct_buffer, s.flujo_neto, s.sugerido,
+             h.inv_suma, h.dias_hist, h.dias_cero
+      FROM v FULL JOIN s ON s.empresa = v.empresa AND s.bodega_id = v.bodega_id AND s.producto_id = v.producto_id
+      LEFT JOIN h ON h.empresa = COALESCE(v.empresa, s.empresa) AND h.bodega_id = COALESCE(v.bodega_id, s.bodega_id) AND h.producto_id = COALESCE(v.producto_id, s.producto_id))
     SELECT k.empresa, k.bodega_id, mb.descripcion AS bodega_nombre, k.producto_id, mi.descripcion, COALESCE(mi.categoria, '(sin laboratorio)') AS laboratorio,
            COALESCE(k.cant, 0) AS cant, COALESCE(k.valor, 0) AS valor, k.primer_mes, COALESCE(k.inventario, 0) AS inventario, k.iv, COALESCE(k.adu, 0) AS adu,
-           k.zona, k.pct_buffer, k.flujo_neto, k.sugerido,
+           k.zona, k.pct_buffer, k.flujo_neto, k.sugerido, k.inv_suma, k.dias_hist, k.dias_cero,
            (SELECT ci.costo::float8 FROM ddmrp.costo_item ci WHERE ci.producto_id = k.producto_id) AS costo
     FROM k LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = k.producto_id LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = k.bodega_id AND mb.empresa = k.empresa
     WHERE {' AND '.join(cond)}"""
@@ -95,7 +101,7 @@ def _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, 
         cortes = _cortes_iv(c)
         filas = _filas(c, user, mes_desde, True, empresa, bodegas, labs, crit, q)
         hay_filtro = bool(_csv(empresa) or _csv(bodegas) or _csv(labs) or _csv(crit) or (q and q.strip()))
-        filas_g = _filas(c, user, mes_desde, False) if (con_global and hay_filtro) else None
+        filas_g = _filas(c, user, mes_desde, False, hist=False) if (con_global and hay_filtro) else None
     items = cl.agregar(filas, nivel); cl.calcular(items, dias); cl.clasificar(items, criterio, corte_a, corte_b, nuevo, cortes)
     if filas_g is not None:       # clase de cada item contra TODO el universo que el usuario puede ver (sin los filtros de pantalla)
         glob = cl.agregar(filas_g, nivel); cl.calcular(glob, dias); cl.clasificar(glob, criterio, corte_a, corte_b, nuevo, cortes)
@@ -134,10 +140,11 @@ def _por_grupo(items: list[dict], plan: str | None, dentro: bool = False, criter
     for it in items:
         v = val.get(it["producto_id"]) or ""
         g = grupos.setdefault(v, {"id": v, "nombre": (nom.get(v) or v).strip() if v else "(sin valor)", "n": 0, "venta": 0.0, "margen": 0.0, "inv_costo": 0.0,
-                                  **{a: 0 for a in cl.ORDEN_ABC}})
+                                  "inv_prom_costo": 0.0, "margen_anual": 0.0, "costo_venta_anual": 0.0, **{a: 0 for a in cl.ORDEN_ABC}})
         miembros.setdefault(v, []).append(it)
         g["n"] += 1
         g["venta"] += it["valor"]; g["margen"] += it["margen"] or 0.0; g["inv_costo"] += it["inv_costo"] or 0.0
+        g["inv_prom_costo"] += it["inv_prom_costo"] or 0.0; g["margen_anual"] += it["margen_anual"] or 0.0; g["costo_venta_anual"] += it["costo_venta_anual"] or 0.0
     for v, g in grupos.items():
         lista = [dict(i) for i in miembros[v]] if dentro else miembros[v]
         if dentro:
@@ -147,6 +154,7 @@ def _por_grupo(items: list[dict], plan: str | None, dentro: bool = False, criter
     out = sorted(grupos.values(), key=lambda g: (-g["margen"], g["nombre"]))
     for g in out:
         g["margen_pct"] = None if g["venta"] <= 0 else 100.0 * g["margen"] / g["venta"]
+        cl.retornos(g)
     return {"plan_id": plan, "plan_nombre": (pn or plan).strip(), "grupos": out}
 
 
@@ -168,7 +176,11 @@ COLS = [{"t": "Puesto", "k": "puesto", "f": "int", "w": 8}, {"t": "Clase", "k": 
         {"t": "Unidades vendidas", "k": "cant", "f": "int"}, {"t": "Venta neta $", "k": "valor", "f": "cop"}, {"t": "Costo de lo vendido $", "k": "costo_venta", "f": "cop"},
         {"t": "Margen $", "k": "margen", "f": "cop"}, {"t": "Margen %", "k": "margen_pct", "f": "dec1"}, {"t": "Costo unitario", "k": "costo", "f": "cop"},
         {"t": "Inventario (u.)", "k": "inventario", "f": "int"}, {"t": "Inventario a costo $", "k": "inv_costo", "f": "cop"},
-        {"t": "GMROI (anual)", "k": "gmroi", "f": "dec2"}, {"t": "Dias de inventario", "k": "dias_inv", "f": "int"},
+        {"t": "Inventario promedio (u.)", "k": "inv_prom", "f": "dec1"}, {"t": "Inventario promedio a costo $", "k": "inv_prom_costo", "f": "cop"},
+        {"t": "Dias con historia de inventario", "k": "dias_hist", "f": "int"},
+        {"t": "GMROI (anual)", "k": "gmroi", "f": "dec2"}, {"t": "Rotacion (veces/año)", "k": "rotacion", "f": "dec2"},
+        {"t": "Dias de inventario", "k": "dias_inv", "f": "int"}, {"t": "% dias sin stock", "k": "pct_sin_stock", "f": "dec1"},
+        {"t": "Cobertura x margen % (indicador anterior, no comparable)", "k": "cob_x_margen", "f": "dec1"},
         {"t": "IV", "k": "iv", "f": "dec2"}, {"t": "ADU", "k": "adu", "f": "dec1"}, {"t": "Tiendas", "k": "tiendas", "f": "int"}]
 
 METODOLOGIA = [
@@ -182,8 +194,11 @@ METODOLOGIA = [
     ("D", "Sin venta en las tiendas en la ventana (no cuenta lo que el CEDI vende a wholesale o digital; puede tener inventario: ver Inventario a costo)."),
     ("N", "Producto nuevo: su primera venta es de {nuevo_desde} en adelante; aun no tiene historia para clasificarlo. Solo se aplica con ventanas de 6 meses o mas."),
     ("S", "Sin costo conocido en Siesa: no se puede calcular margen ni consumo a costo."),
-    ("GMROI", "Margen anualizado / inventario a costo de hoy. Cuantos pesos de margen deja cada peso invertido en inventario al año."),
-    ("Dias de inventario", "Inventario de hoy / venta diaria promedio de la ventana."),
+    ("GMROI", "Margen anualizado / inventario PROMEDIO a costo. El promedio sale de la foto diaria de inventario de las tiendas dentro de la ventana (resumida por mes); donde no hay historia se usa el inventario de hoy (ver 'Dias con historia'). Cuantos pesos de margen deja cada peso invertido en inventario al año. En grupos y totales se calcula con las sumas en pesos, no promediando los de cada item."),
+    ("Rotacion", "Costo de lo vendido anualizado / inventario promedio a costo: cuantas veces al año se renueva el inventario. GMROI = rotacion x (margen / costo)."),
+    ("Dias de inventario", "Inventario promedio / venta diaria promedio de la ventana."),
+    ("% dias sin stock", "Dias-tienda de la ventana con inventario 0 / dias-tienda con historia. Un GMROI alto con muchos dias sin stock suele ser un quiebre, no eficiencia."),
+    ("Cobertura x margen %", "Indicador anterior: (inventario promedio en unidades / venta mensual en unidades) x margen %. Mide meses de stock ponderados por margen, no un retorno: no es comparable con el GMROI."),
     ("Clase global", "La clase que tendria el item con todo lo que el usuario puede ver, sin los filtros de pantalla (la 'Clase' se recalcula solo con lo filtrado)."),
     ("Items", "Solo activos (regla solo_items_activos); los REC suman al original."),
 ]
@@ -201,14 +216,15 @@ def exportar(nivel: str = "item", criterio: str = "margen", meses: int = 12, cor
     wb = excel.libro()
     # hoja resumen: una fila por celda de la matriz
     res_cols = [{"t": "ABC", "k": "abc", "w": 8}, {"t": "XYZ", "k": "xyz", "w": 8}, {"t": "Items", "k": "n", "f": "int"}, {"t": "Venta neta $", "k": "venta", "f": "cop"},
-                {"t": "Margen $", "k": "margen", "f": "cop"}, {"t": "Inventario a costo $", "k": "inv_costo", "f": "cop"}, {"t": "Inventario (u.)", "k": "inventario", "f": "int"}]
+                {"t": "Margen $", "k": "margen", "f": "cop"}, {"t": "Inventario a costo $ (hoy)", "k": "inv_costo", "f": "cop"}, {"t": "Inventario promedio a costo $", "k": "inv_prom_costo", "f": "cop"},
+                {"t": "GMROI (anual)", "k": "gmroi", "f": "dec2"}, {"t": "Rotacion (veces/año)", "k": "rotacion", "f": "dec2"}, {"t": "Inventario (u.)", "k": "inventario", "f": "int"}]
     excel.hoja(wb, "Resumen", res_cols, m["celdas"] + [{"abc": "TOTAL", "xyz": "", **m["total"], "inventario": None}])
     pg_ = _por_grupo(items, agrupar, dentro, criterio, corte_a, corte_b, meta["nuevo_desde"], tuple(meta["cortes_iv"]))
     if pg_:   # una fila por valor del criterio de items (categoria, linea...)
         gcols = ([{"t": pg_["plan_nombre"], "k": "nombre", "w": 30}, {"t": "Items", "k": "n", "f": "int"}]
                  + [{"t": a, "k": a, "f": "int", "w": 7} for a in cl.ORDEN_ABC]
                  + [{"t": "Venta neta $", "k": "venta", "f": "cop"}, {"t": "Margen $", "k": "margen", "f": "cop"}, {"t": "Margen %", "k": "margen_pct", "f": "dec1"},
-                    {"t": "Inventario a costo $", "k": "inv_costo", "f": "cop"}])
+                    {"t": "Inventario a costo $ (hoy)", "k": "inv_costo", "f": "cop"}, {"t": "GMROI (anual)", "k": "gmroi", "f": "dec2"}, {"t": "Rotacion (veces/año)", "k": "rotacion", "f": "dec2"}])
         excel.hoja(wb, ("Por " + re.sub(r"[\\/?*\[\]:]", " ", pg_["plan_nombre"]))[:31], gcols, pg_["grupos"])
     excel.hoja(wb, "Detalle", cols, vis, fijar=5)
     ctx = {"desde": meta["desde"], "hasta": meta["hasta"], "meses": meta["meses"], "dias": meta["dias"], "criterio": meta["criterio_nombre"], "corte_a": corte_a,

@@ -6,7 +6,7 @@ Apartes (no entran al ranking, para no ensuciarlo): D = sin venta en las tiendas
      S = sin costo conocido (solo si el criterio usa el costo).
 XYZ: por el indice de variabilidad (IV) que ya calcula el motor: X = baja, Y = media, Z = alta (cortes de la tabla de factores VAR: 0.5 y 0.8).
      A nivel item el IV es el de sus tiendas ponderado por la venta diaria (ADU).
-Margen = venta neta sin IVA - unidades x costo promedio actual (Siesa, por instalacion). GMROI = margen anualizado / inventario a costo."""
+Margen = venta neta sin IVA - unidades x costo promedio actual (Siesa, por instalacion). GMROI = margen anualizado / inventario PROMEDIO a costo (promedio de los dias de la ventana que guarda inventario_mes; sin historia, el inventario de hoy)."""
 from datetime import date
 
 CRITERIOS = {"margen": "Margen bruto $", "venta": "Venta neta $ (sin IVA)", "costo": "Consumo a costo $"}
@@ -32,12 +32,15 @@ def agregar(filas: list[dict], nivel: str) -> list[dict]:
             g = grupos[k] = {"producto_id": r["producto_id"], "empresa": r.get("empresa") if nivel == "tienda_item" else None, "bodega_id": r["bodega_id"] if nivel == "tienda_item" else None,
                              "bodega_nombre": r.get("bodega_nombre") if nivel == "tienda_item" else None,
                              "descripcion": r.get("descripcion"), "laboratorio": r.get("laboratorio"), "costo": r.get("costo"),
-                             "cant": 0.0, "valor": 0.0, "inventario": 0.0, "adu": 0.0, "primer_mes": None, "tiendas": 0,
+                             "cant": 0.0, "valor": 0.0, "inventario": 0.0, "inv_prom": 0.0, "dias_hist": 0, "_dias_tot": 0, "_dias_cero": 0, "adu": 0.0, "primer_mes": None, "tiendas": 0,
                              "_iv_pond": 0.0, "_iv_sum": 0.0, "_iv_n": 0}
             if nivel == "tienda_item":      # estado del buffer: solo tiene sentido por tienda
                 for c in ("zona", "pct_buffer", "flujo_neto", "sugerido"):
                     g[c] = r.get(c)
         g["cant"] += _f(r.get("cant")); g["valor"] += _f(r.get("valor")); g["inventario"] += max(_f(r.get("inventario")), 0.0)
+        dh = int(r.get("dias_hist") or 0)       # inventario promedio de la ventana (suma de las tiendas); sin historia de esa tienda, su inventario de hoy
+        g["inv_prom"] += (_f(r.get("inv_suma")) / dh) if dh > 0 else max(_f(r.get("inventario")), 0.0)
+        g["dias_hist"] = max(g["dias_hist"], dh); g["_dias_tot"] += dh; g["_dias_cero"] += int(r.get("dias_cero") or 0)
         g["adu"] += _f(r.get("adu")); g["tiendas"] += 1
         pm = r.get("primer_mes")
         if pm and (g["primer_mes"] is None or pm < g["primer_mes"]):
@@ -49,13 +52,17 @@ def agregar(filas: list[dict], nivel: str) -> list[dict]:
     out = []
     for g in grupos.values():
         n = g.pop("_iv_n"); pond = g.pop("_iv_pond"); suma = g.pop("_iv_sum")
+        dt = g.pop("_dias_tot"); dc = g.pop("_dias_cero")
+        g["pct_sin_stock"] = None if dt == 0 else 100.0 * dc / dt     # % de los dias-tienda de la ventana con inventario 0 (solo donde hay historia)
         g["iv"] = None if n == 0 else (pond / g["adu"] if g["adu"] > 0 else suma / n)
         out.append(g)
     return out
 
 
 def calcular(items: list[dict], dias: int) -> None:
-    """Agrega a cada item: costo_venta, margen, margen_pct, inv_costo, gmroi, dias_inv. `dias` = largo de la ventana (anualiza el GMROI)."""
+    """Agrega a cada item: costo_venta, margen, margen_pct, inv_costo (hoy), inv_prom_costo (promedio de la ventana), gmroi, rotacion, dias_inv y
+    cob_x_margen. `dias` = largo de la ventana (anualiza). GMROI = margen anual / inventario promedio a costo; rotacion = costo de venta anual /
+    inventario promedio a costo (veces al año). Sin historia de inventario el promedio es el inventario de hoy (dias_hist = 0)."""
     factor = 365.0 / max(dias, 1)
     for it in items:
         c = it.get("costo")
@@ -65,9 +72,17 @@ def calcular(items: list[dict], dias: int) -> None:
         it["margen"] = None if c is None else it["valor"] - it["costo_venta"]
         it["margen_pct"] = None if it["margen"] is None or it["valor"] <= 0 else 100.0 * it["margen"] / it["valor"]
         it["inv_costo"] = None if c is None else it["inventario"] * c
-        it["gmroi"] = None if it["margen"] is None or not it["inv_costo"] else it["margen"] * factor / it["inv_costo"]
+        ip = it.get("inv_prom", it["inventario"])
+        it["inv_prom"] = ip
+        it["inv_prom_costo"] = None if c is None else ip * c
+        it["margen_anual"] = None if it["margen"] is None else it["margen"] * factor
+        it["costo_venta_anual"] = None if it["costo_venta"] is None else it["costo_venta"] * factor
+        it["gmroi"] = None if it["margen_anual"] is None or not it["inv_prom_costo"] else it["margen_anual"] / it["inv_prom_costo"]
+        it["rotacion"] = None if it["costo_venta_anual"] is None or not it["inv_prom_costo"] else it["costo_venta_anual"] / it["inv_prom_costo"]
         diario = it["cant"] / max(dias, 1)
-        it["dias_inv"] = None if diario <= 0 else it["inventario"] / diario
+        it["dias_inv"] = None if diario <= 0 else ip / diario
+        # indicador anterior (lo que se calculaba a mano): meses de cobertura (inv. promedio en uds / venta mensual en uds) x margen %. No es un retorno: no comparar con el GMROI
+        it["cob_x_margen"] = None if diario <= 0 or it["margen_pct"] is None else (ip / (diario * 30.4375)) * it["margen_pct"]
 
 
 DIAGNOSTICOS = {   # clave: (etiqueta, color, que hacer)
@@ -79,6 +94,7 @@ DIAGNOSTICOS = {   # clave: (etiqueta, color, que hacer)
     "dormido": ("Sin venta con inventario", "#6d4c41", "No vendió en la ventana y tiene inventario: capital dormido"),
     "ok": ("Sano", "#2e7d32", "Sin alerta"),
 }
+
 
 
 def diagnostico(it: dict) -> str:
@@ -140,22 +156,33 @@ def clasificar(items: list[dict], criterio: str = "margen", corte_a: float = 80.
         it["clase"] = it["abc"] + (it["xyz"] if it["abc"] in ("A", "B", "C") and it["xyz"] != "-" else "")
 
 
+def retornos(x: dict) -> None:
+    """GMROI y rotacion de un agregado (celda, grupo, total): se calculan sobre las sumas en pesos, no promediando los de cada item."""
+    ip = x.get("inv_prom_costo") or 0.0
+    x["gmroi"] = x["margen_anual"] / ip if ip > 0 else None
+    x["rotacion"] = x["costo_venta_anual"] / ip if ip > 0 else None
+
+
 def matriz(items: list[dict]) -> dict:
     """Resumen por clase ABC x XYZ: items, venta, margen e inventario a costo; mas los totales por ABC."""
     celdas: dict[tuple, dict] = {}
     def acc(k, it):
-        c = celdas.setdefault(k, {"abc": k[0], "xyz": k[1], "n": 0, "venta": 0.0, "margen": 0.0, "costo_venta": 0.0, "inv_costo": 0.0, "inventario": 0.0})
+        c = celdas.setdefault(k, {"abc": k[0], "xyz": k[1], "n": 0, "venta": 0.0, "margen": 0.0, "costo_venta": 0.0, "inv_costo": 0.0, "inventario": 0.0, "inv_prom_costo": 0.0, "margen_anual": 0.0, "costo_venta_anual": 0.0})
         c["n"] += 1; c["venta"] += it["valor"]; c["margen"] += it["margen"] or 0.0
         c["costo_venta"] += it["costo_venta"] or 0.0; c["inv_costo"] += it["inv_costo"] or 0.0; c["inventario"] += it["inventario"]
+        c["inv_prom_costo"] += it["inv_prom_costo"] or 0.0; c["margen_anual"] += it["margen_anual"] or 0.0; c["costo_venta_anual"] += it["costo_venta_anual"] or 0.0
     for it in items:
         acc((it["abc"], it["xyz"] if it["abc"] in ("A", "B", "C") else "-"), it)
     tot = {"n": len(items), "venta": sum(i["valor"] for i in items), "margen": sum(i["margen"] or 0.0 for i in items),
-           "inv_costo": sum(i["inv_costo"] or 0.0 for i in items)}
+           "inv_costo": sum(i["inv_costo"] or 0.0 for i in items), "inv_prom_costo": sum(i["inv_prom_costo"] or 0.0 for i in items),
+           "margen_anual": sum(i["margen_anual"] or 0.0 for i in items), "costo_venta_anual": sum(i["costo_venta_anual"] or 0.0 for i in items)}
     por_abc = {}
     for (a, _), c in celdas.items():
-        t = por_abc.setdefault(a, {"abc": a, "n": 0, "venta": 0.0, "margen": 0.0, "inv_costo": 0.0})
-        for k in ("n", "venta", "margen", "inv_costo"):
+        t = por_abc.setdefault(a, {"abc": a, "n": 0, "venta": 0.0, "margen": 0.0, "inv_costo": 0.0, "inv_prom_costo": 0.0, "margen_anual": 0.0, "costo_venta_anual": 0.0})
+        for k in ("n", "venta", "margen", "inv_costo", "inv_prom_costo", "margen_anual", "costo_venta_anual"):
             t[k] += c[k]
+    for x in [*celdas.values(), *por_abc.values(), tot]:
+        retornos(x)
     return {"celdas": sorted(celdas.values(), key=lambda c: (ORDEN_ABC.index(c["abc"]), ORDEN_XYZ.index(c["xyz"]))),
             "por_abc": sorted(por_abc.values(), key=lambda c: ORDEN_ABC.index(c["abc"])), "total": tot}
 

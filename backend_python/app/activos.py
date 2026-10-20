@@ -24,7 +24,7 @@ def solo_activos(a: str = "s") -> str:
 
 
 # tablas que se llenan desde Siesa / el motor y llevan (empresa, producto_id)
-TABLAS_CON_ITEM = ("ventas_mensual", "inventario_actual", "transitos", "demanda_calificada", "buffer_historia", "sugerencias_envio", "cedi_evento")
+TABLAS_CON_ITEM = ("ventas_mensual", "inventario_actual", "transitos", "demanda_calificada", "buffer_historia", "inventario_mes", "sugerencias_envio", "cedi_evento")
 
 
 def purgas_fuera_del_maestro() -> list[str]:

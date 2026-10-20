@@ -115,6 +115,11 @@ SENTENCIAS = [
          nivel       TEXT NOT NULL DEFAULT 'lectura' CHECK (nivel IN ('lectura','edicion','aprobacion')),
          permisos    TEXT[] NOT NULL DEFAULT '{}',
          sistema     BOOLEAN NOT NULL DEFAULT FALSE)""",
+    """CREATE TABLE IF NOT EXISTS ddmrp.inventario_mes (   -- resumen mensual de la foto diaria (buffer_historia): base del inventario promedio / GMROI
+         mes TEXT NOT NULL, empresa TEXT NOT NULL, bodega_id TEXT NOT NULL, producto_id TEXT NOT NULL,
+         inv_suma REAL NOT NULL, dias INT NOT NULL, dias_cero INT NOT NULL,
+         PRIMARY KEY (empresa, bodega_id, producto_id, mes))""",
+    "CREATE INDEX IF NOT EXISTS idx_invmes_mes ON ddmrp.inventario_mes (mes)",
     """CREATE TABLE IF NOT EXISTS ddmrp.vista_guardada (
          usuario_id  TEXT NOT NULL,
          informe     TEXT NOT NULL,
