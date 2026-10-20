@@ -120,8 +120,8 @@ def test_gmroi_con_inventario_promedio_y_retornos():
     assert x["inv_prom"] == 120 and x["inventario"] == 25 and x["dias_hist"] == 30
     assert abs(x["pct_sin_stock"] - 10.0) < 1e-9                       # 3 de 30 dias-tienda con historia
     assert abs(x["gmroi"] - 10000 / (120 * 50)) < 1e-9                  # margen anual / inventario PROMEDIO a costo, no el de hoy
-    assert abs(x["rotacion"] - (200 * 50) / (120 * 50)) < 1e-9
-    assert abs(x["gmroi"] - x["rotacion"] * (x["margen"] / x["costo_venta"])) < 1e-9   # GMROI = rotacion x (margen/costo)
+    assert abs(x["rotacion"] - 200 / 365 * 30.4375) < 1e-9               # unidades vendidas por mes
+    assert abs(x["inv_prom"] / x["rotacion"] - 120 / (200 / 365 * 30.4375)) < 1e-9   # meses de cobertura
     # indicador anterior: meses de cobertura x margen %  -> 120 uds / (200 uds/12.0 meses...) 
     meses_cob = 120 / (200 / 365 * 30.4375)
     assert abs(x["cob_x_margen"] - meses_cob * 50.0) < 1e-6
@@ -132,8 +132,8 @@ def test_gmroi_con_inventario_promedio_y_retornos():
     cl.calcular([ai, bi], 365 * 1)
     # agregados: se calculan sobre sumas en pesos
     agg = {"margen_anual": 300.0, "costo_venta_anual": 600.0, "inv_prom_costo": 100.0}; cl.retornos(agg)
-    assert agg["gmroi"] == 3.0 and agg["rotacion"] == 6.0
-    z = {"margen_anual": 1.0, "costo_venta_anual": 1.0, "inv_prom_costo": 0.0}; cl.retornos(z); assert z["gmroi"] is None
+    assert agg["gmroi"] == 3.0 and agg["meses_inv"] == 2.0           # 100 de inventario con 50 de costo de venta al mes
+    z = {"margen_anual": 1.0, "costo_venta_anual": 1.0, "inv_prom_costo": 0.0}; cl.retornos(z); assert z["gmroi"] is None and z["meses_inv"] == 0.0   # sin inventario promedio: GMROI indefinido, 0 meses de stock
     # sin historia en ninguna tienda: el promedio es el inventario de hoy
     s = cl.agregar([{"producto_id": "S", "bodega_id": "T", "cant": 10, "valor": 1000, "costo": 10, "inventario": 7, "iv": .3, "adu": 1}], "item"); cl.calcular(s, 365)
     assert s[0]["inv_prom"] == 7 and s[0]["dias_hist"] == 0 and s[0]["pct_sin_stock"] is None

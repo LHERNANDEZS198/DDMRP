@@ -61,7 +61,7 @@ def agregar(filas: list[dict], nivel: str) -> list[dict]:
 
 def calcular(items: list[dict], dias: int) -> None:
     """Agrega a cada item: costo_venta, margen, margen_pct, inv_costo (hoy), inv_prom_costo (promedio de la ventana), gmroi, rotacion, dias_inv y
-    cob_x_margen. `dias` = largo de la ventana (anualiza). GMROI = margen anual / inventario promedio a costo; rotacion = costo de venta anual /
+    cob_x_margen. `dias` = largo de la ventana (anualiza). GMROI = margen anual / inventario promedio a costo; rotacion = unidades vendidas por mes (promedio de la ventana; es la que usa cob_x_margen); costo de venta anual /
     inventario promedio a costo (veces al año). Sin historia de inventario el promedio es el inventario de hoy (dias_hist = 0)."""
     factor = 365.0 / max(dias, 1)
     for it in items:
@@ -78,11 +78,11 @@ def calcular(items: list[dict], dias: int) -> None:
         it["margen_anual"] = None if it["margen"] is None else it["margen"] * factor
         it["costo_venta_anual"] = None if it["costo_venta"] is None else it["costo_venta"] * factor
         it["gmroi"] = None if it["margen_anual"] is None or not it["inv_prom_costo"] else it["margen_anual"] / it["inv_prom_costo"]
-        it["rotacion"] = None if it["costo_venta_anual"] is None or not it["inv_prom_costo"] else it["costo_venta_anual"] / it["inv_prom_costo"]
         diario = it["cant"] / max(dias, 1)
+        it["rotacion"] = diario * 30.4375            # unidades vendidas por mes (promedio de la ventana)
         it["dias_inv"] = None if diario <= 0 else ip / diario
         # indicador anterior (lo que se calculaba a mano): meses de cobertura (inv. promedio en uds / venta mensual en uds) x margen %. No es un retorno: no comparar con el GMROI
-        it["cob_x_margen"] = None if diario <= 0 or it["margen_pct"] is None else (ip / (diario * 30.4375)) * it["margen_pct"]
+        it["cob_x_margen"] = None if diario <= 0 or it["margen_pct"] is None else (ip / it["rotacion"]) * it["margen_pct"]
 
 
 DIAGNOSTICOS = {   # clave: (etiqueta, color, que hacer)
@@ -157,10 +157,11 @@ def clasificar(items: list[dict], criterio: str = "margen", corte_a: float = 80.
 
 
 def retornos(x: dict) -> None:
-    """GMROI y rotacion de un agregado (celda, grupo, total): se calculan sobre las sumas en pesos, no promediando los de cada item."""
+    """GMROI y meses de inventario de un agregado (celda, grupo, total): se calculan sobre las sumas en pesos, no promediando los de cada item."""
     ip = x.get("inv_prom_costo") or 0.0
     x["gmroi"] = x["margen_anual"] / ip if ip > 0 else None
-    x["rotacion"] = x["costo_venta_anual"] / ip if ip > 0 else None
+    cv = x["costo_venta_anual"] / 12.0
+    x["meses_inv"] = ip / cv if cv > 0 else None       # meses que dura el inventario promedio al ritmo de venta (a costo)
 
 
 def matriz(items: list[dict]) -> dict:

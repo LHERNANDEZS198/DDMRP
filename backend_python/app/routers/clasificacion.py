@@ -178,7 +178,7 @@ COLS = [{"t": "Puesto", "k": "puesto", "f": "int", "w": 8}, {"t": "Clase", "k": 
         {"t": "Inventario (u.)", "k": "inventario", "f": "int"}, {"t": "Inventario a costo $", "k": "inv_costo", "f": "cop"},
         {"t": "Inventario promedio (u.)", "k": "inv_prom", "f": "dec1"}, {"t": "Inventario promedio a costo $", "k": "inv_prom_costo", "f": "cop"},
         {"t": "Dias con historia de inventario", "k": "dias_hist", "f": "int"},
-        {"t": "GMROI (anual)", "k": "gmroi", "f": "dec2"}, {"t": "Rotacion (veces/año)", "k": "rotacion", "f": "dec2"},
+        {"t": "GMROI (anual)", "k": "gmroi", "f": "dec2"}, {"t": "Rotacion (uds/mes)", "k": "rotacion", "f": "dec2"},
         {"t": "Dias de inventario", "k": "dias_inv", "f": "int"}, {"t": "% dias sin stock", "k": "pct_sin_stock", "f": "dec1"},
         {"t": "Cobertura x margen % (indicador anterior, no comparable)", "k": "cob_x_margen", "f": "pct1"},
         {"t": "IV", "k": "iv", "f": "dec2"}, {"t": "ADU", "k": "adu", "f": "dec1"}, {"t": "Tiendas", "k": "tiendas", "f": "int"}]
@@ -195,7 +195,7 @@ METODOLOGIA = [
     ("N", "Producto nuevo: su primera venta es de {nuevo_desde} en adelante; aun no tiene historia para clasificarlo. Solo se aplica con ventanas de 6 meses o mas."),
     ("S", "Sin costo conocido en Siesa: no se puede calcular margen ni consumo a costo."),
     ("GMROI", "Margen anualizado / inventario PROMEDIO a costo. El promedio sale de la foto diaria de inventario de las tiendas dentro de la ventana (resumida por mes); donde no hay historia se usa el inventario de hoy (ver 'Dias con historia'). Cuantos pesos de margen deja cada peso invertido en inventario al año. En grupos y totales se calcula con las sumas en pesos, no promediando los de cada item."),
-    ("Rotacion", "Costo de lo vendido anualizado / inventario promedio a costo: cuantas veces al año se renueva el inventario. GMROI = rotacion x (margen / costo)."),
+    ("Rotacion", "Unidades vendidas por mes en promedio en la ventana (unidades vendidas / meses de la ventana). Es la rotacion que usa el indicador anterior. En los resumenes por clase y grupo se muestra en su lugar Meses de inventario (inventario promedio a costo / costo de venta mensual), porque las unidades de items distintos no se suman. (GMROI = margen anual / inventario promedio a costo)."),
     ("Dias de inventario", "Inventario promedio / venta diaria promedio de la ventana."),
     ("% dias sin stock", "Dias-tienda de la ventana con inventario 0 / dias-tienda con historia. Un GMROI alto con muchos dias sin stock suele ser un quiebre, no eficiencia."),
     ("Cobertura x margen %", "Indicador anterior: (inventario promedio en unidades / venta mensual en unidades) x margen %. Mide meses de stock ponderados por margen, no un retorno: no es comparable con el GMROI."),
@@ -217,14 +217,14 @@ def exportar(nivel: str = "item", criterio: str = "margen", meses: int = 12, cor
     # hoja resumen: una fila por celda de la matriz
     res_cols = [{"t": "ABC", "k": "abc", "w": 8}, {"t": "XYZ", "k": "xyz", "w": 8}, {"t": "Items", "k": "n", "f": "int"}, {"t": "Venta neta $", "k": "venta", "f": "cop"},
                 {"t": "Margen $", "k": "margen", "f": "cop"}, {"t": "Inventario a costo $ (hoy)", "k": "inv_costo", "f": "cop"}, {"t": "Inventario promedio a costo $", "k": "inv_prom_costo", "f": "cop"},
-                {"t": "GMROI (anual)", "k": "gmroi", "f": "dec2"}, {"t": "Rotacion (veces/año)", "k": "rotacion", "f": "dec2"}, {"t": "Inventario (u.)", "k": "inventario", "f": "int"}]
+                {"t": "GMROI (anual)", "k": "gmroi", "f": "dec2"}, {"t": "Meses de inventario", "k": "meses_inv", "f": "dec1"}, {"t": "Inventario (u.)", "k": "inventario", "f": "int"}]
     excel.hoja(wb, "Resumen", res_cols, m["celdas"] + [{"abc": "TOTAL", "xyz": "", **m["total"], "inventario": None}])
     pg_ = _por_grupo(items, agrupar, dentro, criterio, corte_a, corte_b, meta["nuevo_desde"], tuple(meta["cortes_iv"]))
     if pg_:   # una fila por valor del criterio de items (categoria, linea...)
         gcols = ([{"t": pg_["plan_nombre"], "k": "nombre", "w": 30}, {"t": "Items", "k": "n", "f": "int"}]
                  + [{"t": a, "k": a, "f": "int", "w": 7} for a in cl.ORDEN_ABC]
                  + [{"t": "Venta neta $", "k": "venta", "f": "cop"}, {"t": "Margen $", "k": "margen", "f": "cop"}, {"t": "Margen %", "k": "margen_pct", "f": "dec1"},
-                    {"t": "Inventario a costo $ (hoy)", "k": "inv_costo", "f": "cop"}, {"t": "GMROI (anual)", "k": "gmroi", "f": "dec2"}, {"t": "Rotacion (veces/año)", "k": "rotacion", "f": "dec2"}])
+                    {"t": "Inventario a costo $ (hoy)", "k": "inv_costo", "f": "cop"}, {"t": "GMROI (anual)", "k": "gmroi", "f": "dec2"}, {"t": "Meses de inventario", "k": "meses_inv", "f": "dec1"}])
         excel.hoja(wb, ("Por " + re.sub(r"[\\/?*\[\]:]", " ", pg_["plan_nombre"]))[:31], gcols, pg_["grupos"])
     excel.hoja(wb, "Detalle", cols, vis, fijar=5)
     ctx = {"desde": meta["desde"], "hasta": meta["hasta"], "meses": meta["meses"], "dias": meta["dias"], "criterio": meta["criterio_nombre"], "corte_a": corte_a,
