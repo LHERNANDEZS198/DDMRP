@@ -7,6 +7,7 @@ log = logging.getLogger("esquema")
 
 SENTENCIAS = [
     "CREATE TABLE IF NOT EXISTS ddmrp.criterio_plan (plan_id TEXT PRIMARY KEY, nombre TEXT)",
+    "ALTER TABLE ddmrp.criterio_plan ADD COLUMN IF NOT EXISTS en_filtros SMALLINT NOT NULL DEFAULT 1 CHECK (en_filtros IN (0,1))",   # 1 = el plan sale en los filtros; el ETL no lo toca
     "CREATE TABLE IF NOT EXISTS ddmrp.criterio (plan_id TEXT NOT NULL, criterio_id TEXT NOT NULL, nombre TEXT, PRIMARY KEY (plan_id, criterio_id))",
     "CREATE TABLE IF NOT EXISTS ddmrp.item_criterio (producto_id TEXT NOT NULL, plan_id TEXT NOT NULL, criterio_id TEXT NOT NULL, PRIMARY KEY (producto_id, plan_id))",
     "CREATE INDEX IF NOT EXISTS idx_itemcrit_plan ON ddmrp.item_criterio (plan_id, criterio_id)",

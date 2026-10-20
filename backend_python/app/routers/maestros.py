@@ -73,6 +73,10 @@ MAESTROS = {
     "items-rec": dict(
         label="Items REC: cada item REC y su original (el SKU sin el primer digito)", tabla="ddmrp.item_rec",
         llave=["empresa", "rec_id"], editable={"original_id": "txt"}, bodega=None, producto=None, global_=True),
+    "criterios-filtros": dict(
+        label="Criterios de items que salen en los filtros (1 = sale · 0 = no sale)", tabla="ddmrp.criterio_plan",
+        llave=["plan_id"], editable={"en_filtros": "int"}, bodega=None, producto=None, global_=True,
+        solo_existentes=True, sin_reemplazo=True),
     "reposicion-laboratorio": dict(
         label="Hasta donde se repone, por laboratorio (1 TOG aj · 2 TOY aj · 3 TOY aj + mitad de la zona verde)", tabla="ddmrp.reposicion_laboratorio",
         llave=["laboratorio"], editable={"regla": "int"}, bodega=None, producto=None, global_=True),
@@ -125,6 +129,8 @@ AYUDA = {
     "demanda-calificada": "Pedidos abiertos o picos conocidos por tienda y referencia. Se restan del flujo neto cuando la regla 'Restar demanda calificada' está en Sí.",
     "pronostico": "Venta mensual esperada (unidades/mes) por tienda y referencia. Sirve sobre todo para tiendas, referencias o laboratorios NUEVOS: si la combinacion tiene menos meses de venta que la regla 'Pronostico directo en casos nuevos' (por defecto 3), el motor usa este valor tal cual, aunque no haya historial. Con mas historial el pronostico solo ajusta: el motor lo lleva entre 1 y 2 veces el ADU de referencia (nunca baja el historial). Para campanas o promociones usa Promocion y las cotas.",
     "ventas-mensual": "Unidades vendidas por mes, tienda y referencia: base de la venta diaria (ADU) y de la variabilidad. Se traen de Siesa con 'Traer ventas por mes' o se cargan por Excel.",
+    "criterios-filtros": "Planes de criterios de items traídos de Siesa (CATEGORIA, LINEA...). En_filtros = 1 hace que el plan salga como filtro y como 'Agrupar por' en Clasificación, Control y Lanzamientos; 0 lo oculta. "
+                         "Un plan nuevo que llega de Siesa sale en 1 (visible). No afecta las columnas del Excel de Clasificación ni la lista de Items.",
     "reposicion-laboratorio": "Hasta dónde se repone cuando se pide, para todos los items de un laboratorio (código del laboratorio): 1 = TOG ajustado (tope verde), 2 = TOY ajustado (tope amarillo), "
                               "3 = tope amarillo + la mitad de la zona verde ajustada. Sobrescribe la regla general de Reglas de pedido; la del item gana sobre la del laboratorio. Aplica en la siguiente corrida del motor.",
     "reposicion-item": "Hasta dónde se repone cuando se pide, para un item en todas las tiendas: 1 = TOG ajustado (tope verde), 2 = TOY ajustado (tope amarillo), 3 = tope amarillo + la mitad de la zona verde ajustada. "
@@ -278,6 +284,8 @@ def leer(nombre: str, response: Response, bodega_id: str | None = None, producto
     elif d.get("producto"):
         join = f"LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = t.{d['producto']}"
         sel += ", mi.descripcion"
+    if nombre == "criterios-filtros":
+        sel += ", t.nombre AS descripcion"
     if producto_id and d.get("producto"):
         w += f" AND t.{d['producto']} = :pr"; p["pr"] = producto_id
     wf, pf = _filtros_maestro(nombre, d, bodega_id, q, lab, empresa, mes, estado, col, op, val)
@@ -326,6 +334,8 @@ def editar(nombre: str, cambios: list[Cambio], user=Depends(requiere("cargar_mae
             if set(ch.llave) != set(d["llave"]):
                 raise HTTPException(400, f"La llave debe ser {d['llave']}")
             _autorizar(user, d, ch.llave, c)
+            if nombre == "criterios-filtros" and str(ch.valor) not in ("0", "1", "0.0", "1.0"):
+                raise HTTPException(400, "En_filtros solo admite 1 (sale en los filtros) o 0 (no sale)")
             cast = CAST[d["editable"][ch.campo]]
             donde = " AND ".join(f"{k} = CAST(:k_{k} AS {CAST[TIPO_LLAVE.get(k, 'txt')]})" for k in d["llave"])
             kp = {f"k_{k}": ch.llave[k] for k in d["llave"]}

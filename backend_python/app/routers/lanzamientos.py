@@ -70,7 +70,7 @@ def filtros(user=Depends(usuario_actual)):
                                       FROM (SELECT DISTINCT ic.plan_id, ic.criterio_id FROM ddmrp.item_criterio ic
                                             JOIN ddmrp.cedi_evento e ON e.producto_id = ic.producto_id) ic
                                       LEFT JOIN ddmrp.criterio_plan p ON p.plan_id = ic.plan_id
-                                      LEFT JOIN ddmrp.criterio cr ON cr.plan_id = ic.plan_id AND cr.criterio_id = ic.criterio_id ORDER BY 1, 3""")).all()
+                                      LEFT JOIN ddmrp.criterio cr ON cr.plan_id = ic.plan_id AND cr.criterio_id = ic.criterio_id WHERE COALESCE(p.en_filtros, 1) = 1 ORDER BY 1, 3""")).all()
     for l in labs:
         if not l["codigo"]:
             l["codigo"] = "(sin laboratorio)"
