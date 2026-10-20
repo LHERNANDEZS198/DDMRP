@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from ..config import settings
 from ..db import pg, mysql_engine
-from ..security import usuario_actual, requiere, permisos, PERMISOS, CLAVES_PERMISO, _bootstrap
+from ..security import crear_token, usuario_actual, requiere, permisos, PERMISOS, CLAVES_PERMISO, _bootstrap
 
 router = APIRouter(prefix="/usuarios", tags=["usuarios"], dependencies=[Depends(requiere("admin_usuarios"))])
 NIVELES = ("lectura", "edicion", "aprobacion")
@@ -135,7 +135,7 @@ def borrar_perfil(perfil_id: str, user=Depends(usuario_actual)):
 def usuarios():
     with pg.connect() as c:
         r = c.execute(text("SELECT u.usuario_id, u.nombre, u.perfil_id, p.nombre AS perfil, u.activo, u.bodegas, u.categorias "
-                           "FROM ddmrp.usuario u LEFT JOIN ddmrp.perfil p ON p.perfil_id = u.perfil_id ORDER BY u.activo DESC, u.usuario_id")).mappings().all()
+                           "FROM ddmrp.usuario u LEFT JOIN ddmrp.perfil p ON p.perfil_id = u.perfil_id WHERE u.usuario_id NOT LIKE 'prueba:%' ORDER BY u.activo DESC, u.usuario_id")).mappings().all()
     return [{**dict(x), "bootstrap": _bootstrap(x["usuario_id"])} for x in r]
 
 
@@ -145,6 +145,35 @@ class UsuarioIn(BaseModel):
     activo: bool = True
     bodegas: list[str] = []      # vacio = todas las tiendas
     categorias: list[str] = []   # vacio = todos los laboratorios
+
+
+class VerComoIn(BaseModel):
+    perfil_id: str
+    bodegas: list[str] = []
+    categorias: list[str] = []
+
+
+@router.post("/ver-como")
+def ver_como(b: VerComoIn, user=Depends(usuario_actual)):
+    """Entrar como un perfil (con el alcance dado) sin pasar por reloj, para ver sus menus. Crea un usuario temporal
+    'prueba:<admin>' y devuelve un token de 2 horas. Queda en el log; al salir (o al repetir) se borra."""
+    if str(user["id"]).startswith("prueba:"):
+        raise HTTPException(400, "Ya estas en modo prueba: vuelve a tu usuario primero")
+    uid = "prueba:" + user["id"]
+    bodegas = [x for x in dict.fromkeys(b.bodegas) if x and x != "*"]
+    cats = [x for x in dict.fromkeys(b.categorias) if x and x != "*"]
+    with pg.begin() as c:
+        p = c.execute(text("SELECT nombre FROM ddmrp.perfil WHERE perfil_id = :p"), {"p": b.perfil_id}).first()
+        if not p:
+            raise HTTPException(400, "Perfil inexistente")
+        nombre = f"PRUEBA · {p[0]}"
+        c.execute(text("INSERT INTO ddmrp.usuario (usuario_id, nombre, perfil_id, activo, bodegas, categorias, actualizado) "
+                       "VALUES (:u, :n, :p, true, :b, :k, now()) ON CONFLICT (usuario_id) DO UPDATE SET nombre = EXCLUDED.nombre, "
+                       "perfil_id = EXCLUDED.perfil_id, activo = true, bodegas = EXCLUDED.bodegas, categorias = EXCLUDED.categorias, actualizado = now()"),
+                  {"u": uid, "n": nombre, "p": b.perfil_id, "b": bodegas, "k": cats})
+        sincronizar_rbac(c, uid)
+        _audit(c, user, uid, "ver_como", None, f"{b.perfil_id} t={len(bodegas) or 'todas'} l={len(cats) or 'todos'}")
+    return {"access_token": crear_token({"id": uid, "nombre": nombre}, 120), "token_type": "bearer", "usuario": nombre}
 
 
 @router.put("/{usuario_id}")

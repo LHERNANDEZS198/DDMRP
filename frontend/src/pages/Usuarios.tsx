@@ -4,7 +4,8 @@ import { Autocomplete, Box, Button, Checkbox, Chip, Dialog, DialogActions, Dialo
 import Add from '@mui/icons-material/Add'
 import Edit from '@mui/icons-material/Edit'
 import DeleteOutline from '@mui/icons-material/DeleteOutline'
-import { api } from '../api'
+import Visibility from '@mui/icons-material/Visibility'
+import { api, verComo } from '../api'
 import Aviso from '../Aviso'
 import { useYo } from '../Yo'
 import { confirmar } from '../alertas'
@@ -28,6 +29,7 @@ function Usuarios({ perfiles, setMsg }: { perfiles: Perfil[]; setMsg: (s: string
   const [q, setQ] = useState('')
   const [ed, setEd] = useState<Partial<Usr> & { nuevo?: boolean } | null>(null)
   const [op, setOp] = useState<{ tiendas: Op[]; laboratorios: Op[] }>({ tiendas: [], laboratorios: [] })
+  const [vc, setVc] = useState<{ perfil_id: string; bodegas: string[]; categorias: string[] } | null>(null)
   const [reloj, setReloj] = useState<Op[]>([])
   const [relojOk, setRelojOk] = useState(true)
   const cargar = () => api('/usuarios').then(setLista).catch(e => setMsg('Error: ' + e.message))
@@ -67,6 +69,8 @@ function Usuarios({ perfiles, setMsg }: { perfiles: Perfil[]; setMsg: (s: string
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
         <TextField size="small" label="Buscar" value={q} onChange={e => setQ(e.target.value)} sx={{ minWidth: 260 }} />
         <Box sx={{ flex: 1 }} />
+        <Button variant="outlined" startIcon={<Visibility />} onClick={() => setVc({ perfil_id: perfiles[0]?.perfil_id ?? '', bodegas: [], categorias: [] })}
+          title="Entrar como un perfil, sin reloj, para ver sus menús">Ver como perfil</Button>
         <Button variant="contained" startIcon={<Add />} onClick={() => setEd({ nuevo: true, usuario_id: '', nombre: '', perfil_id: 'consulta', activo: true, bodegas: [], categorias: [] })}>Agregar usuario</Button>
       </Stack>
       <Typography variant="body2" color="text.secondary">
@@ -87,6 +91,8 @@ function Usuarios({ perfiles, setMsg }: { perfiles: Perfil[]; setMsg: (s: string
                 <TableCell><Switch size="small" checked={u.activo} disabled={u.usuario_id === yo?.id}
                   onChange={e => guardar({ ...u, activo: e.target.checked }, false)} /></TableCell>
                 <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                  <Tooltip title="Ver la aplicación como este usuario (sin reloj)"><span><IconButton size="small" disabled={!u.perfil_id || u.usuario_id === yo?.id}
+                    onClick={() => verComo(u.perfil_id!, u.bodegas, u.categorias).catch(e => setMsg('Error: ' + e.message))}><Visibility fontSize="small" /></IconButton></span></Tooltip>
                   <Tooltip title="Editar"><IconButton size="small" onClick={() => setEd(u)}><Edit fontSize="small" /></IconButton></Tooltip>
                   <Tooltip title="Quitar acceso"><span><IconButton size="small" disabled={u.usuario_id === yo?.id} onClick={() => borrar(u)}><DeleteOutline fontSize="small" /></IconButton></span></Tooltip>
                 </TableCell>
@@ -96,6 +102,29 @@ function Usuarios({ perfiles, setMsg }: { perfiles: Perfil[]; setMsg: (s: string
         </Table>
       </Paper>
 
+      <Dialog open={!!vc} onClose={() => setVc(null)} maxWidth="sm" fullWidth>
+        <DialogTitle>Ver como perfil</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <Typography variant="body2" color="text.secondary">Entras con ese perfil sin pasar por reloj. Arriba verás un aviso con el botón para volver a tu usuario; la sesión de prueba dura 2 horas.</Typography>
+            <TextField select size="small" label="Perfil" value={vc?.perfil_id ?? ''} onChange={e => setVc(x => ({ ...x!, perfil_id: e.target.value }))}>
+              {perfiles.map(p => <MenuItem key={p.perfil_id} value={p.perfil_id}>{p.nombre}</MenuItem>)}
+            </TextField>
+            <Autocomplete multiple size="small" options={op.tiendas.map(t => t.id)} value={vc?.bodegas ?? []}
+              getOptionLabel={id => { const t = op.tiendas.find(x => x.id === id); return t?.nombre ? `${id} · ${t.nombre}` : id }}
+              onChange={(_, v) => setVc(x => ({ ...x!, bodegas: v }))}
+              renderInput={p => <TextField {...p} label="Tiendas" placeholder={vc?.bodegas?.length ? '' : 'Todas las tiendas'} />} />
+            <Autocomplete multiple size="small" options={op.laboratorios.map(t => t.id)} value={vc?.categorias ?? []}
+              getOptionLabel={id => { const t = op.laboratorios.find(x => x.id === id); return t?.nombre ? `${id} · ${t.nombre}` : id }}
+              onChange={(_, v) => setVc(x => ({ ...x!, categorias: v }))}
+              renderInput={p => <TextField {...p} label="Laboratorios" placeholder={vc?.categorias?.length ? '' : 'Todos los laboratorios'} />} />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setVc(null)}>Cancelar</Button>
+          <Button variant="contained" disabled={!vc?.perfil_id} onClick={() => verComo(vc!.perfil_id, vc!.bodegas, vc!.categorias).catch(e => setMsg('Error: ' + e.message))}>Entrar</Button>
+        </DialogActions>
+      </Dialog>
       <Dialog open={!!ed} onClose={() => setEd(null)} maxWidth="sm" fullWidth>
         <DialogTitle>{ed?.nuevo ? 'Agregar usuario' : `Usuario ${ed?.usuario_id}`}</DialogTitle>
         <DialogContent>

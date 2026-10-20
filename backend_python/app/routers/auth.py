@@ -15,7 +15,7 @@ def login(form: OAuth2PasswordRequestForm = Depends()):
     except Exception as e:  # reloj inalcanzable, columna inexistente, etc.: no es una clave mala
         log.exception("Fallo consultando el MySQL de reloj")
         raise HTTPException(503, f"No se pudo consultar reloj ({type(e).__name__}). Revisa AUTH_MYSQL_* y los logs del backend.")
-    if not u:
+    if not u or str(u["id"]).startswith("prueba:"):
         raise HTTPException(401, "Credenciales invalidas")
     return {"access_token": crear_token(u), "token_type": "bearer", "usuario": u["nombre"]}
 
@@ -24,3 +24,16 @@ def login(form: OAuth2PasswordRequestForm = Depends()):
 def me(user=Depends(usuario_actual)):
     a = asignaciones(user["id"])
     return {**user, "funciones": sorted(permisos(user["id"])), "es_admin": any(x["es_admin"] for x in a), "alcance": a}
+
+
+@router.post("/salir-prueba")
+def salir_prueba(user=Depends(usuario_actual)):
+    """Termina un 'Ver como perfil': borra el usuario temporal. Solo actua sobre usuarios 'prueba:*'."""
+    from sqlalchemy import text
+    from ..db import pg
+    if not str(user["id"]).startswith("prueba:"):
+        return {"ok": True, "eliminado": False}
+    with pg.begin() as c:
+        c.execute(text("DELETE FROM ddmrp.rbac_asignacion WHERE usuario_id = :u"), {"u": user["id"]})
+        c.execute(text("DELETE FROM ddmrp.usuario WHERE usuario_id = :u"), {"u": user["id"]})
+    return {"ok": True, "eliminado": True}

@@ -16,7 +16,7 @@ import FactCheck from '@mui/icons-material/FactCheck'
 import { useYo } from './Yo'
 import { BannerSalud } from './Salud'
 import Errores from './Errores'
-import { getUser, logout } from './api'
+import { enPrueba, getUser, logout, volverDePrueba } from './api'
 
 /** Menú «Informes»: todo lo que se consulta (no se opera). Agrupado en el desplegable. */
 export const VISTAS = [
@@ -93,6 +93,11 @@ export default function Shell() {
               <ListItemIcon>{n.icon}</ListItemIcon><ListItemText primary={n.label} /></ListItemButton>))}
         </List>
       </Drawer>
+      {enPrueba() && (
+        <Box sx={{ bgcolor: '#b45309', color: '#fff', px: 2, py: .5, display: 'flex', alignItems: 'center', gap: 2, fontSize: 14 }}>
+          <Box sx={{ flex: 1 }}>Modo prueba: ves la aplicación como <b>{user}</b>, sin reloj. Lo que hagas queda registrado con ese nombre.</Box>
+          <Button size="small" variant="outlined" color="inherit" onClick={volverDePrueba}>Volver a mi usuario</Button>
+        </Box>)}
       <Box component="main" sx={{ flex: 1, minHeight: 0, p: { xs: 1, md: 2 }, overflow: 'auto' }}><BannerSalud /><Errores clave={loc.pathname}><Outlet /></Errores></Box>
     </Box>)
 }

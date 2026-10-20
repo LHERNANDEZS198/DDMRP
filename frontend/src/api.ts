@@ -2,7 +2,21 @@ let token = localStorage.getItem('token') || ''
 export const setToken = (t: string) => { token = t; localStorage.setItem('token', t) }
 export const hasToken = () => !!token
 export const getUser = () => localStorage.getItem('user') || ''
-export const logout = () => { localStorage.removeItem('token'); localStorage.removeItem('user'); location.reload() }
+export const logout = () => { ['token', 'user', 'token_admin', 'user_admin'].forEach(k => localStorage.removeItem(k)); location.reload() }
+
+/** Modo "ver como perfil": se guarda el token del administrador y se entra con uno temporal del perfil elegido (sin reloj). */
+export const enPrueba = () => !!localStorage.getItem('token_admin')
+export async function verComo(perfil_id: string, bodegas: string[], categorias: string[]) {
+  const r = await api('/usuarios/ver-como', { method: 'POST', body: JSON.stringify({ perfil_id, bodegas, categorias }) })
+  if (!enPrueba()) { localStorage.setItem('token_admin', token); localStorage.setItem('user_admin', getUser()) }
+  setToken(r.access_token); localStorage.setItem('user', r.usuario); location.href = '/'
+}
+export async function volverDePrueba() {
+  const ta = localStorage.getItem('token_admin') || ''
+  try { await api('/auth/salir-prueba', { method: 'POST' }) } catch { /* el token temporal pudo vencer: igual se vuelve */ }
+  setToken(ta); localStorage.setItem('user', localStorage.getItem('user_admin') || '')
+  localStorage.removeItem('token_admin'); localStorage.removeItem('user_admin'); location.href = '/usuarios'
+}
 
 /** Mensaje de error de una respuesta: lee el cuerpo UNA sola vez y saca `detail` si es JSON de FastAPI. */
 async function errorDe(r: Response): Promise<string> {

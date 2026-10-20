@@ -10,8 +10,8 @@ oauth2 = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 NIVELES = {"lectura": 1, "edicion": 2, "aprobacion": 3}
 
 
-def crear_token(user: dict) -> str:
-    exp = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expire_minutes)
+def crear_token(user: dict, minutos: int | None = None) -> str:
+    exp = datetime.now(timezone.utc) + timedelta(minutes=minutos or settings.jwt_expire_minutes)
     return jwt.encode({"sub": user["id"], "nombre": user["nombre"], "exp": exp}, settings.jwt_secret, "HS256")
 
 
