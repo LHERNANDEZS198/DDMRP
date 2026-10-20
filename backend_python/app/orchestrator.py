@@ -56,6 +56,20 @@ def guardar_historia(eid: int):
                                  (SELECT DISTINCT ON (fecha_calculo) id FROM ddmrp.ejecucion_motor WHERE estado = 'ok'
                                   ORDER BY fecha_calculo, id DESC) AND e.fecha_calculo < current_date)"""), {"e": eid, "d": DETALLE_DIAS})
 
+    actualizar_estadisticas()
+
+
+def actualizar_estadisticas():
+    """ANALYZE de las tablas que el motor acaba de llenar. Sin el, Postgres no conoce la corrida nueva (ejecucion_id mayor que todo lo que vio) y elige
+    planes que repiten agregaciones de cientos de miles de filas por cada fila (la matriz de despacho llego a tardar 20 minutos y dar 504)."""
+    try:
+        with pg.connect() as c:
+            for t in ("sugerencias_envio", "buffer_historia", "inventario_mes"):
+                c.execute(text(f"ANALYZE ddmrp.{t}"))
+            c.commit()
+    except Exception:
+        log.exception("No se pudo actualizar las estadisticas (ANALYZE)")
+
 
 DETALLE_DIAS = 7
 

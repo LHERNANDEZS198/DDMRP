@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from ..db import pg
 from .. import reparto, bitacora
 from ..plano_siesa import co_derivado, generar_xlsx, notas_por_defecto
@@ -49,15 +50,24 @@ def matriz(empresa: str, bodega_id: str | None = None, bodegas: str | None = Non
     sql = f"""SELECT s.ejecucion_id, s.empresa, s.producto_id, mi.descripcion, mi.categoria, s.bodega_id, s.zona::text zona,
                      s.inventario, s.en_transito, s.flujo_neto, s.tor, s.toy_aj, s.tog_aj, s.unidad_despacho,
                      s.vectorizacion, s.cantidad_sugerida::float8 cantidad_sugerida, s.cantidad_aprobada, s.estado::text estado, s.cantidad_necesaria::float8 cantidad_necesaria, s.stock_cedi::float8 stock_cedi,
-                     CASE WHEN s.stock_cedi IS NULL THEN NULL ELSE (s.stock_cedi - COALESCE(tt.t, 0))::float8 END AS cedi_despues,
                      ci.costo::float8 AS costo, s.regla_objetivo
               FROM ddmrp.sugerencias_envio s LEFT JOIN ddmrp.maestro_item mi USING (producto_id)
                    LEFT JOIN ddmrp.costo_item ci ON ci.producto_id = s.producto_id
-                   LEFT JOIN (SELECT empresa, producto_id, SUM(cantidad_sugerida) AS t FROM ddmrp.sugerencias_envio
-                              WHERE ejecucion_id = {ULTIMA} AND NOT condenado GROUP BY 1, 2) tt ON tt.empresa = s.empresa AND tt.producto_id = s.producto_id
               WHERE {f} ORDER BY s.bodega_id, s.pct_buffer"""
+    # Lo que se reparte de cada item (suma de lo sugerido a todas las tiendas de la empresa) se calcula aparte y se cruza aqui: dentro del mismo SELECT, con
+    # estadisticas viejas Postgres repetia esa agregacion de ~400 mil filas por cada fila de la matriz (consultas de 20 minutos y 504).
+    sql_tot = f"SELECT producto_id, SUM(cantidad_sugerida)::float8 FROM ddmrp.sugerencias_envio WHERE ejecucion_id = {ULTIMA} AND empresa = :emp AND NOT condenado GROUP BY producto_id"
     with pg.connect() as c:
-        filas = [dict(r) for r in c.execute(text(sql), p).mappings()]
+        c.execute(text("SET LOCAL statement_timeout = 50000"))        # menos que el timeout de nginx (60 s): falla con mensaje en vez de dejar consultas colgadas
+        try:
+            tot = dict(c.execute(text(sql_tot), {"emp": empresa}).all())
+            filas = [dict(r) for r in c.execute(text(sql), p).mappings()]
+        except DBAPIError as e:
+            if "statement timeout" in str(e):
+                raise HTTPException(503, "La matriz tardo demasiado en calcularse. Elige una tienda en 'Corrida' o avisa a sistemas (estadisticas de la base).")
+            raise
+        for f in filas:
+            f["cedi_despues"] = None if f["stock_cedi"] is None else float(f["stock_cedi"]) - tot.get(f["producto_id"], 0.0)
         for f in filas:   # lo asignado ya viene repartido por el motor (cantidad_sugerida); necesario = lo que pedia el buffer
             f["cantidad_necesaria"] = float(f["cantidad_necesaria"] if f["cantidad_necesaria"] is not None else f["cantidad_sugerida"])
             f["limitado"] = f["cantidad_sugerida"] + 1e-9 < f["cantidad_necesaria"]
