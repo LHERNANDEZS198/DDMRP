@@ -67,6 +67,7 @@ export default function Despacho() {
   const elegirEmpresa = (v: string) => { setEmpresa(v); setDia(''); setFiltrar(false); setTiendas([]); try { localStorage.setItem('despacho_empresa', v) } catch { /* sin almacenamiento */ } }
   // filtros de la lista (en pantalla): texto, laboratorio, zona, solo lo limitado por el CEDI
   const [fTexto, setFTexto] = useState(''); const [fLab, setFLab] = useState(''); const [fZona, setFZona] = useState(''); const [fLim, setFLim] = useState(false)
+  const [fCero, setFCero] = useState(false)   // filas con 0 a enviar: ocultas por defecto (a la tienda no le llega nada)
   const [porTienda, setPorTienda] = useState(false)
   const [ediciones, setEdiciones] = useState(0)   // al cambiar "A enviar" a mano se recalculan los totales
   useEffect(() => { api('/despacho/cedi').then(setCedi).catch(() => {}) }, [])
@@ -103,8 +104,8 @@ export default function Despacho() {
   const vista = useMemo(() => {
     const t = fTexto.trim().toLowerCase()
     return rows.filter(r => (!t || `${r.producto_id} ${r.descripcion ?? ''} ${r.bodega_id}`.toLowerCase().includes(t)) && (!fLab || r.categoria === fLab)
-      && (!fZona || r.zona === fZona) && (!fLim || r.limitado))
-  }, [rows, fTexto, fLab, fZona, fLim])
+      && (!fZona || r.zona === fZona) && (!fLim || r.limitado) && (fCero || fLim || unidades(r) > 0))   // 'solo limitadas' muestra tambien las de 0: son justo las que el CEDI no alcanzo a cubrir
+  }, [rows, fTexto, fLab, fZona, fLim, fCero])
   const hayFiltro = !!(fTexto || fLab || fZona || fLim)
   // totales de lo que se ve: unidades y costo, en total y por tienda
   const tot = useMemo(() => {
@@ -215,9 +216,11 @@ export default function Despacho() {
         <TextField select size="small" label="Zona" value={fZona} onChange={e => setFZona(e.target.value)} sx={{ minWidth: 130 }}>
           <MenuItem value="">Todas</MenuItem>{['ROJA', 'AMARILLA', 'VERDE', 'EXCESO'].map(z => <MenuItem key={z} value={z}>{z}</MenuItem>)}</TextField>
         <FormControlLabel control={<Checkbox size="small" checked={fLim} onChange={e => setFLim(e.target.checked)} />} label="Solo limitadas por el CEDI" />
+        <Tooltip placement="top" title={fLim ? 'Con “Solo limitadas por el CEDI” se ven también las que quedaron en 0' : 'Filas en las que no se le enviará nada a la tienda (A enviar = 0). Ocultas por defecto.'}><span>
+          <FormControlLabel control={<Checkbox size="small" checked={fCero || fLim} disabled={fLim} onChange={e => setFCero(e.target.checked)} />} label="Mostrar items con enviar en 0" /></span></Tooltip>
         {hayFiltro && <Button size="small" onClick={() => { setFTexto(''); setFLab(''); setFZona(''); setFLim(false) }}>Quitar filtros</Button>}
         <Box sx={{ flex: 1 }} />
-        <Chip label={`${vista.length.toLocaleString()}${hayFiltro ? ` de ${rows.length.toLocaleString()}` : ''} filas`} size="small" />
+        <Chip label={`${vista.length.toLocaleString()}${vista.length !== rows.length ? ` de ${rows.length.toLocaleString()}` : ''} filas`} size="small" />
         <Chip label={`${Math.round(tot.uds).toLocaleString('es-CO')} uds a enviar`} size="small" color="primary" />
         <Chip label={`Costo total ${cop(tot.valor)}`} size="small" color="primary" />
         <Chip label={`${tot.lista.length} tiendas`} size="small" />
