@@ -200,8 +200,39 @@ METODOLOGIA = [
     ("% dias sin stock", "Dias-tienda de la ventana con inventario 0 / dias-tienda con historia. Un GMROI alto con muchos dias sin stock suele ser un quiebre, no eficiencia."),
     ("Cobertura x margen %", "Indicador anterior: (inventario promedio en unidades / venta mensual en unidades) x margen %. Mide meses de stock ponderados por margen, no un retorno: no es comparable con el GMROI."),
     ("Clase global", "La clase que tendria el item con todo lo que el usuario puede ver, sin los filtros de pantalla (la 'Clase' se recalcula solo con lo filtrado)."),
+    ("Nombres para tablas dinamicas", "La hoja Detalle trae el codigo y el nombre del laboratorio y, si existen en Siesa, los criterios Categoria y Linea de cada item (un solo valor por item), para armar tablas dinamicas sin cruzar codigos."),
     ("Items", "Solo activos (regla solo_items_activos); los REC suman al original."),
 ]
+
+
+def _norm(t: str | None) -> str:
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFD", (t or "").strip().upper()) if unicodedata.category(c) != "Mn")
+
+
+def _nombres_para_excel(items: list[dict]) -> list[dict]:
+    """Agrega a cada fila el nombre del laboratorio y los criterios CATEGORIA y LINEA (los planes de Siesa con ese nombre) para poder armar tablas dinamicas
+    sin cruzar codigos a mano. Devuelve las columnas extra que si se pudieron llenar (si no existe el plan, no sale la columna)."""
+    with pg.connect() as c:
+        lab = dict(c.execute(text("SELECT codigo, nombre FROM ddmrp.laboratorio")).all())
+        planes = {_norm(n): p for p, n in c.execute(text("SELECT plan_id, nombre FROM ddmrp.criterio_plan")).all()}
+        por_plan = {}
+        for clave in ("CATEGORIA", "LINEA"):
+            p = next((pid for n, pid in planes.items() if n == clave), None) or next((pid for n, pid in planes.items() if n.startswith(clave)), None)
+            if p:
+                por_plan[clave] = dict(c.execute(text("SELECT ic.producto_id, cr.nombre FROM ddmrp.item_criterio ic JOIN ddmrp.criterio cr "
+                                                      "ON cr.plan_id = ic.plan_id AND cr.criterio_id = ic.criterio_id WHERE ic.plan_id = :p"), {"p": p}).all())
+    for it in items:
+        cod = it.get("laboratorio")
+        it["lab_nombre"] = (lab.get(cod) or "").strip() or None
+        for clave, mapa in por_plan.items():
+            it[clave.lower()] = (mapa.get(it["producto_id"]) or "").strip() or None
+    extra = [{"t": "Nombre laboratorio", "k": "lab_nombre", "w": 28}]
+    if "CATEGORIA" in por_plan:
+        extra.append({"t": "Categoria", "k": "categoria", "w": 24})
+    if "LINEA" in por_plan:
+        extra.append({"t": "Linea", "k": "linea", "w": 24})
+    return extra
 
 
 @router.get("/excel")
@@ -213,6 +244,9 @@ def exportar(nivel: str = "item", criterio: str = "margen", meses: int = 12, cor
     vis = _filtrar_salida(items, abc, xyz)
     vis.sort(key=lambda i: (cl.ORDEN_ABC.index(i["abc"]), i["puesto"] or 10**9, i["producto_id"]))
     cols = [c for c in COLS if nivel == "tienda_item" or c["k"] not in ("empresa", "bodega_id", "bodega_nombre")]
+    extra = _nombres_para_excel(vis)
+    i_lab = next(i for i, c in enumerate(cols) if c["k"] == "laboratorio")
+    cols = cols[:i_lab + 1] + extra + cols[i_lab + 1:]
     wb = excel.libro()
     # hoja resumen: una fila por celda de la matriz
     res_cols = [{"t": "ABC", "k": "abc", "w": 8}, {"t": "XYZ", "k": "xyz", "w": 8}, {"t": "Items", "k": "n", "f": "int"}, {"t": "Venta neta $", "k": "venta", "f": "cop"},
