@@ -8,7 +8,7 @@ from .esquema import asegurar_esquema
 from .bitacora import cerrar_huerfanas
 from .progreso import Ocupado
 from .orchestrator import pipeline_nocturno
-from .routers import auth, alertas, maestros, despacho, admin, reglas, control, usuarios, log, auditoria, lanzamientos, clasificacion, salud
+from .routers import auth, alertas, maestros, despacho, admin, reglas, control, usuarios, log, auditoria, lanzamientos, clasificacion, salud, vistas
 
 logging.basicConfig(level=logging.INFO)
 
@@ -30,7 +30,7 @@ async def _ocupado(request: Request, exc: Ocupado):
     return JSONResponse(status_code=409, content={"detail": str(exc)})
 
 
-for r in (auth, alertas, maestros, despacho, admin, reglas, control, usuarios, log, auditoria, lanzamientos, clasificacion, salud):
+for r in (auth, alertas, maestros, despacho, admin, reglas, control, usuarios, log, auditoria, lanzamientos, clasificacion, salud, vistas):
     app.include_router(r.router, prefix="/api")
 
 

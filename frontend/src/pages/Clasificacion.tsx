@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ColDef, ICellRendererParams } from 'ag-grid-community'
-import { Alert, Autocomplete, Box, Button, Checkbox, Chip, FormControlLabel, IconButton, MenuItem, Paper, TextField, Tooltip, Typography } from '@mui/material'
+import { Alert, Autocomplete, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, IconButton, MenuItem, Paper, Snackbar, TextField, Tooltip, Typography } from '@mui/material'
 import Close from '@mui/icons-material/Close'
+import SaveOutlined from '@mui/icons-material/SaveOutlined'
+import DeleteOutline from '@mui/icons-material/DeleteOutline'
 import Tabla from '../Tabla'
 import { CampoSelect } from '../Campos'
 import HelpOutline from '@mui/icons-material/HelpOutline'
 import { api, bajar } from '../api'
+import { confirmar } from '../alertas'
 import { GuiaClasificacion } from '../guias'
 
 const COLOR_ABC: Record<string, string> = { A: '#2e7d32', B: '#f9a825', C: '#9e9e9e', N: '#1565c0', D: '#6d4c41', S: '#8e24aa' }
@@ -34,6 +37,37 @@ export default function Clasificacion() {
 
   useEffect(() => { api('/control/filtros').then(setOpc).catch(e => setErr(e.message)) }, [])
   useEffect(() => { const t = setTimeout(() => setQ(qd), 400); return () => clearTimeout(t) }, [qd])
+  // ---- vistas guardadas: la configuración completa del informe, con nombre, por usuario ----
+  type Vista = { nombre: string; config: any; compartida: boolean; mia: boolean; dueno: string | null }
+  const [vistas, setVistas] = useState<Vista[]>([])
+  const [sel, setSel] = useState('')                       // clave de la vista abierta ('' = ninguna)
+  const [dlg, setDlg] = useState<{ nombre: string; compartida: boolean } | null>(null)
+  const [aviso, setAviso] = useState('')
+  const claveV = (v: Vista) => `${v.mia ? 'm' : 'o'}|${v.dueno ?? ''}|${v.nombre}`
+  const cargarVistas = () => api('/vistas/clasificacion').then(setVistas).catch(() => {})
+  useEffect(() => { cargarVistas() }, [])
+  const instantanea = () => ({ nivel, criterio, meses, corteA, corteB, empresa, bodegas, labs, fc, agrupar, dentro, abc, xyz, q: qd })
+  const aplicar = (c: any) => {
+    setNivel(c.nivel ?? 'item'); setCriterio(c.criterio ?? 'margen'); setMeses(c.meses ?? 12); setCorteA(c.corteA ?? 80); setCorteB(c.corteB ?? 95)
+    setEmpresa(c.empresa ?? []); setBodegas(c.bodegas ?? []); setLabs(c.labs ?? [])
+    setFc(c.fc?.length ? c.fc : [{ plan: '', vals: [] }]); setAgrupar(c.agrupar ?? ''); setDentro(!!c.dentro)
+    setAbc(c.abc ?? []); setXyz(c.xyz ?? []); setQd(c.q ?? ''); setQ(c.q ?? '')
+  }
+  const vistaSel = vistas.find(v => claveV(v) === sel)
+  const modificada = !!vistaSel && JSON.stringify(instantanea()) !== JSON.stringify({ ...instantanea(), ...vistaSel.config, fc: vistaSel.config.fc?.length ? vistaSel.config.fc : [{ plan: '', vals: [] }] })
+  const abrir = (k: string) => { setSel(k); const v = vistas.find(x => claveV(x) === k); if (v) aplicar(v.config) }
+  const guardarVista = async () => {
+    if (!dlg?.nombre.trim()) return
+    try {
+      await api(`/vistas/clasificacion?nombre=${encodeURIComponent(dlg.nombre.trim())}`, { method: 'PUT', body: JSON.stringify({ config: instantanea(), compartida: dlg.compartida }) })
+      await cargarVistas(); setSel(`m||${dlg.nombre.trim()}`); setAviso(`Vista “${dlg.nombre.trim()}” guardada`); setDlg(null)
+    } catch (e: any) { setErr(e.message) }
+  }
+  const borrarVista = async () => {
+    if (!vistaSel?.mia || !(await confirmar(`Borrar la vista “${vistaSel.nombre}”`, 'Solo se borra la configuración guardada; los datos no cambian.', { peligro: true, si: 'Sí, borrar' }))) return
+    try { await api(`/vistas/clasificacion?nombre=${encodeURIComponent(vistaSel.nombre)}`, { method: 'DELETE' }); setSel(''); cargarVistas() } catch (e: any) { setErr(e.message) }
+  }
+
   const crit = fc.filter(f => f.plan && f.vals.length).flatMap(f => f.vals.map(v => `${f.plan}:${v}`))
   const base = () => {
     const p = new URLSearchParams({ nivel, criterio, meses: String(meses), corte_a: String(corteA), corte_b: String(corteB) })
@@ -97,6 +131,17 @@ export default function Clasificacion() {
         <Typography variant="h6" sx={{ fontWeight: 700, flex: 1 }}>Clasificación de items · ABC × XYZ</Typography>
         <Button size="small" startIcon={<HelpOutline />} onClick={() => setGuia(true)}>¿Cómo se calcula?</Button>
         <Button size="small" variant="outlined" disabled={bajando || !valido} onClick={excel}>{bajando ? 'Generando…' : 'Descargar Excel'}</Button>
+      </Box>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+        <CampoSelect tip="Abre una configuración que guardaste (o que otro compartió): filtros, criterios, agrupación y clases." size="small" label="Vista guardada" value={sel} sx={{ width: 280 }}
+          onChange={e => abrir(e.target.value as string)} slotProps={{ select: { displayEmpty: true, renderValue: (k: any) => vistaSel ? vistaSel.nombre + (modificada ? ' · modificada' : '') : <em>(sin vista guardada)</em> } }}>
+          {vistas.length === 0 && <MenuItem disabled value="">Aún no tienes vistas guardadas</MenuItem>}
+          {vistas.map(v => <MenuItem key={claveV(v)} value={claveV(v)}>{v.nombre}{v.compartida && <Chip size="small" label={v.mia ? 'compartida' : `de ${v.dueno}`} sx={{ ml: 1, height: 18, fontSize: 10 }} />}</MenuItem>)}
+        </CampoSelect>
+        {vistaSel?.mia && <Button size="small" variant="outlined" disabled={!modificada} onClick={() => setDlg({ nombre: vistaSel.nombre, compartida: vistaSel.compartida })}>Actualizar</Button>}
+        <Button size="small" variant="outlined" startIcon={<SaveOutlined />} onClick={() => setDlg({ nombre: '', compartida: false })}>Guardar como…</Button>
+        {vistaSel?.mia && <Tooltip placement="top" title="Borrar esta vista"><IconButton size="small" onClick={borrarVista}><DeleteOutline fontSize="small" /></IconButton></Tooltip>}
+        {sel && <Button size="small" onClick={() => { setSel(''); aplicar({}) }}>Restablecer</Button>}
       </Box>
       {d?.meta.sin_valor && <Alert severity="warning" sx={{ flexShrink: 0 }}>Las ventas aún no traen el valor en pesos: actualiza el esquema y corre “Traer ventas por mes” (o el ETL) para llenarlo. Mientras tanto el ABC por margen/venta no es confiable.</Alert>}
       <Paper variant="outlined" sx={{ flexShrink: 0, p: 1.25, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
@@ -193,6 +238,18 @@ export default function Clasificacion() {
       <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 320 }}>
         <Tabla textoCargando="Clasificando…" vacio="Sin resultados con estos filtros" key={nivel} rowData={d?.filas ?? []} columnDefs={cols} cargando={cargando} defaultColDef={{ resizable: true, sortable: true }} />
       </Box>
+      <Dialog open={!!dlg} onClose={() => setDlg(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>Guardar vista</DialogTitle>
+        <DialogContent>
+          <TextField autoFocus fullWidth size="small" label="Nombre de la vista" value={dlg?.nombre ?? ''} sx={{ mt: 1 }} inputProps={{ maxLength: 60 }}
+            onChange={e => setDlg(x => ({ ...x!, nombre: e.target.value }))} onKeyDown={e => { if (e.key === 'Enter') guardarVista() }}
+            helperText={vistas.some(v => v.mia && v.nombre === dlg?.nombre.trim()) ? 'Ya tienes una vista con ese nombre: se reemplaza' : 'Guarda filtros, criterios, agrupación, clases y búsqueda tal como los ves ahora'} />
+          <FormControlLabel sx={{ mt: 1 }} control={<Checkbox checked={dlg?.compartida ?? false} onChange={e => setDlg(x => ({ ...x!, compartida: e.target.checked }))} />}
+            label="Compartir con los demás usuarios (ellos la ven con lo que su perfil les permite)" />
+        </DialogContent>
+        <DialogActions><Button onClick={() => setDlg(null)}>Cancelar</Button><Button variant="contained" disabled={!dlg?.nombre.trim()} onClick={guardarVista}>Guardar</Button></DialogActions>
+      </Dialog>
+      <Snackbar open={!!aviso} autoHideDuration={3000} onClose={() => setAviso('')} message={aviso} />
       <GuiaClasificacion abierta={guia} cerrar={() => setGuia(false)} meta={d?.meta} />
     </Box>)
 }

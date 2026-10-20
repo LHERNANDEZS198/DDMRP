@@ -115,6 +115,14 @@ SENTENCIAS = [
          nivel       TEXT NOT NULL DEFAULT 'lectura' CHECK (nivel IN ('lectura','edicion','aprobacion')),
          permisos    TEXT[] NOT NULL DEFAULT '{}',
          sistema     BOOLEAN NOT NULL DEFAULT FALSE)""",
+    """CREATE TABLE IF NOT EXISTS ddmrp.vista_guardada (
+         usuario_id  TEXT NOT NULL,
+         informe     TEXT NOT NULL,
+         nombre      TEXT NOT NULL,
+         config      JSONB NOT NULL,
+         compartida  BOOLEAN NOT NULL DEFAULT FALSE,
+         actualizado TIMESTAMPTZ NOT NULL DEFAULT now(),
+         PRIMARY KEY (usuario_id, informe, nombre))""",
     """CREATE TABLE IF NOT EXISTS ddmrp.usuario (
          usuario_id  TEXT PRIMARY KEY,
          nombre      TEXT,

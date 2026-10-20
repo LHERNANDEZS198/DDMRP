@@ -35,5 +35,6 @@ def salir_prueba(user=Depends(usuario_actual)):
         return {"ok": True, "eliminado": False}
     with pg.begin() as c:
         c.execute(text("DELETE FROM ddmrp.rbac_asignacion WHERE usuario_id = :u"), {"u": user["id"]})
+        c.execute(text("DELETE FROM ddmrp.vista_guardada WHERE usuario_id = :u"), {"u": user["id"]})
         c.execute(text("DELETE FROM ddmrp.usuario WHERE usuario_id = :u"), {"u": user["id"]})
     return {"ok": True, "eliminado": True}
