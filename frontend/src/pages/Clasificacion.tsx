@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ColDef, ICellRendererParams } from 'ag-grid-community'
-import { Alert, Autocomplete, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, IconButton, MenuItem, Paper, Snackbar, TextField, Tooltip, Typography } from '@mui/material'
+import { Alert, Autocomplete, Box, Button, Checkbox, Chip, Collapse, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, IconButton, MenuItem, Paper, Snackbar, TextField, Tooltip, Typography } from '@mui/material'
 import Close from '@mui/icons-material/Close'
+import ExpandLess from '@mui/icons-material/ExpandLess'
+import ExpandMore from '@mui/icons-material/ExpandMore'
 import SaveOutlined from '@mui/icons-material/SaveOutlined'
 import DeleteOutline from '@mui/icons-material/DeleteOutline'
 import Tabla from '../Tabla'
@@ -34,6 +36,9 @@ export default function Clasificacion() {
   const [d, setD] = useState<any>(null)
   const [cargando, setCargando] = useState(false); const [err, setErr] = useState(''); const [bajando, setBajando] = useState(false)
   const [guia, setGuia] = useState(false)
+  const [verFiltros, setVerFiltros] = useState(() => { try { return localStorage.getItem('clas_filtros') !== '0' } catch { return true } })
+  const cambiarFiltros = (v: boolean) => { setVerFiltros(v); try { localStorage.setItem('clas_filtros', v ? '1' : '0') } catch { /* sin almacenamiento */ } }
+  const nActivos = [empresa.length, bodegas.length, labs.length, q.trim() ? 1 : 0, agrupar ? 1 : 0].filter(Boolean).length + fc.filter(f => f.plan && f.vals.length).length
 
   useEffect(() => { api('/control/filtros').then(setOpc).catch(e => setErr(e.message)) }, [])
   useEffect(() => { const t = setTimeout(() => setQ(qd), 400); return () => clearTimeout(t) }, [qd])
@@ -125,19 +130,16 @@ export default function Clasificacion() {
     { field: 'rotacion', headerName: 'Rotación', type: 'numericColumn', width: 100, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(2), headerTooltip: 'Costo de lo vendido anualizado ÷ inventario promedio a costo: cuántas veces al año se renueva el stock. GMROI = rotación × (margen ÷ costo).' },
     { field: 'dias_inv', headerName: 'Días inv.', type: 'numericColumn', width: 100, valueFormatter: p => NUM(p.value), headerTooltip: 'Inventario promedio ÷ venta diaria promedio de la ventana: para cuántos días alcanza el stock.' },
     { field: 'pct_sin_stock', headerName: '% sin stock', type: 'numericColumn', width: 110, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(1) + '%', cellStyle: p => (p.value ?? 0) >= 20 ? { color: '#c62828' } : null, headerTooltip: 'Días-tienda de la ventana con inventario 0 ÷ días-tienda con historia. Un GMROI alto con muchos días sin stock suele ser quiebre, no eficiencia. Rojo desde 20 %.' },
-    { field: 'cob_x_margen', headerName: 'Cobertura×margen (anterior)', type: 'numericColumn', width: 200, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(1), headerTooltip: 'Indicador anterior: (inventario promedio en unidades ÷ venta mensual en unidades) × margen %. Son meses de stock ponderados por margen: NO es un retorno y no se compara con el GMROI.' },
+    { field: 'cob_x_margen', headerName: 'Cobertura×margen % (anterior)', type: 'numericColumn', width: 215, valueFormatter: p => p.value == null ? '' : Number(p.value).toLocaleString('es-CO', { maximumFractionDigits: 1 }) + '%', headerTooltip: 'Indicador anterior: (inventario promedio en unidades ÷ venta mensual en unidades) × margen %. Son meses de stock ponderados por margen: NO es un retorno y no se compara con el GMROI.' },
     { field: 'iv', headerName: 'IV', type: 'numericColumn', width: 80, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(2), headerTooltip: `Índice de variabilidad del motor (desviación ÷ promedio de la venta mensual). Define XYZ: X si es menor que ${cx}, Y hasta ${cy}, Z si es mayor. A nivel item pondera por la venta diaria de cada tienda.` },
     { field: 'costo', headerName: 'Costo unit.', type: 'numericColumn', width: 115, valueFormatter: p => COP(p.value), headerTooltip: 'Costo promedio actual por unidad (Siesa, por instalación). Si falta, el item queda como S (sin costo).' },
   ], [nivel, cx, cy])
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 1.5, minHeight: 600 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-        <Typography variant="h6" sx={{ fontWeight: 700, flex: 1 }}>Clasificación de items · ABC × XYZ</Typography>
-        <Button size="small" startIcon={<HelpOutline />} onClick={() => setGuia(true)}>¿Cómo se calcula?</Button>
-        <Button size="small" variant="outlined" disabled={bajando || !valido} onClick={excel}>{bajando ? 'Generando…' : 'Descargar Excel'}</Button>
-      </Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+        <Typography variant="h6" sx={{ fontWeight: 700 }}>Clasificación de items · ABC × XYZ</Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', flex: 1, ml: 1 }}>
         <CampoSelect tip="Abre una configuración que guardaste (o que otro compartió): filtros, criterios, agrupación y clases." size="small" label="Vista guardada" value={sel} sx={{ width: 280 }}
           onChange={e => abrir(e.target.value as string)} slotProps={{ inputLabel: { shrink: true }, select: { displayEmpty: true, renderValue: (k: any) => vistaSel ? vistaSel.nombre + (modificada ? ' · modificada' : '') : <em>(sin vista guardada)</em> } }}>
           {vistas.length === 0 && <MenuItem disabled value="">Aún no tienes vistas guardadas</MenuItem>}
@@ -147,9 +149,15 @@ export default function Clasificacion() {
         <Button size="small" variant="outlined" startIcon={<SaveOutlined />} onClick={() => setDlg({ nombre: '', compartida: false })}>Guardar como…</Button>
         {vistaSel?.mia && <Tooltip placement="top" title="Borrar esta vista"><IconButton size="small" onClick={borrarVista}><DeleteOutline fontSize="small" /></IconButton></Tooltip>}
         {sel && <Button size="small" onClick={() => { setSel(''); aplicar({}) }}>Restablecer</Button>}
+        </Box>
+        <Tooltip placement="top" title={verFiltros ? 'Ocultar los filtros para ver más tabla' : 'Mostrar los filtros'}>
+          <Button size="small" variant={verFiltros ? 'text' : 'outlined'} startIcon={verFiltros ? <ExpandLess /> : <ExpandMore />} onClick={() => cambiarFiltros(!verFiltros)}>
+            {verFiltros ? 'Ocultar filtros' : `Filtros${nActivos ? ` (${nActivos} activos)` : ''}`}</Button></Tooltip>
+        <Button size="small" startIcon={<HelpOutline />} onClick={() => setGuia(true)}>¿Cómo se calcula?</Button>
+        <Button size="small" variant="outlined" disabled={bajando || !valido} onClick={excel}>{bajando ? 'Generando…' : 'Descargar Excel'}</Button>
       </Box>
       {d?.meta.sin_valor && <Alert severity="warning" sx={{ flexShrink: 0 }}>Las ventas aún no traen el valor en pesos: actualiza el esquema y corre “Traer ventas por mes” (o el ETL) para llenarlo. Mientras tanto el ABC por margen/venta no es confiable.</Alert>}
-      <Paper variant="outlined" sx={{ flexShrink: 0, p: 1.25, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
+      <Collapse in={verFiltros} unmountOnExit={false} sx={{ flexShrink: 0 }}><Paper variant="outlined" sx={{ p: 1.25, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
         <CampoSelect tip="Por item: una clase por item sumando las tiendas filtradas. Por tienda × item: una clase por cada item dentro de cada tienda." size="small" label="Clasificar" value={nivel} onChange={e => setNivel(e.target.value)} sx={{ width: 200 }}>
           <MenuItem value="item">Por item (suma de lo filtrado)</MenuItem><MenuItem value="tienda_item">Por tienda × item</MenuItem></CampoSelect>
         <CampoSelect tip="Con qué se ordena y acumula el ABC: el margen mide lo que realmente deja el item (recomendado); la venta solo lo facturado; el consumo a costo, el capital que mueve." size="small" label="ABC según" value={criterio} onChange={e => setCriterio(e.target.value)} sx={{ width: 210 }}>
@@ -178,7 +186,7 @@ export default function Clasificacion() {
           {agrupar && <Tooltip placement="top" title="Apagado: cada item conserva su clase de la lista. Encendido: el ABC se recalcula dentro de cada grupo (cada item contra los de su mismo valor)."><FormControlLabel sx={{ mr: 0 }} control={<Checkbox size="small" checked={dentro} onChange={e => setDentro(e.target.checked)} />} label="ABC dentro de cada grupo" /></Tooltip>}
         </>}
         <TextField size="small" label="Item (código o nombre)" value={qd} onChange={e => setQd(e.target.value)} sx={{ minWidth: 190, flex: '1 1 190px' }} />
-      </Paper>
+      </Paper></Collapse>
       {!valido && <Typography color="error" variant="body2">Los cortes deben cumplir 0 &lt; A &lt; B ≤ 100.</Typography>}
       {err && <Typography color="error" variant="body2">{err}</Typography>}
 

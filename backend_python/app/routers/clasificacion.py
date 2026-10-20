@@ -180,7 +180,7 @@ COLS = [{"t": "Puesto", "k": "puesto", "f": "int", "w": 8}, {"t": "Clase", "k": 
         {"t": "Dias con historia de inventario", "k": "dias_hist", "f": "int"},
         {"t": "GMROI (anual)", "k": "gmroi", "f": "dec2"}, {"t": "Rotacion (veces/año)", "k": "rotacion", "f": "dec2"},
         {"t": "Dias de inventario", "k": "dias_inv", "f": "int"}, {"t": "% dias sin stock", "k": "pct_sin_stock", "f": "dec1"},
-        {"t": "Cobertura x margen % (indicador anterior, no comparable)", "k": "cob_x_margen", "f": "dec1"},
+        {"t": "Cobertura x margen % (indicador anterior, no comparable)", "k": "cob_x_margen", "f": "pct1"},
         {"t": "IV", "k": "iv", "f": "dec2"}, {"t": "ADU", "k": "adu", "f": "dec1"}, {"t": "Tiendas", "k": "tiendas", "f": "int"}]
 
 METODOLOGIA = [
