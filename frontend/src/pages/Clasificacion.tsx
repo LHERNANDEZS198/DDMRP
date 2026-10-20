@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ColDef, ICellRendererParams } from 'ag-grid-community'
-import { Alert, Autocomplete, Box, Button, Chip, MenuItem, Paper, TextField, Tooltip, Typography } from '@mui/material'
+import { Alert, Autocomplete, Box, Button, Checkbox, Chip, FormControlLabel, IconButton, MenuItem, Paper, TextField, Tooltip, Typography } from '@mui/material'
+import Close from '@mui/icons-material/Close'
 import Tabla from '../Tabla'
 import { CampoSelect } from '../Campos'
 import HelpOutline from '@mui/icons-material/HelpOutline'
@@ -22,7 +23,9 @@ export default function Clasificacion() {
   const [nivel, setNivel] = useState('item'); const [criterio, setCriterio] = useState('margen'); const [meses, setMeses] = useState(12)
   const [corteA, setCorteA] = useState(80); const [corteB, setCorteB] = useState(95)
   const [empresa, setEmpresa] = useState<string[]>([]); const [bodegas, setBodegas] = useState<string[]>([]); const [labs, setLabs] = useState<string[]>([])
-  const [plan, setPlan] = useState(''); const [crit, setCrit] = useState<string[]>([]); const [q, setQ] = useState(''); const [qd, setQd] = useState('')
+  const [fc, setFc] = useState<{ plan: string; vals: string[] }[]>([{ plan: '', vals: [] }])   // filtros por criterio de items: planes distintos se combinan (Y), valores del mismo plan (O)
+  const [agrupar, setAgrupar] = useState(''); const [dentro, setDentro] = useState(false)   // vista por dentro de un criterio; dentro = ABC recalculado en cada grupo
+  const [q, setQ] = useState(''); const [qd, setQd] = useState('')
   const [abc, setAbc] = useState<string[]>([]); const [xyz, setXyz] = useState<string[]>([])
   const [opc, setOpc] = useState<any>({ tiendas: [], laboratorios: [], empresas: [], criterios: [] })
   const [d, setD] = useState<any>(null)
@@ -31,11 +34,12 @@ export default function Clasificacion() {
 
   useEffect(() => { api('/control/filtros').then(setOpc).catch(e => setErr(e.message)) }, [])
   useEffect(() => { const t = setTimeout(() => setQ(qd), 400); return () => clearTimeout(t) }, [qd])
+  const crit = fc.filter(f => f.plan && f.vals.length).flatMap(f => f.vals.map(v => `${f.plan}:${v}`))
   const base = () => {
     const p = new URLSearchParams({ nivel, criterio, meses: String(meses), corte_a: String(corteA), corte_b: String(corteB) })
     if (empresa.length) p.set('empresa', empresa.join(',')); if (bodegas.length) p.set('bodegas', bodegas.join(',')); if (labs.length) p.set('labs', labs.join(','))
-    if (q.trim()) p.set('q', q.trim()); if (plan && crit.length) p.set('crit', crit.map(v => `${plan}:${v}`).join(','))
-    if (plan) p.set('agrupar', plan)   // vista por dentro del criterio elegido (categoría, línea…), con o sin valores
+    if (q.trim()) p.set('q', q.trim()); if (crit.length) p.set('crit', crit.join(','))
+    if (agrupar) { p.set('agrupar', agrupar); if (dentro) p.set('dentro', '1') }   // vista por dentro del criterio elegido (categoría, línea…)
     return p
   }
   const claveBase = base().toString()
@@ -53,7 +57,16 @@ export default function Clasificacion() {
   const tot = d?.matriz.total
   const nl = (c: string) => opc.laboratorios.find((l: any) => l.codigo === c)?.nombre
   const nt = (id: string) => opc.tiendas.find((t: any) => t.bodega_id === id)?.nombre
-  const valores = opc.criterios.find((p: any) => p.plan_id === plan)?.valores ?? []
+  const valoresDe = (plan: string) => opc.criterios.find((p: any) => p.plan_id === plan)?.valores ?? []
+  const libres = (actual: string) => opc.criterios.filter((p: any) => p.plan_id === actual || !fc.some(f => f.plan === p.plan_id))
+  const ponerFila = (i: number, f: { plan: string; vals: string[] }) => setFc(fc.map((x, j) => j === i ? f : x))
+  // clic en una fila de la vista por criterio: suma/quita ese valor en el filtro de ese criterio (lo crea si no existe)
+  const alternarValor = (id: string) => {
+    const i = fc.findIndex(f => f.plan === agrupar)
+    if (i < 0) { setFc([...fc.filter(f => f.plan), { plan: agrupar, vals: [id] }]); return }
+    ponerFila(i, { plan: agrupar, vals: fc[i].vals.includes(id) ? fc[i].vals.filter(v => v !== id) : [...fc[i].vals, id] })
+  }
+  const valsAgrupar = fc.find(f => f.plan === agrupar)?.vals ?? []
   const alternar = (arr: string[], set: (v: string[]) => void, v: string) => set(arr.includes(v) ? arr.filter(x => x !== v) : [...arr, v])
 
   const [cx, cy] = d?.meta.cortes_iv ?? [0.5, 0.8]
@@ -102,10 +115,17 @@ export default function Clasificacion() {
         <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 230, flex: '2 1 230px' }} options={opc.laboratorios.map((l: any) => l.codigo)} value={labs}
           getOptionLabel={(o: string) => nl(o) ? `${o} · ${nl(o)}` : o} onChange={(_, v) => setLabs(v)} renderInput={p => <TextField {...p} label="Laboratorio" />} />
         {opc.criterios.length > 0 && <>
-          <TextField select size="small" label="Criterio de items" value={plan} onChange={e => { setPlan(e.target.value); setCrit([]) }} sx={{ minWidth: 190 }} slotProps={{ select: { displayEmpty: true }, inputLabel: { shrink: true } }}>
-            <MenuItem value="">(elige un criterio)</MenuItem>{opc.criterios.map((p: any) => <MenuItem key={p.plan_id} value={p.plan_id}>{p.nombre}</MenuItem>)}</TextField>
-          {plan && <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 220, flex: '2 1 220px' }} options={valores.map((v: any) => v.id)} value={crit}
-            getOptionLabel={(o: string) => valores.find((v: any) => v.id === o)?.nombre ?? o} onChange={(_, v) => setCrit(v)} renderInput={p => <TextField {...p} label="Valores" />} />}
+          {fc.map((f, i) => <Box key={i} sx={{ display: 'contents' }}>
+            <TextField select size="small" label={i === 0 ? 'Criterio de items' : 'Y otro criterio'} value={f.plan} onChange={e => { const pl = e.target.value; ponerFila(i, { plan: pl, vals: [] }); if (pl && !agrupar) setAgrupar(pl) }} sx={{ minWidth: 190 }} slotProps={{ select: { displayEmpty: true }, inputLabel: { shrink: true } }}>
+              <MenuItem value="">(elige un criterio)</MenuItem>{libres(f.plan).map((p: any) => <MenuItem key={p.plan_id} value={p.plan_id}>{p.nombre}</MenuItem>)}</TextField>
+            {f.plan && <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 220, flex: '2 1 220px' }} options={valoresDe(f.plan).map((v: any) => v.id)} value={f.vals}
+              getOptionLabel={(o: string) => valoresDe(f.plan).find((v: any) => v.id === o)?.nombre ?? o} onChange={(_, v) => ponerFila(i, { plan: f.plan, vals: v })} renderInput={p => <TextField {...p} label="Valores" />} />}
+            {(fc.length > 1 || f.plan) && <Tooltip placement="top" title="Quitar este criterio"><IconButton size="small" onClick={() => { if (f.plan === agrupar && fc.length === 1) setAgrupar(''); setFc(fc.length > 1 ? fc.filter((_, j) => j !== i) : [{ plan: '', vals: [] }]) }}><Close fontSize="small" /></IconButton></Tooltip>}
+          </Box>)}
+          {fc[fc.length - 1].plan && libres('').length > 0 && <Tooltip placement="top" title="Combinar con otro criterio: por ejemplo CATEGORIA = TERCEROS y además LINEA = una línea"><Button size="small" onClick={() => setFc([...fc, { plan: '', vals: [] }])}>+ Otro criterio</Button></Tooltip>}
+          <CampoSelect tip="Muestra una fila por cada valor de este criterio (categoría, línea…) con cuántos items hay de cada clase. Se combina con los filtros: con CATEGORIA = TERCEROS arriba y LINEA aquí ves las líneas de Terceros." size="small" label="Agrupar por" value={agrupar} onChange={e => setAgrupar(e.target.value)} sx={{ minWidth: 170 }} slotProps={{ select: { displayEmpty: true }, inputLabel: { shrink: true } }}>
+            <MenuItem value="">(sin agrupar)</MenuItem>{opc.criterios.map((p: any) => <MenuItem key={p.plan_id} value={p.plan_id}>{p.nombre}</MenuItem>)}</CampoSelect>
+          {agrupar && <Tooltip placement="top" title="Apagado: cada item conserva su clase de la lista. Encendido: el ABC se recalcula dentro de cada grupo (cada item contra los de su mismo valor)."><FormControlLabel sx={{ mr: 0 }} control={<Checkbox size="small" checked={dentro} onChange={e => setDentro(e.target.checked)} />} label="ABC dentro de cada grupo" /></Tooltip>}
         </>}
         <TextField size="small" label="Item (código o nombre)" value={qd} onChange={e => setQd(e.target.value)} sx={{ minWidth: 190, flex: '1 1 190px' }} />
       </Paper>
@@ -148,7 +168,7 @@ export default function Clasificacion() {
 
       {d?.por_criterio && <Paper variant="outlined" sx={{ flexShrink: 0, p: 1.25, overflow: 'auto', maxHeight: 280 }}>
         <Typography variant="caption" color="text.secondary">
-          Por {d.por_criterio.plan_nombre} · {crit.length ? 'solo los valores elegidos' : 'todos los valores'} · cuántos {nivel === 'item' ? 'items' : 'tienda × item'} hay de cada clase · clic en una fila para filtrar todo el informe a ese valor (la clase se recalcula dentro de lo filtrado)
+          Por {d.por_criterio.plan_nombre} · {crit.length ? 'con los filtros de criterio elegidos' : 'todos los valores'} · cuántos {nivel === 'item' ? 'items' : 'tienda × item'} hay de cada clase{dentro ? ' (ABC recalculado dentro de cada grupo)' : ''} · clic en una fila para filtrar todo el informe a ese valor (la clase se recalcula dentro de lo filtrado)
         </Typography>
         <Box component="table" sx={{ borderCollapse: 'collapse', mt: .5, width: '100%', '& td, & th': { border: '1px solid #e0e0e0', px: 1.25, py: .4, fontSize: 13, textAlign: 'right' } }}>
           <thead><tr><th style={{ textAlign: 'left' }}>{d.por_criterio.plan_nombre}</th><th>{nivel === 'item' ? 'Items' : 'Filas'}</th>
@@ -156,8 +176,8 @@ export default function Clasificacion() {
             <th>Venta neta</th><th>Margen</th><th>Margen %</th><th>Inv. a costo</th></tr></thead>
           <tbody>
             {d.por_criterio.grupos.map((g: any) => {
-              const sel = crit.includes(g.id)
-              return (<tr key={g.id || 'sin'} onClick={() => g.id && alternar(crit, setCrit, g.id)}
+              const sel = valsAgrupar.includes(g.id)
+              return (<tr key={g.id || 'sin'} onClick={() => g.id && alternarValor(g.id)}
                 style={{ cursor: g.id ? 'pointer' : 'default', background: sel ? 'rgba(110,138,55,.25)' : undefined }}>
                 <th style={{ textAlign: 'left', fontWeight: sel ? 700 : 500 }}>{g.nombre}</th><td style={{ fontWeight: 700 }}>{g.n.toLocaleString()}</td>
                 {['A', 'B', 'C', 'N', 'D', 'S'].map(a => <td key={a} style={{ color: g[a] ? undefined : '#bbb' }}>{g[a] ? g[a].toLocaleString() : '·'}</td>)}
