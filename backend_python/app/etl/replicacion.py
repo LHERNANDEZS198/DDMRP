@@ -673,10 +673,8 @@ def _sincronizar_ventas() -> dict:
 def _analizar_tablas():
     """ANALYZE de lo que el ETL acaba de recargar: con estadisticas viejas Postgres elige planes pesimos en los informes (Clasificacion, Matriz)."""
     try:
-        with pg.connect() as c:
-            for t in ("ventas_mensual", "inventario_actual", "item_criterio", "maestro_item", "costo_item", "item_estado", "transitos"):
-                c.execute(text(f"ANALYZE ddmrp.{t}"))
-            c.commit()
+        from ..estadisticas import analizar_todo
+        analizar_todo()
     except Exception:
         log.exception("No se pudo actualizar las estadisticas tras el ETL (ANALYZE)")
 

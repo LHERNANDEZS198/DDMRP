@@ -63,10 +63,8 @@ def actualizar_estadisticas():
     """ANALYZE de las tablas que el motor acaba de llenar. Sin el, Postgres no conoce la corrida nueva (ejecucion_id mayor que todo lo que vio) y elige
     planes que repiten agregaciones de cientos de miles de filas por cada fila (la matriz de despacho llego a tardar 20 minutos y dar 504)."""
     try:
-        with pg.connect() as c:
-            for t in ("sugerencias_envio", "buffer_historia", "inventario_mes"):
-                c.execute(text(f"ANALYZE ddmrp.{t}"))
-            c.commit()
+        from .estadisticas import analizar_todo
+        analizar_todo()
     except Exception:
         log.exception("No se pudo actualizar las estadisticas (ANALYZE)")
 

@@ -5,8 +5,10 @@ import KeyboardArrowDown from '@mui/icons-material/KeyboardArrowDown'
 import KeyboardArrowRight from '@mui/icons-material/KeyboardArrowRight'
 import Download from '@mui/icons-material/Download'
 import Refresh from '@mui/icons-material/Refresh'
+import Speed from '@mui/icons-material/Speed'
 import { api, bajar } from '../api'
 import Aviso from '../Aviso'
+import { useYo } from '../Yo'
 
 type Fila = { id: number; tipo: string; origen: 'manual' | 'auto'; usuario: string | null; inicio: string; fin: string | null; estado: string
   mensaje: string | null; resumen: Record<string, any> | null; padre_id: number | null; segundos: number | null }
@@ -45,6 +47,12 @@ function Operaciones({ setMsg }: { setMsg: (s: string) => void }) {
   const [d, setD] = useState<{ filas: Fila[]; tipos: Record<string, string>; usuarios: string[]; ultimas: Record<string, Ultima> }>({ filas: [], tipos: {}, usuarios: [], ultimas: {} })
   const [f, setF] = useState({ tipo: '', origen: '', estado: '', usuario: '', desde: hace(30), hasta: '', q: '' })
   const [abiertas, setAbiertas] = useState<Set<number>>(new Set())
+  const { puede } = useYo(); const [analizando, setAnalizando] = useState(false)
+  const analizar = async () => {
+    setAnalizando(true); setMsg('Actualizando estadísticas…')
+    try { const r = await api('/admin/actualizar-estadisticas', { method: 'POST' }); setMsg(`Estadísticas actualizadas: ${r.tablas} tablas en ${r.segundos} s${r.fallas ? ' (alguna falló, mira el detalle en el log)' : ''}`); cargar() }
+    catch (e: any) { setMsg('Error: ' + e.message) } finally { setAnalizando(false) }
+  }
   const qs = () => new URLSearchParams(Object.entries(f).filter(([, v]) => v)).toString()
   const cargar = useCallback(() => api('/log?' + qs()).then(setD).catch(e => setMsg('Error: ' + e.message)), [f])
   useEffect(() => { cargar() }, [cargar])
@@ -78,6 +86,8 @@ function Operaciones({ setMsg }: { setMsg: (s: string) => void }) {
       <TextField size="small" type="date" label="Hasta" value={f.hasta} onChange={set('hasta')} InputLabelProps={{ shrink: true }} />
       <TextField size="small" label="Buscar" value={f.q} onChange={set('q')} />
       <Tooltip title="Actualizar"><IconButton onClick={cargar}><Refresh /></IconButton></Tooltip>
+      {puede('correr_motor') && <Tooltip title="Actualiza las estadísticas de la base (ANALYZE) para que los informes elijan buen plan. No cambia datos y tarda segundos. Se corre sola al terminar el ETL y el motor; úsalo si un informe se pone lento.">
+        <span><Button startIcon={<Speed />} disabled={analizando} onClick={analizar}>{analizando ? 'Actualizando…' : 'Actualizar estadísticas'}</Button></span></Tooltip>}
       <Button startIcon={<Download />} onClick={() => bajar('/log/csv?' + qs(), 'log_ddmrp.csv').catch(e => setMsg('Error: ' + e.message))}>Descargar CSV</Button>
     </Stack>
     <Paper variant="outlined" sx={{ overflow: 'auto' }}>

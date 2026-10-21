@@ -1,10 +1,11 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from ..orchestrator import pipeline_nocturno, ejecutar_motor
+from ..estadisticas import analizar_todo
 from ..etl.replicacion import correr_etl, sincronizar_bodegas_ahora, sincronizar_items_ahora, sincronizar_ventas, diagnostico_inventario, diagnostico_estado_items
 from ..security import usuario_actual
 from .. import progreso
 from ..security import requiere
-from ..bitacora import usuario_de
+from ..bitacora import usuario_de, registrar
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -24,6 +25,15 @@ def etl(user=Depends(requiere("correr_motor"))):
 @router.post("/correr-motor")
 def motor(user=Depends(requiere("correr_motor"))):
     return ejecutar_motor(None, "manual", usuario_de(user))
+
+
+@router.post("/actualizar-estadisticas")
+def estadisticas(user=Depends(requiere("correr_motor"))):
+    """ANALYZE de las tablas de los informes: ayuda cuando un informe se pone lento tras cargar datos. No cambia datos y no bloquea la lectura."""
+    with registrar("analyze", "manual", usuario_de(user)) as r:
+        r.resumen = res = analizar_todo()
+        r.mensaje = f"{res['tablas']} tablas en {res['segundos']} s" + (f" · fallaron: {', '.join(res['fallas'])}" if res.get("fallas") else "")
+        return res
 
 
 @router.post("/sincronizar-bodegas")
