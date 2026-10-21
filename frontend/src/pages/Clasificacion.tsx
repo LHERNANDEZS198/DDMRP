@@ -64,7 +64,7 @@ export default function Clasificacion() {
     setAbc(c.abc ?? []); setXyz(c.xyz ?? []); setQd(c.q ?? ''); setQ(c.q ?? '')
   }
   const vistaSel = vistas.find(v => claveV(v) === sel)
-  const modificada = !!vistaSel && JSON.stringify(instantanea()) !== JSON.stringify({ ...instantanea(), ...vistaSel.config, fc: vistaSel.config.fc?.length ? vistaSel.config.fc : [{ plan: '', vals: [] }] })
+  const modificada = !!vistaSel && JSON.stringify(instantanea()) !== JSON.stringify({ ...instantanea(), metodo: 'pareto', pI: 93, pA: 75, pB: 50, soloCon: false, ...vistaSel.config, empresa, fc: vistaSel.config.fc?.length ? vistaSel.config.fc : [{ plan: '', vals: [] }] })
   const abrir = (k: string) => { setSel(k); const v = vistas.find(x => claveV(x) === k); if (v) aplicar(v.config) }
   const guardarVista = async () => {
     if (!dlg?.nombre.trim()) return
