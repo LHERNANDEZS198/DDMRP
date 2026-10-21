@@ -62,6 +62,23 @@ def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, l
             for j, pl in enumerate(dict.fromkeys(_csv(planes))):
                 cond.append(f"EXISTS (SELECT 1 FROM ddmrp.item_criterio is{j} WHERE is{j}.producto_id = k.producto_id AND is{j}.plan_id = :sp{j})")
                 p[f"sp{j}"] = pl
+    if filtrar and (_csv(labs) or _csv(crit) or (q and q.strip()) or (solo_con and _csv(planes))):
+        # los filtros de item se resuelven UNA vez a la lista de productos y se empujan a cada CTE: el planner ya no agrega toda la historia ni evalua EXISTS por fila
+        wi = ["true"]; pi: dict = {}
+        if _csv(labs):
+            wi.append("COALESCE(mi2.categoria, '') = ANY(:i_lab)"); pi["i_lab"] = [("" if x == "(sin laboratorio)" else x) for x in _csv(labs)]
+        if q and q.strip():
+            wi.append("(mi2.producto_id ILIKE :i_q OR mi2.descripcion ILIKE :i_q)"); pi["i_q"] = f"%{q.strip()}%"
+        for i, (pl, crs) in enumerate(por_plan.items()):
+            wi.append(f"EXISTS (SELECT 1 FROM ddmrp.item_criterio xc{i} WHERE xc{i}.producto_id = mi2.producto_id AND xc{i}.plan_id = :xp{i} AND xc{i}.criterio_id = ANY(:xc{i}))")
+            pi[f"xp{i}"] = pl; pi[f"xc{i}"] = crs
+        if solo_con:
+            for j, pl in enumerate(dict.fromkeys(_csv(planes))):
+                wi.append(f"EXISTS (SELECT 1 FROM ddmrp.item_criterio xs{j} WHERE xs{j}.producto_id = mi2.producto_id AND xs{j}.plan_id = :xq{j})")
+                pi[f"xq{j}"] = pl
+        ids = [r[0] for r in c.execute(text("SELECT mi2.producto_id FROM ddmrp.maestro_item mi2 WHERE " + " AND ".join(wi)), pi)]
+        p["f_ids"] = ids
+        pre_h += " AND producto_id = ANY(:f_ids)"; pre_s += " AND producto_id = ANY(:f_ids)"; pre_v += " AND COALESCE(r.original_id, a.producto_id) = ANY(:f_ids)"
     p["mes_desde"] = mes_desde
     # inventario promedio de la ventana: lo resume el orquestador por mes (inventario_mes) para no recorrer la historia diaria completa; sin el (clase global) no se usa
     sql = f"""
