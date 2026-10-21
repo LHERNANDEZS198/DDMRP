@@ -100,18 +100,18 @@ _CACHE_GLOBAL: dict = {}      # clase de cada item contra TODO el universo visib
 _CACHE_TTL = 600
 
 
-def _clase_global(c, user, mes_desde, nivel, criterio, corte_a, corte_b, nuevo, cortes, dias):
+def _clase_global(c, user, mes_desde, nivel, criterio, corte_a, corte_b, nuevo, cortes, dias, metodo="pareto", corte_i=93.0):
     """{clave: clase} del universo completo que el usuario puede ver. Es la consulta mas pesada (todo el universo) y no cambia al mover los filtros:
     se guarda 10 minutos por (corrida del motor, permisos del usuario, ventana, nivel, criterio y cortes)."""
     import time
     w, p = filtro_sql_permisos(user, "k.bodega_id", "mi.categoria")
     ej = c.execute(text(f"SELECT {ULTIMA}")).scalar()
-    clave_c = (ej, w, tuple(sorted((k, str(v)) for k, v in p.items())), mes_desde, nivel, criterio, corte_a, corte_b, str(nuevo), tuple(cortes))
+    clave_c = (ej, w, tuple(sorted((k, str(v)) for k, v in p.items())), mes_desde, nivel, criterio, corte_a, corte_b, str(nuevo), tuple(cortes), metodo, corte_i)
     hit = _CACHE_GLOBAL.get(clave_c)
     if hit and time.time() - hit[0] < _CACHE_TTL:
         return hit[1]
     filas_g = _filas(c, user, mes_desde, False, hist=False)
-    glob = cl.agregar(filas_g, nivel); cl.calcular(glob, dias); cl.clasificar(glob, criterio, corte_a, corte_b, nuevo, cortes)
+    glob = cl.agregar(filas_g, nivel); cl.calcular(glob, dias); cl.clasificar(glob, criterio, corte_a, corte_b, nuevo, cortes, metodo, corte_i)
     clave = (lambda x: (x["empresa"], x["bodega_id"], x["producto_id"])) if nivel == "tienda_item" else (lambda x: x["producto_id"])
     g = {clave(x): x["clase"] for x in glob}
     if len(_CACHE_GLOBAL) >= 8:
@@ -120,13 +120,17 @@ def _clase_global(c, user, mes_desde, nivel, criterio, corte_a, corte_b, nuevo, 
     return g
 
 
-def _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, labs, crit, q, con_global=True, planes=None, solo_con=False):
+def _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, labs, crit, q, con_global=True, planes=None, solo_con=False, metodo="pareto", corte_i=93.0):
     if nivel not in cl.NIVELES:
         raise HTTPException(400, f"nivel debe ser uno de {list(cl.NIVELES)}")
     if criterio not in cl.CRITERIOS:
         raise HTTPException(400, f"criterio debe ser uno de {list(cl.CRITERIOS)}")
-    if not (0 < corte_a < corte_b <= 100):
+    if metodo not in ("pareto", "percentil"):
+        raise HTTPException(400, "metodo debe ser pareto o percentil")
+    if metodo == "pareto" and not (0 < corte_a < corte_b <= 100):
         raise HTTPException(400, "Los cortes deben cumplir 0 < A < B <= 100")
+    if metodo == "percentil" and not (0 < corte_b < corte_a < corte_i < 100):
+        raise HTTPException(400, "Los cortes por percentil deben cumplir 0 < B < A < Infaltable < 100")
     mes_desde, d0, dias = _ventana(meses)
     nuevo = cl.mes_nuevo(date.today(), 3) if meses >= 6 else None     # con ventanas cortas todo seria 'nuevo'
     with pg.connect() as c:
@@ -135,12 +139,12 @@ def _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, 
         try:
             filas = _filas(c, user, mes_desde, True, empresa, bodegas, labs, crit, q, planes=planes, solo_con=solo_con)
             hay_filtro = bool(_csv(empresa) or _csv(bodegas) or _csv(labs) or _csv(crit) or (q and q.strip()) or (solo_con and _csv(planes)))
-            g = _clase_global(c, user, mes_desde, nivel, criterio, corte_a, corte_b, nuevo, cortes, dias) if (con_global and hay_filtro) else None
+            g = _clase_global(c, user, mes_desde, nivel, criterio, corte_a, corte_b, nuevo, cortes, dias, metodo, corte_i) if (con_global and hay_filtro) else None
         except DBAPIError as e:
             if "statement timeout" in str(e):
                 raise HTTPException(503, "El informe tardo demasiado. Acota con una tienda o un laboratorio, o avisa a sistemas (estadisticas de la base).")
             raise
-    items = cl.agregar(filas, nivel); cl.calcular(items, dias); cl.clasificar(items, criterio, corte_a, corte_b, nuevo, cortes)
+    items = cl.agregar(filas, nivel); cl.calcular(items, dias); cl.clasificar(items, criterio, corte_a, corte_b, nuevo, cortes, metodo, corte_i)
     if g is not None:       # clase de cada item contra TODO el universo que el usuario puede ver (sin los filtros de pantalla)
         clave = (lambda x: (x["empresa"], x["bodega_id"], x["producto_id"])) if nivel == "tienda_item" else (lambda x: x["producto_id"])
         for it in items:
@@ -149,7 +153,7 @@ def _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, 
         for it in items:
             it["clase_global"] = it["clase"]
     meta = {"nivel": nivel, "criterio": criterio, "criterio_nombre": cl.CRITERIOS[criterio], "meses": min(max(meses, 1), 12), "desde": d0, "hasta": date.today(),
-            "dias": dias, "corte_a": corte_a, "corte_b": corte_b, "cortes_iv": cortes, "nuevo_desde": nuevo,
+            "dias": dias, "corte_a": corte_a, "corte_b": corte_b, "corte_i": corte_i, "metodo": metodo, "cortes_iv": cortes, "nuevo_desde": nuevo,
             "sin_valor": not any(i["valor"] for i in items) and bool(items)}
     return items, meta
 
@@ -160,7 +164,7 @@ def _filtrar_salida(items, abc, xyz):
 
 
 def _por_grupo(items: list[dict], plan: str | None, dentro: bool = False, criterio: str = "margen", corte_a: float = 80, corte_b: float = 95,
-               nuevo: str | None = None, cortes_iv: tuple = (0.5, 0.8)) -> dict | None:
+               nuevo: str | None = None, cortes_iv: tuple = (0.5, 0.8), metodo: str = "pareto", corte_i: float = 93.0) -> dict | None:
     """Vista por dentro de un criterio de items (CATEGORIA, LINEA...): una fila por valor del criterio con cuantos items hay de cada clase ABC
     y su venta, margen e inventario. Por defecto la clase de cada item es la de la lista; con `dentro` el ABC se recalcula DENTRO de cada grupo
     (cada item contra los de su mismo valor). Cada item tiene un solo valor por plan. Se combina con los filtros: el filtro de otro criterio
@@ -184,7 +188,7 @@ def _por_grupo(items: list[dict], plan: str | None, dentro: bool = False, criter
     for v, g in grupos.items():
         lista = [dict(i) for i in miembros[v]] if dentro else miembros[v]
         if dentro:
-            cl.clasificar(lista, criterio, corte_a, corte_b, nuevo, cortes_iv)
+            cl.clasificar(lista, criterio, corte_a, corte_b, nuevo, cortes_iv, metodo, corte_i)
         for it in lista:
             g[it["abc"]] += 1
     out = sorted(grupos.values(), key=lambda g: (-g["margen"], g["nombre"]))
@@ -197,12 +201,12 @@ def _por_grupo(items: list[dict], plan: str | None, dentro: bool = False, criter
 @router.get("")
 def clasificar(nivel: str = "item", criterio: str = "margen", meses: int = 12, corte_a: float = 80, corte_b: float = 95,
                empresa: str | None = None, bodegas: str | None = None, labs: str | None = None, crit: str | None = None, q: str | None = None,
-               abc: str | None = None, xyz: str | None = None, agrupar: str | None = None, dentro: bool = False, planes: str | None = None, solo_con: bool = False, limit: int = Query(3000, le=20000), user=Depends(usuario_actual)):
-    items, meta = _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, labs, crit, q, planes=planes, solo_con=solo_con)
+               abc: str | None = None, xyz: str | None = None, agrupar: str | None = None, dentro: bool = False, planes: str | None = None, solo_con: bool = False, metodo: str = "pareto", corte_i: float = 93, limit: int = Query(3000, le=20000), user=Depends(usuario_actual)):
+    items, meta = _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, labs, crit, q, planes=planes, solo_con=solo_con, metodo=metodo, corte_i=corte_i)
     m = cl.matriz(items)                                                  # la matriz siempre es del filtro completo (no del filtro de clase)
     vis = _filtrar_salida(items, abc, xyz)
     vis.sort(key=lambda i: (cl.ORDEN_ABC.index(i["abc"]), i["puesto"] or 10**9, i["producto_id"]))
-    return {"meta": meta, "matriz": m, "por_criterio": _por_grupo(items, agrupar, dentro, criterio, corte_a, corte_b, meta["nuevo_desde"], tuple(meta["cortes_iv"])), "filas": vis[:limit], "total": len(vis), "truncado": len(vis) > limit}
+    return {"meta": meta, "matriz": m, "por_criterio": _por_grupo(items, agrupar, dentro, criterio, corte_a, corte_b, meta["nuevo_desde"], tuple(meta["cortes_iv"]), metodo, corte_i), "filas": vis[:limit], "total": len(vis), "truncado": len(vis) > limit}
 
 
 COLS = [{"t": "Puesto", "k": "puesto", "f": "int", "w": 8}, {"t": "Clase", "k": "clase", "w": 8}, {"t": "ABC", "k": "abc", "w": 6}, {"t": "XYZ", "k": "xyz", "w": 6},
@@ -225,7 +229,9 @@ METODOLOGIA = [
     ("Venta neta $", "Venta sin IVA: valor bruto - descuento de linea - descuento global (las devoluciones restan). Facturas y POS de Siesa."),
     ("Costo de lo vendido", "Unidades vendidas x costo promedio actual por instalacion (Siesa). Es el costo de hoy, no el de la fecha de la venta."),
     ("Margen $", "Venta neta - costo de lo vendido. Margen % = margen / venta neta."),
-    ("Criterio del ABC", "{criterio}. Se ordena de mayor a menor y se acumula: A hasta el {corte_a}% del total, B hasta el {corte_b}%, C el resto. El item que cruza el corte queda en la clase mejor. Lo que no suma (margen <= 0) es C."),
+    ("Criterio del ABC", "{criterio}. Metodo pareto (el de siempre): se ordena de mayor a menor y se acumula: A hasta el {corte_a}% del total, B hasta el {corte_b}%, C el resto. El item que cruza el corte queda en la clase mejor. Lo que no suma (margen <= 0) es C."),
+    ("Infaltables (I)", "Solo con el metodo 'percentil': los items se ordenan por el criterio y se mide su posicion entre los clasificables (1 = el mejor, 0 = el peor, como PERCENTRANK de Excel). "
+                        "I = percentil >= {corte_i}%, A = >= {corte_a}%, B = >= {corte_b}%, C el resto. Con el metodo 'pareto' no hay Infaltables."),
     ("XYZ", "Por el indice de variabilidad (IV) del motor: X = IV < {c1}, Y = {c1} a {c2}, Z = IV > {c2} (cortes de la tabla de factores VAR). A nivel item es el IV de sus tiendas ponderado por la venta diaria (ADU)."),
     ("D", "Sin venta en las tiendas en la ventana (no cuenta lo que el CEDI vende a wholesale o digital; puede tener inventario: ver Inventario a costo)."),
     ("N", "Producto nuevo: su primera venta es de {nuevo_desde} en adelante; aun no tiene historia para clasificarlo. Solo se aplica con ventanas de 6 meses o mas."),
@@ -285,8 +291,8 @@ def _nombres_para_excel(items: list[dict], planes_sel: str | None = None) -> lis
 @router.get("/excel")
 def exportar(nivel: str = "item", criterio: str = "margen", meses: int = 12, corte_a: float = 80, corte_b: float = 95,
              empresa: str | None = None, bodegas: str | None = None, labs: str | None = None, crit: str | None = None, q: str | None = None,
-             abc: str | None = None, xyz: str | None = None, agrupar: str | None = None, dentro: bool = False, planes: str | None = None, solo_con: bool = False, user=Depends(usuario_actual)):
-    items, meta = _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, labs, crit, q, planes=planes, solo_con=solo_con)
+             abc: str | None = None, xyz: str | None = None, agrupar: str | None = None, dentro: bool = False, planes: str | None = None, solo_con: bool = False, metodo: str = "pareto", corte_i: float = 93, user=Depends(usuario_actual)):
+    items, meta = _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, labs, crit, q, planes=planes, solo_con=solo_con, metodo=metodo, corte_i=corte_i)
     m = cl.matriz(items)
     vis = _filtrar_salida(items, abc, xyz)
     vis.sort(key=lambda i: (cl.ORDEN_ABC.index(i["abc"]), i["puesto"] or 10**9, i["producto_id"]))
@@ -300,7 +306,7 @@ def exportar(nivel: str = "item", criterio: str = "margen", meses: int = 12, cor
                 {"t": "Margen $", "k": "margen", "f": "cop"}, {"t": "Inventario a costo $ (hoy)", "k": "inv_costo", "f": "cop"}, {"t": "Inventario promedio a costo $", "k": "inv_prom_costo", "f": "cop"},
                 {"t": "GMROI (anual)", "k": "gmroi", "f": "dec2"}, {"t": "Meses de inventario", "k": "meses_inv", "f": "dec1"}, {"t": "Inventario (u.)", "k": "inventario", "f": "int"}]
     excel.hoja(wb, "Resumen", res_cols, m["celdas"] + [{"abc": "TOTAL", "xyz": "", **m["total"], "inventario": None}])
-    pg_ = _por_grupo(items, agrupar, dentro, criterio, corte_a, corte_b, meta["nuevo_desde"], tuple(meta["cortes_iv"]))
+    pg_ = _por_grupo(items, agrupar, dentro, criterio, corte_a, corte_b, meta["nuevo_desde"], tuple(meta["cortes_iv"]), metodo, corte_i)
     if pg_:   # una fila por valor del criterio de items (categoria, linea...)
         gcols = ([{"t": pg_["plan_nombre"], "k": "nombre", "w": 30}, {"t": "Items", "k": "n", "f": "int"}]
                  + [{"t": a, "k": a, "f": "int", "w": 7} for a in cl.ORDEN_ABC]
@@ -308,11 +314,11 @@ def exportar(nivel: str = "item", criterio: str = "margen", meses: int = 12, cor
                     {"t": "Inventario a costo $ (hoy)", "k": "inv_costo", "f": "cop"}, {"t": "GMROI (anual)", "k": "gmroi", "f": "dec2"}, {"t": "Meses de inventario", "k": "meses_inv", "f": "dec1"}])
         excel.hoja(wb, ("Por " + re.sub(r"[\\/?*\[\]:]", " ", pg_["plan_nombre"]))[:31], gcols, pg_["grupos"])
     excel.hoja(wb, "Detalle", cols, vis, fijar=5)
-    ctx = {"desde": meta["desde"], "hasta": meta["hasta"], "meses": meta["meses"], "dias": meta["dias"], "criterio": meta["criterio_nombre"], "corte_a": corte_a,
+    ctx = {"desde": meta["desde"], "hasta": meta["hasta"], "meses": meta["meses"], "dias": meta["dias"], "criterio": meta["criterio_nombre"], "corte_a": corte_a, "corte_i": corte_i,
            "corte_b": corte_b, "c1": meta["cortes_iv"][0], "c2": meta["cortes_iv"][1], "nuevo_desde": meta["nuevo_desde"] or "(no aplica)"}
     excel.hoja_texto(wb, "Metodologia", [(k, v.format(**ctx)) for k, v in METODOLOGIA], ancho=(24, 120))
     excel.hoja_texto(wb, "Filtros", [("Reporte", "Clasificacion ABC x XYZ"), ("Generado", datetime.now().strftime("%Y-%m-%d %H:%M")),
-                                     ("Usuario", f"{user.get('nombre', '')} ({user.get('id', '')})"), ("Nivel", cl.NIVELES[nivel]), ("Criterio", meta["criterio_nombre"]),
+                                     ("Usuario", f"{user.get('nombre', '')} ({user.get('id', '')})"), ("Nivel", cl.NIVELES[nivel]), ("Criterio", meta["criterio_nombre"]), ("Metodo de cortes", "Percentil (I·A·B·C)" if metodo == "percentil" else "Pareto acumulado (A·B·C)"),
                                      ("Empresa", empresa or "todas"), ("Tiendas", bodegas or "todas"), ("Laboratorios", labs or "todos"), ("Criterios de items", crit or ""), ("Excluir items sin el criterio elegido", "si" if (solo_con and planes) else "no"), ("Agrupado por", (agrupar or "") + (" (ABC recalculado dentro de cada grupo)" if agrupar and dentro else "")),
                                      ("Busqueda", q or ""), ("Clases mostradas en Detalle", f"ABC: {abc or 'todas'} · XYZ: {xyz or 'todas'}"),
                                      ("Filas en Detalle", f"{len(vis)} de {len(items)}")])

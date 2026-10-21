@@ -14,9 +14,9 @@ import { bodegasDeEmpresa, tiendasDeEmpresa } from '../filtros'
 import { confirmar } from '../alertas'
 import { GuiaClasificacion } from '../guias'
 
-const COLOR_ABC: Record<string, string> = { A: '#2e7d32', B: '#f9a825', C: '#9e9e9e', N: '#1565c0', D: '#6d4c41', S: '#8e24aa' }
+const COLOR_ABC: Record<string, string> = { I: '#1565c0', A: '#2e7d32', B: '#f9a825', C: '#9e9e9e', N: '#00acc1', D: '#6d4c41', S: '#8e24aa' }   // I azul; N cian para no confundirse
 const NOMBRE_ABC: Record<string, string> = {
-  A: 'Importantes: juntan el primer 80 % del criterio', B: 'Intermedios: hasta el 95 %', C: 'Cola: el resto (incluye margen ≤ 0)',
+  I: 'Infaltables: los mejores por percentil (solo con el método por percentil)', A: 'Importantes: juntan el primer 80 % del criterio (o el percentil de A)', B: 'Intermedios: hasta el 95 %', C: 'Cola: el resto (incluye margen ≤ 0)',
   N: 'Nuevos: primera venta reciente, aún sin historia', D: 'Sin venta en las tiendas en la ventana (lo que el CEDI vende a wholesale o canales digitales no cuenta aquí). Mira su inventario a costo', S: 'Sin costo en Siesa: no se puede calcular margen',
 }
 const COP = (v: any) => v == null ? '' : '$' + Math.round(v).toLocaleString('es-CO')
@@ -28,6 +28,8 @@ const pill = (p: ICellRendererParams) => p.value == null ? '' :
 export default function Clasificacion() {
   const [nivel, setNivel] = useState('item'); const [criterio, setCriterio] = useState('margen'); const [meses, setMeses] = useState(12)
   const [corteA, setCorteA] = useState(80); const [corteB, setCorteB] = useState(95)
+  const [metodo, setMetodo] = useState<'pareto' | 'percentil'>('pareto')   // pareto: A/B/C por % acumulado · percentil: I/A/B/C por posición (límites inferiores)
+  const [pI, setPI] = useState(93); const [pA, setPA] = useState(75); const [pB, setPB] = useState(50)
   const [empresa, setEmpresa] = useState<string[]>([]); const [bodegas, setBodegas] = useState<string[]>([]); const [labs, setLabs] = useState<string[]>([])
   const [fc, setFc] = useState<{ plan: string; vals: string[] }[]>([{ plan: '', vals: [] }])   // filtros por criterio de items: planes distintos se combinan (Y), valores del mismo plan (O)
   const [agrupar, setAgrupar] = useState(''); const [dentro, setDentro] = useState(false); const [soloCon, setSoloCon] = useState(false)   // soloCon: excluir items sin valor en los criterios elegidos
@@ -53,9 +55,9 @@ export default function Clasificacion() {
   const claveV = (v: Vista) => `${v.mia ? 'm' : 'o'}|${v.dueno ?? ''}|${v.nombre}`
   const cargarVistas = () => api('/vistas/clasificacion').then(setVistas).catch(() => {})
   useEffect(() => { cargarVistas() }, [])
-  const instantanea = () => ({ nivel, criterio, meses, corteA, corteB, empresa, bodegas, labs, fc, agrupar, dentro, soloCon, abc, xyz, q: qd })
+  const instantanea = () => ({ nivel, criterio, meses, corteA, corteB, metodo, pI, pA, pB, empresa, bodegas, labs, fc, agrupar, dentro, soloCon, abc, xyz, q: qd })
   const aplicar = (c: any) => {
-    setNivel(c.nivel ?? 'item'); setCriterio(c.criterio ?? 'margen'); setMeses(c.meses ?? 12); setCorteA(c.corteA ?? 80); setCorteB(c.corteB ?? 95)
+    setNivel(c.nivel ?? 'item'); setCriterio(c.criterio ?? 'margen'); setMeses(c.meses ?? 12); setCorteA(c.corteA ?? 80); setCorteB(c.corteB ?? 95); setMetodo(c.metodo ?? 'pareto'); setPI(c.pI ?? 93); setPA(c.pA ?? 75); setPB(c.pB ?? 50)
     setEmpresa(c.empresa ?? []); setBodegas(c.bodegas ?? []); setLabs(c.labs ?? [])
     setFc(c.fc?.length ? c.fc : [{ plan: '', vals: [] }]); setAgrupar(c.agrupar ?? ''); setDentro(!!c.dentro); setSoloCon(!!c.soloCon)
     setAbc(c.abc ?? []); setXyz(c.xyz ?? []); setQd(c.q ?? ''); setQ(c.q ?? '')
@@ -78,7 +80,8 @@ export default function Clasificacion() {
   const crit = fc.filter(f => f.plan && f.vals.length).flatMap(f => f.vals.map(v => `${f.plan}:${v}`))
   const planes = [...new Set([...fc.map(f => f.plan), agrupar].filter(Boolean))]   // criterios elegidos en pantalla (filtro o agrupar): salen como columnas en el Excel
   const base = () => {
-    const p = new URLSearchParams({ nivel, criterio, meses: String(meses), corte_a: String(corteA), corte_b: String(corteB) })
+    const p = new URLSearchParams({ nivel, criterio, meses: String(meses), corte_a: String(metodo === 'percentil' ? pA : corteA), corte_b: String(metodo === 'percentil' ? pB : corteB) })
+    if (metodo === 'percentil') { p.set('metodo', 'percentil'); p.set('corte_i', String(pI)) }
     if (empresa.length) p.set('empresa', empresa.join(',')); if (bodegas.length) p.set('bodegas', bodegas.join(',')); if (labs.length) p.set('labs', labs.join(','))
     if (q.trim()) p.set('q', q.trim()); if (crit.length) p.set('crit', crit.join(','))
     if (planes.length) { p.set('planes', planes.join(',')); if (soloCon) p.set('solo_con', '1') }
@@ -87,7 +90,7 @@ export default function Clasificacion() {
   }
   const claveBase = base().toString()
   const salida = () => { const p = new URLSearchParams(); if (abc.length) p.set('abc', abc.join(',')); if (xyz.length) p.set('xyz', xyz.join(',')); return p.toString() }
-  const valido = corteA > 0 && corteA < corteB && corteB <= 100
+  const valido = metodo === 'percentil' ? (pB > 0 && pB < pA && pA < pI && pI < 100) : (corteA > 0 && corteA < corteB && corteB <= 100)
   useEffect(() => {
     if (!valido) return
     let vivo = true; setCargando(true); setErr('')
@@ -168,8 +171,16 @@ export default function Clasificacion() {
           <MenuItem value="margen">Margen bruto $ (recomendado)</MenuItem><MenuItem value="venta">Venta neta $ (sin IVA)</MenuItem><MenuItem value="costo">Consumo a costo $</MenuItem></CampoSelect>
         <CampoSelect tip="Meses de venta que se miran, terminando en el mes actual. Con menos de 6 no se detectan items nuevos (N)." size="small" label="Ventana" value={meses} onChange={e => setMeses(Number(e.target.value))} sx={{ width: 120 }}>
           {[3, 6, 9, 12].map(m => <MenuItem key={m} value={m}>{m} meses</MenuItem>)}</CampoSelect>
-        <Tooltip placement="top" title="A = lo que junta hasta este % acumulado del criterio"><TextField size="small" type="number" label="Corte A %" value={corteA} onChange={e => setCorteA(Number(e.target.value))} error={!valido} sx={{ width: 100 }} /></Tooltip>
-        <Tooltip placement="top" title="B = hasta este % acumulado; el resto es C"><TextField size="small" type="number" label="Corte B %" value={corteB} onChange={e => setCorteB(Number(e.target.value))} error={!valido} sx={{ width: 100 }} /></Tooltip>
+        <CampoSelect tip="Pareto: A/B/C por % acumulado del criterio (el de siempre). Percentil: agrega Infaltables (I) y corta por la posición del item entre los clasificables, como PERCENTRANK de Excel." size="small" label="Cortes por" value={metodo} onChange={e => setMetodo(e.target.value as any)} sx={{ width: 140 }}>
+          <MenuItem value="pareto">% acumulado</MenuItem><MenuItem value="percentil">Percentil (I·A·B·C)</MenuItem></CampoSelect>
+        {metodo === 'pareto' ? <>
+          <Tooltip placement="top" title="A = lo que junta hasta este % acumulado del criterio"><TextField size="small" type="number" label="Corte A %" value={corteA} onChange={e => setCorteA(Number(e.target.value))} error={!valido} sx={{ width: 100 }} /></Tooltip>
+          <Tooltip placement="top" title="B = hasta este % acumulado; el resto es C"><TextField size="small" type="number" label="Corte B %" value={corteB} onChange={e => setCorteB(Number(e.target.value))} error={!valido} sx={{ width: 100 }} /></Tooltip>
+        </> : <>
+          <Tooltip placement="top" title="Infaltable (I) = percentil igual o mayor a este valor (100 = el mejor item, 0 = el peor)"><TextField size="small" type="number" label="I desde %" value={pI} onChange={e => setPI(Number(e.target.value))} error={!valido} sx={{ width: 95 }} /></Tooltip>
+          <Tooltip placement="top" title="A = percentil igual o mayor a este valor (y menor que I)"><TextField size="small" type="number" label="A desde %" value={pA} onChange={e => setPA(Number(e.target.value))} error={!valido} sx={{ width: 95 }} /></Tooltip>
+          <Tooltip placement="top" title="B = percentil igual o mayor a este valor (y menor que A); debajo es C"><TextField size="small" type="number" label="B desde %" value={pB} onChange={e => setPB(Number(e.target.value))} error={!valido} sx={{ width: 95 }} /></Tooltip>
+        </>}
         <Autocomplete multiple size="small" limitTags={1} sx={{ minWidth: 170, flex: '1 1 170px' }} options={opc.empresas} value={empresa}
           getOptionLabel={(o: string) => o === '05' ? 'Funat (05)' : o === '21' ? 'Stores (21)' : o} onChange={(_, v) => { setEmpresa(v); setBodegas(b => bodegasDeEmpresa(b, opc.tiendas, v)) }} renderInput={p => <TextField {...p} label="Empresa" />} />
         <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 230, flex: '2 1 230px' }} options={tiendasDeEmpresa(opc.tiendas, empresa).map((t: any) => t.bodega_id)} value={bodegas}
@@ -206,7 +217,7 @@ export default function Clasificacion() {
             <Tooltip title="Venta neta − costo de lo vendido. Rojo = pierde plata."><th>Margen</th></Tooltip><Tooltip title="Inventario de hoy a costo promedio: dinero parado en stock."><th>Inv. a costo</th></Tooltip>
             <Tooltip title="Margen anualizado ÷ inventario promedio a costo de la clase (sumas en pesos)."><th>GMROI</th></Tooltip><Tooltip title="Meses que dura el inventario promedio al ritmo de venta, todo a costo (sumas en pesos)."><th>Meses inv.</th></Tooltip></tr></thead>
           <tbody>
-            {['A', 'B', 'C', 'N', 'D', 'S'].map(a => {
+            {['I', 'A', 'B', 'C', 'N', 'D', 'S'].map(a => {
               const t = d.matriz.por_abc.find((x: any) => x.abc === a); if (!t) return null
               return (<tr key={a}>
                 <th style={{ textAlign: 'left' }}><Tooltip title={NOMBRE_ABC[a]}><Chip size="small" clickable label={a} onClick={() => alternar(abc, setAbc, a)} variant={abc.includes(a) ? 'filled' : 'outlined'}
@@ -236,7 +247,7 @@ export default function Clasificacion() {
         </Typography>
         <Box component="table" sx={{ borderCollapse: 'collapse', mt: .5, width: '100%', '& td, & th': { border: '1px solid #e0e0e0', px: 1.25, py: .4, fontSize: 13, textAlign: 'right' } }}>
           <thead><tr><th style={{ textAlign: 'left' }}>{d.por_criterio.plan_nombre}</th><th>{nivel === 'item' ? 'Items' : 'Filas'}</th>
-            {['A', 'B', 'C', 'N', 'D', 'S'].map(a => <Tooltip key={a} placement="top" title={NOMBRE_ABC[a]}><th style={{ color: COLOR_ABC[a] }}>{a}</th></Tooltip>)}
+            {['I', 'A', 'B', 'C', 'N', 'D', 'S'].map(a => <Tooltip key={a} placement="top" title={NOMBRE_ABC[a]}><th style={{ color: COLOR_ABC[a] }}>{a}</th></Tooltip>)}
             <th>Venta neta</th><th>Margen</th><th>Margen %</th><th>Inv. a costo</th><Tooltip placement="top" title="Margen anualizado ÷ inventario promedio a costo del grupo (sumas en pesos)"><th>GMROI</th></Tooltip></tr></thead>
           <tbody>
             {d.por_criterio.grupos.map((g: any) => {
@@ -244,7 +255,7 @@ export default function Clasificacion() {
               return (<tr key={g.id || 'sin'} onClick={() => g.id && alternarValor(g.id)}
                 style={{ cursor: g.id ? 'pointer' : 'default', background: sel ? 'rgba(110,138,55,.25)' : undefined }}>
                 <th style={{ textAlign: 'left', fontWeight: sel ? 700 : 500 }}>{g.nombre}</th><td style={{ fontWeight: 700 }}>{g.n.toLocaleString()}</td>
-                {['A', 'B', 'C', 'N', 'D', 'S'].map(a => <td key={a} style={{ color: g[a] ? undefined : '#bbb' }}>{g[a] ? g[a].toLocaleString() : '·'}</td>)}
+                {['I', 'A', 'B', 'C', 'N', 'D', 'S'].map(a => <td key={a} style={{ color: g[a] ? undefined : '#bbb' }}>{g[a] ? g[a].toLocaleString() : '·'}</td>)}
                 <td>{M(g.venta)}</td><td style={{ color: g.margen < 0 ? '#c62828' : undefined }}>{M(g.margen)}</td>
                 <td>{g.margen_pct == null ? '' : g.margen_pct.toFixed(1) + '%'}</td><td>{M(g.inv_costo)}</td><td>{g.gmroi == null ? '' : g.gmroi.toFixed(2)}</td>
               </tr>)

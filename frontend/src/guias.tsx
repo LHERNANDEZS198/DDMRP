@@ -20,7 +20,7 @@ const P = ({ children }: { children: ReactNode }) => <Typography variant="body2"
 const L = ({ items }: { items: ReactNode[] }) => <Box component="ul" sx={{ m: 0, mb: 1, pl: 3, '& li': { fontSize: 14, mb: .5 } }}>{items.map((x, i) => <li key={i}>{x}</li>)}</Box>
 const Clase = ({ c, color }: { c: string; color: string }) => <Chip size="small" label={c} sx={{ bgcolor: color, color: '#fff', fontWeight: 700, minWidth: 28 }} />
 
-const COLOR: Record<string, string> = { A: '#2e7d32', B: '#f9a825', C: '#9e9e9e', N: '#1565c0', D: '#6d4c41', S: '#8e24aa' }
+const COLOR: Record<string, string> = { I: '#1565c0', A: '#2e7d32', B: '#f9a825', C: '#9e9e9e', N: '#00acc1', D: '#6d4c41', S: '#8e24aa' }
 
 /** Metodología de la clasificación ABC × XYZ: cómo se calcula cada cosa y cómo leerla. `meta` trae los cortes y la ventana que se están usando. */
 export function GuiaClasificacion({ abierta, cerrar, meta }: { abierta: boolean; cerrar: () => void; meta: any }) {
@@ -34,8 +34,9 @@ export function GuiaClasificacion({ abierta, cerrar, meta }: { abierta: boolean;
       <H>1 · ABC: cuánto aporta</H>
       <P>Se toma la venta de la ventana elegida (hoy {meses} meses), se ordenan los items de mayor a menor según el criterio y se va acumulando el porcentaje del total:</P>
       <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mb: 1 }}>
-        <Box><Clase c="A" color={COLOR.A} /> los que juntan hasta el <b>{a} %</b> acumulado</Box>
-        <Box><Clase c="B" color={COLOR.B} /> hasta el <b>{b} %</b></Box>
+        {meta?.metodo === 'percentil' && <Box><Clase c="I" color={COLOR.I} /> <b>Infaltables</b>: percentil igual o mayor a <b>{meta?.corte_i ?? 93} %</b> (el mejor item es 100, el peor 0)</Box>}
+        <Box><Clase c="A" color={COLOR.A} /> {meta?.metodo === 'percentil' ? <>percentil igual o mayor a <b>{a} %</b></> : <>los que juntan hasta el <b>{a} %</b> acumulado</>}</Box>
+        <Box><Clase c="B" color={COLOR.B} /> {meta?.metodo === 'percentil' ? <>percentil igual o mayor a <b>{b} %</b></> : <>hasta el <b>{b} %</b></>}</Box>
         <Box><Clase c="C" color={COLOR.C} /> el resto de la cola</Box>
       </Box>
       <L items={[

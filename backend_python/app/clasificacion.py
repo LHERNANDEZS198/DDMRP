@@ -12,7 +12,7 @@ from datetime import date
 CRITERIOS = {"margen": "Margen bruto $", "venta": "Venta neta $ (sin IVA)", "costo": "Consumo a costo $"}
 NIVELES = {"item": "Item (suma de las tiendas filtradas)", "tienda_item": "Tienda × item"}
 APARTE = ("D", "N", "S")
-ORDEN_ABC = ("A", "B", "C", "N", "D", "S")
+ORDEN_ABC = ("I", "A", "B", "C", "N", "D", "S")   # I = Infaltables (solo con el metodo por percentil)
 ORDEN_XYZ = ("X", "Y", "Z", "-")
 
 
@@ -101,12 +101,12 @@ def diagnostico(it: dict) -> str:
     """Cruza la zona del buffer de hoy con la clase ABC: que atender primero. Funciona con lo que ya trae el item (zona, abc, inventario)."""
     z, a = it.get("zona"), it.get("abc")
     if z == "ROJA":
-        return "prioridad" if a in ("A", "B") else ("reponer" if a in ("C", "N") else "ok")
+        return "prioridad" if a in ("I", "A", "B") else ("reponer" if a in ("C", "N") else "ok")
     if a == "D" and it.get("inventario", 0) > 0:
         return "dormido"
     if z == "EXCESO":
-        return "exceso_clave" if a in ("A", "B") else ("exceso" if a in ("C",) else "ok")
-    if z == "AMARILLA" and a == "A":
+        return "exceso_clave" if a in ("I", "A", "B") else ("exceso" if a in ("C",) else "ok")
+    if z == "AMARILLA" and a in ("I", "A"):
         return "vigilar"
     return "ok"
 
@@ -118,12 +118,19 @@ def clase_xyz(iv, c1: float = 0.5, c2: float = 0.8) -> str:
 
 
 def clasificar(items: list[dict], criterio: str = "margen", corte_a: float = 80.0, corte_b: float = 95.0,
-               mes_nuevo: str | None = None, cortes_iv: tuple[float, float] = (0.5, 0.8)) -> None:
-    """Pone en cada item: abc, xyz, clase (ABC+XYZ), pct_acum y puesto. `mes_nuevo` = 'YYYYMM': si la primera venta es de ese mes o posterior es N."""
+               mes_nuevo: str | None = None, cortes_iv: tuple[float, float] = (0.5, 0.8), metodo: str = "pareto", corte_i: float = 93.0) -> None:
+    """Pone en cada item: abc, xyz, clase (ABC+XYZ), pct_acum y puesto. `mes_nuevo` = 'YYYYMM': si la primera venta es de ese mes o posterior es N.
+    metodo 'pareto': A hasta el corte_a % acumulado del criterio, B hasta el corte_b %, C el resto (I no existe).
+    metodo 'percentil': por la posicion del item entre los clasificables (como PERCENTRANK.INC de Excel: 1 = el mejor, 0 = el peor):
+    I (infaltable) si el percentil >= corte_i %, A si >= corte_a %, B si >= corte_b %, C el resto (aqui corte_a y corte_b son LIMITES INFERIORES)."""
     if criterio not in CRITERIOS:
         raise ValueError(f"criterio debe ser uno de {list(CRITERIOS)}")
-    if not (0 < corte_a < corte_b <= 100):
+    if metodo not in ("pareto", "percentil"):
+        raise ValueError("metodo debe ser pareto o percentil")
+    if metodo == "pareto" and not (0 < corte_a < corte_b <= 100):
         raise ValueError("los cortes deben cumplir 0 < A < B <= 100")
+    if metodo == "percentil" and not (0 < corte_b < corte_a < corte_i < 100):
+        raise ValueError("los cortes por percentil deben cumplir 0 < B < A < Infaltable < 100")
     llave = {"margen": "margen", "venta": "valor", "costo": "costo_venta"}[criterio]
     ranking = []
     for it in items:
@@ -142,6 +149,7 @@ def clasificar(items: list[dict], criterio: str = "margen", corte_a: float = 80.
     ranking.sort(key=lambda x: (-(x[llave] or 0.0), x["producto_id"], x.get("bodega_id") or ""))
     total = sum(max(x[llave] or 0.0, 0.0) for x in ranking)
     acum = 0.0
+    n = len(ranking)
     for i, it in enumerate(ranking, 1):
         v = it[llave] or 0.0
         it["puesto"] = i
@@ -149,11 +157,15 @@ def clasificar(items: list[dict], criterio: str = "margen", corte_a: float = 80.
             it["abc"] = "C"; it["pct_acum"] = 100.0
         else:
             antes = 100.0 * acum / total
-            it["abc"] = "A" if antes < corte_a else ("B" if antes < corte_b else "C")
+            if metodo == "percentil":
+                pr = 100.0 * (n - i) / (n - 1) if n > 1 else 100.0
+                it["abc"] = "I" if pr >= corte_i else ("A" if pr >= corte_a else ("B" if pr >= corte_b else "C"))
+            else:
+                it["abc"] = "A" if antes < corte_a else ("B" if antes < corte_b else "C")
             acum += v
             it["pct_acum"] = 100.0 * acum / total
     for it in items:
-        it["clase"] = it["abc"] + (it["xyz"] if it["abc"] in ("A", "B", "C") and it["xyz"] != "-" else "")
+        it["clase"] = it["abc"] + (it["xyz"] if it["abc"] in ("I", "A", "B", "C") and it["xyz"] != "-" else "")
 
 
 def retornos(x: dict) -> None:
@@ -173,7 +185,7 @@ def matriz(items: list[dict]) -> dict:
         c["costo_venta"] += it["costo_venta"] or 0.0; c["inv_costo"] += it["inv_costo"] or 0.0; c["inventario"] += it["inventario"]
         c["inv_prom_costo"] += it["inv_prom_costo"] or 0.0; c["margen_anual"] += it["margen_anual"] or 0.0; c["costo_venta_anual"] += it["costo_venta_anual"] or 0.0
     for it in items:
-        acc((it["abc"], it["xyz"] if it["abc"] in ("A", "B", "C") else "-"), it)
+        acc((it["abc"], it["xyz"] if it["abc"] in ("I", "A", "B", "C") else "-"), it)
     tot = {"n": len(items), "venta": sum(i["valor"] for i in items), "margen": sum(i["margen"] or 0.0 for i in items),
            "inv_costo": sum(i["inv_costo"] or 0.0 for i in items), "inv_prom_costo": sum(i["inv_prom_costo"] or 0.0 for i in items),
            "margen_anual": sum(i["margen_anual"] or 0.0 for i in items), "costo_venta_anual": sum(i["costo_venta_anual"] or 0.0 for i in items)}

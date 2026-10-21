@@ -137,3 +137,16 @@ def test_gmroi_con_inventario_promedio_y_retornos():
     # sin historia en ninguna tienda: el promedio es el inventario de hoy
     s = cl.agregar([{"producto_id": "S", "bodega_id": "T", "cant": 10, "valor": 1000, "costo": 10, "inventario": 7, "iv": .3, "adu": 1}], "item"); cl.calcular(s, 365)
     assert s[0]["inv_prom"] == 7 and s[0]["dias_hist"] == 0 and s[0]["pct_sin_stock"] is None
+
+
+def test_clasificar_por_percentil_con_infaltables():
+    from app import clasificacion as cl
+    items = [{"producto_id": f"P{i:02d}", "cant": 1, "valor": 100.0 - i, "margen": 100.0 - i, "costo": 1.0, "costo_venta": 1.0, "iv": 0.1, "primer_mes": "202001"} for i in range(21)]
+    cl.clasificar(items, "margen", 75, 50, None, (0.5, 0.8), "percentil", 93)
+    por = {}
+    for it in sorted(items, key=lambda x: x["puesto"]):
+        por.setdefault(it["abc"], []).append(it["puesto"])
+    assert por["I"] == [1, 2]                 # percentil 100 y 95 (>= 93); el 3.o ya cae en 90 -> A
+    assert set(por) == {"I", "A", "B", "C"}
+    assert max(por["I"]) < min(por["A"]) < min(por["B"]) < min(por["C"])
+    assert items[0]["clase"].startswith("I")
