@@ -89,6 +89,19 @@ function Diagnostico() {
                       <TableCell sx={{ fontFamily: 'monospace', py: 0.3 }}>{k}</TableCell><TableCell sx={{ py: 0.3 }}>{String(v)}</TableCell></TableRow>))}
                 </TableBody></Table>}
           </Box>))}
+        {res.etl?.map((e: any) => (
+          <Alert key={e.empresa} severity={e.error ? 'error' : /NO pasa|inactiva/.test(e.causa || '') ? 'warning' : 'info'} sx={{ py: 0.5, '& .MuiAlert-message': { width: '100%' } }}>
+            <b>Por qué el ETL {inv ? 'trae ese valor' : 'no lo trae'} · empresa {e.empresa}</b>
+            {e.error ? <div>{e.error}</div> : <>
+              <div>{e.causa}</div>
+              <Table size="small"><TableBody>
+                {e.pasos.map((p: any) => <TableRow key={p.filtro}><TableCell sx={{ py: 0.2 }}>{p.filtro}</TableCell><TableCell sx={{ py: 0.2 }} align="right"><b>{typeof p.valor === 'number' ? p.valor.toLocaleString('es-CO') : p.valor}</b></TableCell></TableRow>)}
+              </TableBody></Table>
+              <div style={{ fontSize: 12 }}>Extensiones del item en Siesa ({e.extensiones_nota}): {e.extensiones.map((x: any) => `#${x.rowid} → ${x.estado}`).join(' · ') || 'ninguna'}
+                {' · '}En el maestro: {res.local.en_maestro ? 'sí' : 'NO'}{' · '}Estado guardado: {res.local.estado?.map((x: any) => `${x.empresa}=${x.estado}`).join(', ') || 'sin fila'}
+                {' · '}Filas de la tienda en el sistema: {res.local.filas_bodega} (corte {res.local.ultimo_etl_inventario})</div>
+            </>}
+          </Alert>))}
         {!res.siesa.length && !res.aviso && <Alert severity="warning" sx={{ py: 0 }}>Siesa no devolvió filas de existencia para esa tienda y referencia.</Alert>}
       </Box>)}
     </Box>)

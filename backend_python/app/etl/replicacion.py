@@ -273,6 +273,11 @@ def diagnostico_inventario(bodega: str, producto: str) -> dict:
         out["local"]["costo"] = [float(r[0]) for r in c.execute(text("SELECT costo FROM ddmrp.costo_item WHERE producto_id = :p"), {"p": producto}).all()]
         out["local"]["resta_comprometido"] = bool((c.execute(text("SELECT valor FROM ddmrp.parametro WHERE clave='inv_tiendas_resta_comprometido'")).scalar() or 0))
         out["local"]["resta_sin_acumular"] = bool((c.execute(text("SELECT valor FROM ddmrp.parametro WHERE clave='inv_tiendas_resta_sin_acumular'")).scalar() or 0))
+        out["local"]["en_maestro"] = c.execute(text("SELECT count(*) FROM ddmrp.maestro_item WHERE producto_id = :p"), {"p": producto}).scalar() > 0
+        out["local"]["estado"] = [dict(r) for r in c.execute(text("SELECT empresa, estado FROM ddmrp.item_estado WHERE producto_id = :p"), {"p": producto}).mappings()]
+        out["local"]["ultimo_etl_inventario"] = str(c.execute(text("SELECT max(fecha_corte) FROM ddmrp.inventario_actual WHERE bodega_id = :b"), {"b": bodega}).scalar())
+        out["local"]["filas_bodega"] = c.execute(text("SELECT count(*) FROM ddmrp.inventario_actual WHERE bodega_id = :b"), {"b": bodega}).scalar()
+        resta = int(out["local"]["resta_comprometido"]); resta_sa = int(out["local"]["resta_sin_acumular"])
     if not settings.siesa_host:
         out["aviso"] = "Siesa no esta configurado"; return out
     sql = ("SELECT RTRIM(b.f150_id) AS bodega, RTRIM(i.f120_referencia) AS referencia, e.* FROM t400_cm_existencia e "
@@ -291,7 +296,51 @@ def diagnostico_inventario(bodega: str, producto: str) -> dict:
                         for k, v in r.items() if v not in (None, "", 0, 0.0)}})
         except Exception as e:
             out["siesa"].append({"empresa": empresa, "base": db, "error": str(e)[:300]})
+    out["etl"] = _por_que_no_entra(out, bodega, producto, resta, resta_sa)
     return out
+
+
+def _por_que_no_entra(out: dict, bodega: str, producto: str, resta: int, resta_sa: int) -> list[dict]:
+    """Corre la consulta de inventario del ETL para esa tienda con tres niveles de filtro (ninguno, solo items del maestro, maestro + activos) y las
+    extensiones del item con su estado, para decir en cual filtro se pierde la existencia que Siesa si tiene."""
+    res = []
+    for empresa, db in (("05", settings.siesa_db), ("21", settings.siesa_db_s)):
+        if not db or not any(x["empresa"] == empresa and "columnas" in x for x in out["siesa"]):
+            continue
+        r: dict = {"empresa": empresa, "pasos": [], "extensiones": []}
+        try:
+            eng = siesa_engine(db)
+            prm = {"cia": settings.siesa_cia, "bodegas": [bodega], "resta": resta, "resta_sa": resta_sa}
+            def valor(sql: str):
+                for ref, _b, _f, disp in _stream(eng, sql, prm, expanding="bodegas"):
+                    if ref == producto:
+                        return float(disp) if disp is not None else None
+                return "sin fila"
+            r["pasos"] = [
+                {"filtro": "ninguno (toda la existencia de Siesa)", "valor": valor(ACTIVO_RE.sub("", SQL_INVENTARIO))},
+                {"filtro": "solo items del maestro (criterios SIESA_CRITERIOS_ITEMS)", "valor": valor(_con_estado(SQL_INVENTARIO, False))},
+                {"filtro": "maestro + solo extensiones activas (lo que hace el ETL)", "valor": valor(_con_estado(SQL_INVENTARIO, True))},
+            ]
+            col = _col_estado()
+            for rowid, est in _stream(eng, f"SELECT x.f121_rowid, x.{col} FROM t121_mc_items_extensiones x "
+                                                  f"JOIN t120_mc_items i ON i.f120_rowid = x.f121_rowid_item WHERE i.f120_id_cia = :cia AND RTRIM(i.f120_referencia) = :p",
+                                              {"cia": settings.siesa_cia, "p": producto}):
+                r["extensiones"].append({"rowid": rowid, "estado": est})
+            r["extensiones_nota"] = f"estado en {col} (el ETL deja pasar solo {settings.siesa_item_estado_activo} = activo)"
+            v = [p_["valor"] for p_ in r["pasos"]]
+            num = lambda x: isinstance(x, (int, float))
+            if num(v[0]) and not num(v[1]):
+                r["causa"] = "El item NO pasa el filtro de criterios del maestro en esta empresa (SIESA_CRITERIOS_ITEMS): se descarta aunque tenga existencia."
+            elif num(v[1]) and not num(v[2]):
+                r["causa"] = "La extensión del item que tiene la existencia está inactiva o bloqueada en Siesa (aunque otra extensión del mismo item esté activa): el filtro de estado del ETL la descarta."
+            elif num(v[2]):
+                r["causa"] = "El ETL SI lo lee con sus filtros: si el sistema no lo tiene, el ETL no corrió desde que cambió la existencia, o fue purgado después (revisa Maestros → Items y la fecha del último ETL)."
+            else:
+                r["causa"] = "La consulta del ETL no devuelve fila para esa tienda y referencia (revisa la bodega y que la referencia sea la de t120)."
+        except Exception as e:
+            r["error"] = str(e).splitlines()[0][:300]
+        res.append(r)
+    return res
 
 
 def diagnostico_estado_items() -> dict:
