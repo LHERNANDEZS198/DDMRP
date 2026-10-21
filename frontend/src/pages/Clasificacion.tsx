@@ -207,7 +207,7 @@ export default function Clasificacion() {
 
       {d && <Paper variant="outlined" sx={{ flexShrink: 0, p: 1.25, overflow: 'auto' }}>
         <Typography variant="caption" color="text.secondary">
-          {d.meta.criterio_nombre} · ventana {String(d.meta.desde).slice(0, 10)} a {String(d.meta.hasta).slice(0, 10)} · XYZ por IV del motor (X &lt; {d.meta.cortes_iv[0]}, Y hasta {d.meta.cortes_iv[1]}, Z mayor) · clic en una celda o en una clase para filtrar la lista
+          {d.meta.criterio_nombre} · ventana {String(d.meta.desde).slice(0, 10)} a {String(d.meta.hasta).slice(0, 10)} · XYZ por IV del motor (X &lt; {d.meta.cortes_iv[0]}, Y hasta {d.meta.cortes_iv[1]}, Z mayor) · clic en una clase o celda para filtrar la lista (Ctrl/Mayús+clic en una clase suma otra); lo que no está filtrado se atenúa
         </Typography>
         <Box component="table" sx={{ borderCollapse: 'collapse', mt: .5, width: '100%', '& td, & th': { border: '1px solid #e0e0e0', px: 1.25, py: .5, fontSize: 13, textAlign: 'right' } }}>
           <thead><tr><th style={{ textAlign: 'left' }}>Clase</th>
@@ -218,13 +218,14 @@ export default function Clasificacion() {
           <tbody>
             {['I', 'A', 'B', 'C', 'N', 'D', 'S'].map(a => {
               const t = d.matriz.por_abc.find((x: any) => x.abc === a); if (!t) return null
-              return (<tr key={a}>
-                <th style={{ textAlign: 'left' }}><Tooltip title={NOMBRE_ABC[a]}><Chip size="small" clickable label={a} onClick={() => alternar(abc, setAbc, a)} variant={abc.includes(a) ? 'filled' : 'outlined'}
+              return (<tr key={a} style={{ opacity: abc.length && !abc.includes(a) ? .3 : 1, transition: 'opacity .15s' }}>
+                <th style={{ textAlign: 'left' }}><Tooltip title={`${NOMBRE_ABC[a]} · clic: filtra solo esta clase · Ctrl/Mayús+clic: suma otra`}><Chip size="small" clickable label={a} onClick={e => (e.ctrlKey || e.metaKey || e.shiftKey) ? alternar(abc, setAbc, a) : setAbc(abc.length === 1 && abc[0] === a ? [] : [a])} variant={abc.includes(a) ? 'filled' : 'outlined'}
                   sx={{ bgcolor: abc.includes(a) ? COLOR_ABC[a] : undefined, color: abc.includes(a) ? '#fff' : COLOR_ABC[a], borderColor: COLOR_ABC[a], fontWeight: 700 }} /></Tooltip></th>
                 {['X', 'Y', 'Z'].map(x => {
                   const c = celda(a, x); const act = abc.includes(a) && xyz.includes(x)
-                  return <td key={x} style={{ cursor: c ? 'pointer' : 'default', background: act ? 'rgba(110,138,55,.25)' : c ? 'rgba(110,138,55,.06)' : undefined }}
-                    onClick={() => { if (!c) return; setAbc([a]); setXyz([x]) }}>{c ? c.n.toLocaleString() : '·'}</td>
+                  const apag = xyz.length > 0 && !xyz.includes(x)
+                  return <td key={x} style={{ opacity: apag ? .3 : 1, cursor: c ? 'pointer' : 'default', background: act ? 'rgba(110,138,55,.25)' : c ? 'rgba(110,138,55,.06)' : undefined }}
+                    onClick={() => { if (!c) return; if (act && abc.length === 1 && xyz.length === 1) { setAbc([]); setXyz([]) } else { setAbc([a]); setXyz([x]) } }}>{c ? c.n.toLocaleString() : '·'}</td>
                 })}
                 <td style={{ fontWeight: 700 }}>{t.n.toLocaleString()}</td><td>{M(t.venta)}</td><td style={{ color: t.margen < 0 ? '#c62828' : undefined }}>{M(t.margen)}</td><td>{M(t.inv_costo)}</td><td>{t.gmroi == null ? '' : t.gmroi.toFixed(2)}</td><td>{t.meses_inv == null ? '' : t.meses_inv.toFixed(1)}</td>
               </tr>)
