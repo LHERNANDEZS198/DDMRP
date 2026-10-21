@@ -101,6 +101,8 @@ export default function Despacho() {
       .finally(() => { if (n === peticion.current) setCargando(false) })
   }
   useEffect(() => { setRows([]); setCargando(true); cargar() }, [filtrar, tiendas.join(','), ver, empresa])
+  const [nombres, setNombres] = useState<Record<string, string>>({})   // código de tienda -> nombre (Éxito Envigado…)
+  useEffect(() => { api('/control/filtros').then(r => setNombres(Object.fromEntries((r.tiendas ?? []).map((t: any) => [t.bodega_id, t.nombre ?? ''])))).catch(() => {}) }, [])
   const tiendasEnFilas = useMemo(() => [...new Set(rows.map(r => r.bodega_id).filter(Boolean))].sort() as string[], [rows])
   useEffect(() => { if (fTienda && !tiendasEnFilas.includes(fTienda)) setFTienda(null) }, [tiendasEnFilas])   // cambió la corrida o la empresa
   const labs = useMemo(() => [...new Set(rows.map(r => r.categoria).filter(Boolean))].sort() as string[], [rows])
@@ -214,7 +216,8 @@ export default function Despacho() {
       </Paper>
       <Paper variant="outlined" sx={{ p: 1, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
         <TextField size="small" label="Buscar item, descripción o tienda" value={fTexto} onChange={e => setFTexto(e.target.value)} sx={{ width: 260 }} />
-        <Autocomplete size="small" sx={{ width: 170 }} options={tiendasEnFilas} value={fTienda} onChange={(_, v) => setFTienda(v)} noOptionsText="Sin tiendas"
+        <Autocomplete size="small" sx={{ width: 260 }} options={tiendasEnFilas} value={fTienda} onChange={(_, v) => setFTienda(v)} noOptionsText="Sin tiendas"
+          getOptionLabel={(o: string) => nombres[o] ? `${o} · ${nombres[o]}` : o}
           renderInput={p => <TextField {...p} label="Tienda (detalle)" placeholder="Todas" />} />
         <TextField select size="small" label="Laboratorio" value={fLab} onChange={e => setFLab(e.target.value)} sx={{ minWidth: 160 }}>
           <MenuItem value="">Todos</MenuItem>{labs.map(l => <MenuItem key={l} value={l}>{l}</MenuItem>)}</TextField>
