@@ -670,9 +670,21 @@ def _sincronizar_ventas() -> dict:
     return res
 
 
+def _analizar_tablas():
+    """ANALYZE de lo que el ETL acaba de recargar: con estadisticas viejas Postgres elige planes pesimos en los informes (Clasificacion, Matriz)."""
+    try:
+        with pg.connect() as c:
+            for t in ("ventas_mensual", "inventario_actual", "item_criterio", "maestro_item", "costo_item", "item_estado", "transitos"):
+                c.execute(text(f"ANALYZE ddmrp.{t}"))
+            c.commit()
+    except Exception:
+        log.exception("No se pudo actualizar las estadisticas tras el ETL (ANALYZE)")
+
+
 def correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
     with progreso.tarea("ETL", "ETL listo"), bitacora.registrar("etl", origen, usuario) as r:
         r.resumen = res = _correr_etl(origen, usuario)
+        _analizar_tablas()
         return res
 
 

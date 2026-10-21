@@ -5,6 +5,7 @@ from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from .. import clasificacion as cl, excel
 from ..activos import solo_activos
 from ..db import pg
@@ -38,11 +39,14 @@ def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, l
     """Una fila por tienda x item (REC ya sumado al original) con la venta de la ventana, el buffer de la ultima corrida y el costo."""
     w, p = filtro_sql_permisos(user, "k.bodega_id", "mi.categoria")
     cond = [w, solo_activos("k")]
+    pre_h = pre_v = pre_s = ""     # empresa y tienda elegidas tambien dentro de cada CTE (si no, Postgres agrega TODA la historia y filtra al final)
     if filtrar:
         if _csv(empresa):
             cond.append("k.empresa = ANY(:f_emp)"); p["f_emp"] = _csv(empresa)
+            pre_h += " AND empresa = ANY(:f_emp)"; pre_v += " AND a.empresa = ANY(:f_emp)"; pre_s += " AND empresa = ANY(:f_emp)"
         if _csv(bodegas):
             cond.append("k.bodega_id = ANY(:f_bod)"); p["f_bod"] = _csv(bodegas)
+            pre_h += " AND bodega_id = ANY(:f_bod)"; pre_v += " AND a.bodega_id = ANY(:f_bod)"; pre_s += " AND bodega_id = ANY(:f_bod)"
         if _csv(labs):
             cond.append("COALESCE(mi.categoria, '') = ANY(:f_lab)"); p["f_lab"] = [("" if x == "(sin laboratorio)" else x) for x in _csv(labs)]
         if q and q.strip():
@@ -63,19 +67,19 @@ def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, l
     sql = f"""
     WITH h AS (
       SELECT empresa, bodega_id, producto_id, SUM(inv_suma)::float8 AS inv_suma, SUM(dias)::int AS dias_hist, SUM(dias_cero)::int AS dias_cero
-      FROM ddmrp.inventario_mes WHERE mes >= :mes_desde AND {'true' if hist else 'false'} GROUP BY 1, 2, 3),
+      FROM ddmrp.inventario_mes WHERE mes >= :mes_desde AND {'true' if hist else 'false'}{pre_h} GROUP BY 1, 2, 3),
     v AS (
       SELECT a.empresa, a.bodega_id, COALESCE(r.original_id, a.producto_id) AS producto_id,
              SUM(a.cantidad)::float8 AS cant, SUM(a.valor)::float8 AS valor,
              MIN(a.mes) FILTER (WHERE a.cantidad > 0) AS primer_mes
       FROM ddmrp.ventas_mensual a
       LEFT JOIN ddmrp.v_item_rec r ON r.empresa = a.empresa AND r.rec_id = a.producto_id
-      WHERE a.mes >= :mes_desde
+      WHERE a.mes >= :mes_desde{pre_v}
       GROUP BY 1, 2, 3),
     s AS (
       SELECT empresa, bodega_id, producto_id, inventario::float8 AS inventario, iv::float8 AS iv, adu::float8 AS adu,
              zona::text AS zona, pct_buffer::float8 AS pct_buffer, flujo_neto::float8 AS flujo_neto, cantidad_sugerida::float8 AS sugerido
-      FROM ddmrp.sugerencias_envio WHERE ejecucion_id = {ULTIMA}),
+      FROM ddmrp.sugerencias_envio WHERE ejecucion_id = {ULTIMA}{pre_s}),
     k AS (
       SELECT COALESCE(v.empresa, s.empresa) AS empresa, COALESCE(v.bodega_id, s.bodega_id) AS bodega_id,
              COALESCE(v.producto_id, s.producto_id) AS producto_id,
@@ -92,6 +96,30 @@ def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, l
     return [dict(r) for r in c.execute(text(sql), p).mappings()]
 
 
+_CACHE_GLOBAL: dict = {}      # clase de cada item contra TODO el universo visible: no depende de los filtros de pantalla, se reutiliza mientras no corra el motor
+_CACHE_TTL = 600
+
+
+def _clase_global(c, user, mes_desde, nivel, criterio, corte_a, corte_b, nuevo, cortes, dias):
+    """{clave: clase} del universo completo que el usuario puede ver. Es la consulta mas pesada (todo el universo) y no cambia al mover los filtros:
+    se guarda 10 minutos por (corrida del motor, permisos del usuario, ventana, nivel, criterio y cortes)."""
+    import time
+    w, p = filtro_sql_permisos(user, "k.bodega_id", "mi.categoria")
+    ej = c.execute(text(f"SELECT {ULTIMA}")).scalar()
+    clave_c = (ej, w, tuple(sorted((k, str(v)) for k, v in p.items())), mes_desde, nivel, criterio, corte_a, corte_b, str(nuevo), tuple(cortes))
+    hit = _CACHE_GLOBAL.get(clave_c)
+    if hit and time.time() - hit[0] < _CACHE_TTL:
+        return hit[1]
+    filas_g = _filas(c, user, mes_desde, False, hist=False)
+    glob = cl.agregar(filas_g, nivel); cl.calcular(glob, dias); cl.clasificar(glob, criterio, corte_a, corte_b, nuevo, cortes)
+    clave = (lambda x: (x["empresa"], x["bodega_id"], x["producto_id"])) if nivel == "tienda_item" else (lambda x: x["producto_id"])
+    g = {clave(x): x["clase"] for x in glob}
+    if len(_CACHE_GLOBAL) >= 8:
+        _CACHE_GLOBAL.pop(next(iter(_CACHE_GLOBAL)))
+    _CACHE_GLOBAL[clave_c] = (time.time(), g)
+    return g
+
+
 def _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, labs, crit, q, con_global=True, planes=None, solo_con=False):
     if nivel not in cl.NIVELES:
         raise HTTPException(400, f"nivel debe ser uno de {list(cl.NIVELES)}")
@@ -103,14 +131,18 @@ def _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, 
     nuevo = cl.mes_nuevo(date.today(), 3) if meses >= 6 else None     # con ventanas cortas todo seria 'nuevo'
     with pg.connect() as c:
         cortes = _cortes_iv(c)
-        filas = _filas(c, user, mes_desde, True, empresa, bodegas, labs, crit, q, planes=planes, solo_con=solo_con)
-        hay_filtro = bool(_csv(empresa) or _csv(bodegas) or _csv(labs) or _csv(crit) or (q and q.strip()) or (solo_con and _csv(planes)))
-        filas_g = _filas(c, user, mes_desde, False, hist=False) if (con_global and hay_filtro) else None
+        c.execute(text("SET LOCAL statement_timeout = 50000"))     # menos que el timeout de nginx (60 s): falla con mensaje en vez de dejar consultas colgadas
+        try:
+            filas = _filas(c, user, mes_desde, True, empresa, bodegas, labs, crit, q, planes=planes, solo_con=solo_con)
+            hay_filtro = bool(_csv(empresa) or _csv(bodegas) or _csv(labs) or _csv(crit) or (q and q.strip()) or (solo_con and _csv(planes)))
+            g = _clase_global(c, user, mes_desde, nivel, criterio, corte_a, corte_b, nuevo, cortes, dias) if (con_global and hay_filtro) else None
+        except DBAPIError as e:
+            if "statement timeout" in str(e):
+                raise HTTPException(503, "El informe tardo demasiado. Acota con una tienda o un laboratorio, o avisa a sistemas (estadisticas de la base).")
+            raise
     items = cl.agregar(filas, nivel); cl.calcular(items, dias); cl.clasificar(items, criterio, corte_a, corte_b, nuevo, cortes)
-    if filas_g is not None:       # clase de cada item contra TODO el universo que el usuario puede ver (sin los filtros de pantalla)
-        glob = cl.agregar(filas_g, nivel); cl.calcular(glob, dias); cl.clasificar(glob, criterio, corte_a, corte_b, nuevo, cortes)
+    if g is not None:       # clase de cada item contra TODO el universo que el usuario puede ver (sin los filtros de pantalla)
         clave = (lambda x: (x["empresa"], x["bodega_id"], x["producto_id"])) if nivel == "tienda_item" else (lambda x: x["producto_id"])
-        g = {clave(x): x["clase"] for x in glob}
         for it in items:
             it["clase_global"] = g.get(clave(it))
     else:
