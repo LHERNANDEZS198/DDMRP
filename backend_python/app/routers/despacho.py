@@ -8,7 +8,7 @@ from ..db import pg
 from .. import reparto, bitacora
 from ..plano_siesa import co_derivado, generar_xlsx, notas_por_defecto
 from ..activos import solo_activos
-from ..security import usuario_actual, filtro_sql_permisos, exigir, requiere
+from ..security import usuario_actual, filtro_sql_permisos, exigir, requiere, empresas_permitidas
 
 router = APIRouter(prefix="/despacho", tags=["despacho"])
 ULTIMA = "(SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok')"
@@ -38,6 +38,9 @@ def matriz(empresa: str, bodega_id: str | None = None, bodegas: str | None = Non
     elegidas para la corrida del dia). No se sugieren los items sin stock en el CEDI ni los laboratorios sin envio."""
     if empresa not in ("05", "21"):
         raise HTTPException(400, "Elige la empresa (05 o 21)")
+    perm = empresas_permitidas(user["id"])
+    if perm and empresa not in perm:
+        raise HTTPException(403, f"Tu usuario no tiene asignada la empresa {empresa}")
     w, p = filtro_sql_permisos(user)
     f = f"s.ejecucion_id = {ULTIMA} AND s.empresa = :emp AND (s.cantidad_sugerida > 0 OR s.cantidad_necesaria > 0) AND {w} AND {CON_CEDI} AND {SIN_ENVIO} AND {ACTIVO}"
     p["emp"] = empresa

@@ -13,6 +13,7 @@ import { api, bajar } from '../api'
 import { bodegasDeEmpresa, tiendasDeEmpresa } from '../filtros'
 import { confirmar } from '../alertas'
 import { GuiaClasificacion } from '../guias'
+import { useEmpresa } from '../Empresa'
 
 const COLOR_ABC: Record<string, string> = { I: '#1565c0', A: '#2e7d32', B: '#f9a825', C: '#9e9e9e', N: '#00acc1', D: '#6d4c41', S: '#8e24aa' }   // I azul; N cian para no confundirse
 const NOMBRE_ABC: Record<string, string> = {
@@ -30,7 +31,7 @@ export default function Clasificacion() {
   const [corteA, setCorteA] = useState(80); const [corteB, setCorteB] = useState(95)
   const [metodo, setMetodo] = useState<'pareto' | 'percentil'>('pareto')   // pareto: A/B/C por % acumulado · percentil: I/A/B/C por posición (límites inferiores)
   const [pI, setPI] = useState(93); const [pA, setPA] = useState(75); const [pB, setPB] = useState(50)
-  const [empresa, setEmpresa] = useState<string[]>([]); const [bodegas, setBodegas] = useState<string[]>([]); const [labs, setLabs] = useState<string[]>([])
+  const { lista: empresa } = useEmpresa(); const setEmpresa = (_: string[]) => {}; const [bodegas, setBodegas] = useState<string[]>([]); const [labs, setLabs] = useState<string[]>([])
   const [fc, setFc] = useState<{ plan: string; vals: string[] }[]>([{ plan: '', vals: [] }])   // filtros por criterio de items: planes distintos se combinan (Y), valores del mismo plan (O)
   const [agrupar, setAgrupar] = useState(''); const [dentro, setDentro] = useState(false); const [soloCon, setSoloCon] = useState(false)   // soloCon: excluir items sin valor en los criterios elegidos
      // vista por dentro de un criterio; dentro = ABC recalculado en cada grupo
@@ -181,8 +182,6 @@ export default function Clasificacion() {
           <Tooltip placement="top" title="A = percentil igual o mayor a este valor (y menor que I)"><TextField size="small" type="number" label="A desde %" value={pA} onChange={e => setPA(Number(e.target.value))} error={!valido} sx={{ width: 95 }} /></Tooltip>
           <Tooltip placement="top" title="B = percentil igual o mayor a este valor (y menor que A); debajo es C"><TextField size="small" type="number" label="B desde %" value={pB} onChange={e => setPB(Number(e.target.value))} error={!valido} sx={{ width: 95 }} /></Tooltip>
         </>}
-        <Autocomplete multiple size="small" limitTags={1} sx={{ minWidth: 170, flex: '1 1 170px' }} options={opc.empresas} value={empresa}
-          getOptionLabel={(o: string) => o === '05' ? 'Funat (05)' : o === '21' ? 'Stores (21)' : o} onChange={(_, v) => { setEmpresa(v); setBodegas(b => bodegasDeEmpresa(b, opc.tiendas, v)) }} renderInput={p => <TextField {...p} label="Empresa" />} />
         <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 230, flex: '2 1 230px' }} options={tiendasDeEmpresa(opc.tiendas, empresa).map((t: any) => t.bodega_id)} value={bodegas}
           getOptionLabel={(o: string) => nt(o) ? `${o} · ${nt(o)}` : o} onChange={(_, v) => setBodegas(v)} renderInput={p => <TextField {...p} label="Tienda" />} />
         <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 230, flex: '2 1 230px' }} options={opc.laboratorios.map((l: any) => l.codigo)} value={labs}

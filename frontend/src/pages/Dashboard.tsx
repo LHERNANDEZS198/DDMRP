@@ -5,6 +5,7 @@ import { Autocomplete, Box, Card, CardActionArea, Chip, MenuItem, Paper, TextFie
 import { api } from '../api'
 import { bodegasDeEmpresa, tiendasDeEmpresa } from '../filtros'
 import { ayudar } from '../ayuda'
+import { useEmpresa } from '../Empresa'
 
 const num = (p: any) => p.value == null ? '' : Number(p.value).toLocaleString('es-CO', { maximumFractionDigits: 2 })
 const cols: ColDef[] = [
@@ -35,7 +36,7 @@ export default function Dashboard() {
   const [cargando, setCargando] = useState(true)
   const [zona, setZona] = useState('ROJA')   // zona cuya lista se ve abajo (clic en una tarjeta)
   const [opc, setOpc] = useState<any>({ tiendas: [], laboratorios: [], empresas: [], criterios: [] })
-  const [empresa, setEmpresa] = useState<string[]>([]); const [bodegas, setBodegas] = useState<string[]>([]); const [labs, setLabs] = useState<string[]>([])
+  const { lista: empresa } = useEmpresa(); const setEmpresa = (_: string[]) => {}; const [bodegas, setBodegas] = useState<string[]>([]); const [labs, setLabs] = useState<string[]>([])
   const [plan, setPlan] = useState(''); const [crit, setCrit] = useState<string[]>([]); const [qd, setQd] = useState(''); const [q, setQ] = useState('')
   useEffect(() => { api('/control/filtros').then(setOpc).catch(() => {}) }, [])
   useEffect(() => { const t = setTimeout(() => setQ(qd), 400); return () => clearTimeout(t) }, [qd])
@@ -60,8 +61,6 @@ export default function Dashboard() {
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 2 }}>
       <Paper variant="outlined" sx={{ flexShrink: 0, p: 1.25, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
-        <Autocomplete multiple size="small" limitTags={1} sx={{ minWidth: 170, flex: '1 1 170px' }} options={opc.empresas} value={empresa}
-          getOptionLabel={(o: string) => o === '05' ? 'Funat (05)' : o === '21' ? 'Stores (21)' : o} onChange={(_, v) => { setEmpresa(v); setBodegas(b => bodegasDeEmpresa(b, opc.tiendas, v)) }} renderInput={p => <TextField {...p} label="Empresa" />} />
         <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 230, flex: '2 1 230px' }} options={tiendasDeEmpresa(opc.tiendas, empresa).map((t: any) => t.bodega_id)} value={bodegas}
           getOptionLabel={(o: string) => nt(o) ? `${o} · ${nt(o)}` : o} onChange={(_, v) => setBodegas(v)} renderInput={p => <TextField {...p} label="Tienda" />} />
         <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 230, flex: '2 1 230px' }} options={opc.laboratorios.map((l: any) => l.codigo)} value={labs}

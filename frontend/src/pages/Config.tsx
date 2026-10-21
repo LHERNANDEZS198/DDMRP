@@ -14,6 +14,7 @@ import Aviso from '../Aviso'
 import { useYo } from '../Yo'
 import { confirmar, confirmarEscribiendo, esc } from '../alertas'
 import PegarGrilla, { ColPegar } from '../PegarGrilla'
+import { useEmpresa } from '../Empresa'
 
 type Filtros = { tienda: boolean; item: boolean; lab: boolean; texto: boolean; empresa?: boolean; empresa_opc?: boolean; mes?: boolean }
 type Tienda = { bodega_id: string; nombre: string | null; empresa: string | null }
@@ -47,7 +48,7 @@ export default function Config() {
   const f = fRaw.sel === sel ? fRaw : { sel, ...VACIO }
   const setF = (c: Partial<typeof VACIO>) => setFRaw({ ...f, ...c, sel })
   const colActiva = !!(f.col && (f.op === 'vacio' || f.op === 'lleno' || f.val.trim()))
-  const hayFiltro = !!(f.tienda.length || f.texto || f.lab.length || f.mes || f.emp || colActiva)
+  const hayFiltro = !!(f.tienda.length || f.texto || f.lab.length || f.mes || colActiva)
   const [ordenRaw, setOrdenRaw] = useState({ sel: '', col: '', desc: false })   // orden pedido al servidor (columna de la tabla)
   const orden = ordenRaw.sel === sel ? ordenRaw : { sel, col: '', desc: false }
   const filtros = () => {
@@ -56,14 +57,14 @@ export default function Config() {
     if (f.texto.trim()) p.set('q', f.texto.trim())
     if (f.lab.length) p.set('lab', f.lab.join(','))
     if (def?.filtros.mes && f.mes) p.set('mes', f.mes)
-    if (def?.filtros.empresa) { p.set('empresa', empresa); p.set('estado', estado) } else if (def?.filtros.empresa_opc && f.emp) p.set('empresa', f.emp)
+    if (def?.filtros.empresa) { p.set('empresa', empresa); p.set('estado', estado) } else if (def?.filtros.empresa_opc && empG) p.set('empresa', empG)
     if (colActiva) { p.set('col', f.col); p.set('op', f.op); if (f.val.trim()) p.set('val', f.val.trim()) }
     return p
   }
   const consulta = () => { const p = filtros(); if (orden.col) { p.set('orden', orden.col); if (orden.desc) p.set('desc', 'true') }; const s = p.toString(); return s ? '?' + s : '' }
   const consultaExcel = () => { const s = filtros().toString(); return s ? '?' + s : '' }
   const [estado, setEstado] = useState('activo')   // items: estado en Siesa
-  const [empresa, setEmpresa] = useState('05')   // items: se trabaja una empresa a la vez
+  const { una: empG } = useEmpresa(); const empresa = empG || '05'   // items: se trabaja una empresa a la vez
   const [agregar, setAgregar] = useState(false)
   const [nueva, setNueva] = useState<Record<string, string>>({})
   const [msg, setMsg] = useState('')
@@ -204,7 +205,7 @@ export default function Config() {
   const describirFiltros = () => {
     const x: string[] = []
     if (f.tienda.length) x.push(`Tienda(s): ${f.tienda.join(', ')}`)
-    if (f.emp) x.push(`Empresa: ${f.emp}`)
+    if (empG) x.push(`Empresa: ${empG}`)
     if (f.lab.length) x.push(`Laboratorio(s): ${f.lab.join(', ')}`)
     if (f.texto.trim()) x.push(`Texto: “${f.texto.trim()}”`)
     if (f.mes) x.push(`Mes: ${f.mes}`)
@@ -214,7 +215,7 @@ export default function Config() {
   // Borra todo lo que cumple los filtros (no solo lo que se ve o está seleccionado): así se limpia un maestro de cientos de miles de filas para volverlo a subir
   const vaciar = async () => {
     if (!def) return
-    const body = { bodega_id: f.tienda.join(',') || null, q: f.texto.trim() || null, lab: f.lab.join(',') || null, empresa: def.filtros.empresa_opc ? (f.emp || null) : null,
+    const body = { bodega_id: f.tienda.join(',') || null, q: f.texto.trim() || null, lab: f.lab.join(',') || null, empresa: def.filtros.empresa_opc ? (empG || null) : null,
       mes: def.filtros.mes ? (f.mes || null) : null, col: colActiva ? f.col : null, op: colActiva ? f.op : null, val: colActiva ? f.val.trim() || null : null }
     let n = 0
     try { n = (await api(`/maestros/${sel}/vaciar`, { method: 'POST', body: JSON.stringify({ ...body, solo_contar: true }) })).filas } catch (x: any) { setMsg('Error: ' + x.message); return }
@@ -275,13 +276,8 @@ export default function Config() {
       {def && (
         <Paper variant="outlined" sx={{ p: 1, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
           <Typography variant="body2" sx={{ fontWeight: 600 }}>Filtrar</Typography>
-          {def.filtros.empresa && <TextField select size="small" label="Empresa" value={empresa} onChange={e => setEmpresa(e.target.value)} sx={{ width: 150 }}>
-            <MenuItem value="05">05 · Funat</MenuItem><MenuItem value="21">21 · Stores</MenuItem></TextField>}
-          {def.filtros.empresa_opc && <TextField select size="small" label="Empresa" value={f.emp} onChange={e => setF({ emp: e.target.value, tienda: f.tienda.filter(b => !e.target.value || (opc.tiendas.find(t => t.bodega_id === b)?.empresa ?? '').split(',').includes(e.target.value)) })}
-            sx={{ width: 150 }} slotProps={{ select: { displayEmpty: true }, inputLabel: { shrink: true } }}>
-            <MenuItem value="">Todas</MenuItem><MenuItem value="05">05 · Funat</MenuItem><MenuItem value="21">21 · Stores</MenuItem></TextField>}
           {def.filtros.tienda && <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 260, flex: '1 1 260px', maxWidth: 460 }} value={f.tienda}
-            options={opc.tiendas.filter(t => !def.filtros.empresa_opc || !f.emp || (t.empresa ?? '').split(',').includes(f.emp)).map(t => t.bodega_id)}
+            options={opc.tiendas.filter(t => !def.filtros.empresa_opc || !empG || (t.empresa ?? '').split(',').includes(empG)).map(t => t.bodega_id)}
             getOptionLabel={(id: string) => { const t = opc.tiendas.find(x => x.bodega_id === id); return t?.nombre ? `${id} · ${t.nombre}` : id }}
             onChange={(_, v) => setF({ tienda: v })} renderInput={p => <TextField {...p} label="Tienda(s)" />} />}
           <TextField size="small" label={def.filtros.item ? 'Item o descripción' : 'Buscar'} value={f.texto} onChange={e => setF({ texto: e.target.value })} sx={{ width: 200 }} />

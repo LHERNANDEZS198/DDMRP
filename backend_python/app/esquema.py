@@ -137,6 +137,7 @@ SENTENCIAS = [
          bodegas     TEXT[] NOT NULL DEFAULT '{}',
          categorias  TEXT[] NOT NULL DEFAULT '{}',
          actualizado TIMESTAMPTZ NOT NULL DEFAULT now())""",
+    "ALTER TABLE ddmrp.usuario ADD COLUMN IF NOT EXISTS empresas TEXT[] NOT NULL DEFAULT '{}'",   # empresas que puede ver (05 Funat, 21 Stores); vacio = ambas
     """INSERT INTO ddmrp.perfil (perfil_id, nombre, descripcion, nivel, permisos, sistema) VALUES
          ('administrador', 'Administrador', 'Todo, incluido administrar usuarios', 'aprobacion', '{admin}', true),
          ('abastecimiento', 'Abastecimiento', 'Analiza el buffer, aprueba y descarga los planos', 'aprobacion',

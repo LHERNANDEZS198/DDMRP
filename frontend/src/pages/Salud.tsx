@@ -4,6 +4,7 @@ import { Alert, Autocomplete, Box, Button, Card, CardActionArea, Chip, MenuItem,
 import Tabla from '../Tabla'
 import { api, bajar } from '../api'
 import { bodegasDeEmpresa, tiendasDeEmpresa } from '../filtros'
+import { useEmpresa } from '../Empresa'
 
 const ZCOLOR: Record<string, string> = { ROJA: '#c62828', AMARILLA: '#f9a825', VERDE: '#2e7d32', EXCESO: '#1565c0' }
 const COP = (v: any) => v == null ? '' : '$' + Math.round(v).toLocaleString('es-CO')
@@ -12,7 +13,7 @@ const M = (v: number) => Math.abs(v) >= 1e6 ? (v / 1e6).toLocaleString('es-CO', 
 
 export default function Salud() {
   const [criterio, setCriterio] = useState('margen'); const [meses, setMeses] = useState(12)
-  const [empresa, setEmpresa] = useState<string[]>([]); const [bodegas, setBodegas] = useState<string[]>([]); const [labs, setLabs] = useState<string[]>([])
+  const { lista: empresa } = useEmpresa(); const setEmpresa = (_: string[]) => {}; const [bodegas, setBodegas] = useState<string[]>([]); const [labs, setLabs] = useState<string[]>([])
   const [plan, setPlan] = useState(''); const [crit, setCrit] = useState<string[]>([]); const [q, setQ] = useState(''); const [qd, setQd] = useState('')
   const [zonas, setZonas] = useState<string[]>([]); const [diag, setDiag] = useState<string[]>([])
   const [opc, setOpc] = useState<any>({ tiendas: [], laboratorios: [], empresas: [], criterios: [] })
@@ -93,8 +94,6 @@ export default function Salud() {
         <TextField select size="small" label="Zona hoy" value={zonas} onChange={e => setZonas(typeof e.target.value === 'string' ? e.target.value.split(',').filter(Boolean) : e.target.value)}
           slotProps={{ select: { multiple: true } }} sx={{ width: 150 }}>
           {['ROJA', 'AMARILLA', 'VERDE', 'EXCESO'].map(z => <MenuItem key={z} value={z}>{z}</MenuItem>)}</TextField>
-        <Autocomplete multiple size="small" limitTags={1} sx={{ minWidth: 170, flex: '1 1 170px' }} options={opc.empresas} value={empresa}
-          getOptionLabel={(o: string) => o === '05' ? 'Funat (05)' : o === '21' ? 'Stores (21)' : o} onChange={(_, v) => { setEmpresa(v); setBodegas(b => bodegasDeEmpresa(b, opc.tiendas, v)) }} renderInput={p => <TextField {...p} label="Empresa" />} />
         <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 230, flex: '2 1 230px' }} options={tiendasDeEmpresa(opc.tiendas, empresa).map((t: any) => t.bodega_id)} value={bodegas}
           getOptionLabel={(o: string) => nt(o) ? `${o} · ${nt(o)}` : o} onChange={(_, v) => setBodegas(v)} renderInput={p => <TextField {...p} label="Tienda" />} />
         <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 230, flex: '2 1 230px' }} options={opc.laboratorios.map((l: any) => l.codigo)} value={labs}

@@ -76,6 +76,21 @@ def asignaciones(usuario_id: str) -> list[dict]:
         return [dict(x) for x in r.mappings()]
 
 
+EMPRESAS = ("05", "21")     # Funat y Stores
+
+
+def empresas_permitidas(usuario_id: str) -> list[str] | None:
+    """Empresas que el usuario puede ver. None = todas (administrador, ADMIN_BOOTSTRAP o sin restriccion). Se aplica por las bodegas de cada empresa."""
+    if _bootstrap(usuario_id):
+        return None
+    with pg.connect() as c:
+        r = c.execute(text("SELECT u.empresas, p.permisos FROM ddmrp.usuario u LEFT JOIN ddmrp.perfil p ON p.perfil_id = u.perfil_id "
+                           "WHERE u.usuario_id = :u"), {"u": usuario_id}).first()
+    if not r or not r[0] or "admin" in (r[1] or []):
+        return None
+    return [e for e in r[0] if e in EMPRESAS] or None
+
+
 def nivel_efectivo(asigs: list[dict], bodega: str, categoria: str | None) -> int:
     """Maximo nivel entre las asignaciones que aplican a (bodega, categoria)."""
     best = 0
@@ -107,4 +122,9 @@ def filtro_sql_permisos(user: dict, alias_bodega="s.bodega_id", alias_cat="mi.ca
         if a["categoria"] != "*":
             params[f"c{i}"] = a["categoria"]; p.append(f"{alias_cat} = :c{i}")
         partes.append("(" + (" AND ".join(p) or "TRUE") + ")")
-    return "(" + " OR ".join(partes) + ")", params
+    emp = empresas_permitidas(user["id"])
+    extra = ""
+    if emp:      # solo las tiendas de sus empresas (una tienda pertenece a la empresa en la que esta en el maestro de bodegas)
+        params["emp_perm"] = emp
+        extra = f" AND {alias_bodega} IN (SELECT bodega_id FROM ddmrp.maestro_bodega WHERE empresa = ANY(:emp_perm))"
+    return "(" + " OR ".join(partes) + ")" + extra, params

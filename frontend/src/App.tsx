@@ -4,6 +4,7 @@ import { Box, Button, CircularProgress, Typography } from '@mui/material'
 import { api, hasToken, logout } from './api'
 import Login from './Login'
 import Shell from './Shell'
+import { EmpresaProvider } from './Empresa'
 import Control from './pages/Control'
 import Dashboard from './pages/Dashboard'
 import Config from './pages/Config'
@@ -62,7 +63,7 @@ export default function App() {
   return (
     <YoCtx.Provider value={yo}>
       <Routes>
-        <Route element={<SaludProvider><Shell /></SaludProvider>}>
+        <Route element={<EmpresaProvider><SaludProvider><Shell /></SaludProvider></EmpresaProvider>}>
           <Route path="/control" element={<Req to="/control"><Control /></Req>} />
           <Route path="/control/cambios" element={<Req to="/control"><Control /></Req>} />
           <Route path="/control/tendencia" element={<Req to="/control"><Control /></Req>} />

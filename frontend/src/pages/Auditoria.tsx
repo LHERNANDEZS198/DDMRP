@@ -7,6 +7,7 @@ import { api, bajar } from '../api'
 import { bodegasDeEmpresa, tiendasDeEmpresa } from '../filtros'
 import Aviso from '../Aviso'
 import { ayudar } from '../ayuda'
+import { useEmpresa } from '../Empresa'
 
 const ZONAS = ['ROJA', 'AMARILLA', 'VERDE', 'EXCESO']
 const COLOR: Record<string, string> = { ROJA: '#c62828', AMARILLA: '#b78103', VERDE: '#2e7d32', EXCESO: '#1565c0' }
@@ -34,7 +35,9 @@ type Opc = { tiendas: { bodega_id: string; nombre: string; empresa?: string }[];
 
 export default function Auditoria() {
   const [opc, setOpc] = useState<Opc>({ tiendas: [], laboratorios: [], empresas: [], ejecucion: null })
-  const [f, setF] = useState({ empresas: [] as string[], bodegas: [] as string[], labs: [] as string[], q: '', zonas: [] as string[], solo: true, limite: 10000 })
+  const { lista: empG } = useEmpresa()
+  const [f0, setF] = useState({ empresas: [] as string[], bodegas: [] as string[], labs: [] as string[], q: '', zonas: [] as string[], solo: true, limite: 10000 })
+  const f = { ...f0, empresas: empG }
   const [d, setD] = useState<{ total: number; filas: any[]; tope_excel: number; ejecucion: any } | null>(null)
   const [cargando, setCargando] = useState(true)
   const [msg, setMsg] = useState(''); const [bajando, setBajando] = useState(false)
@@ -74,8 +77,6 @@ export default function Auditoria() {
         </Typography>
       </Box>
       <Paper variant="outlined" sx={{ p: 1.5, display: 'flex', flexWrap: 'wrap', gap: 1.5, alignItems: 'center' }}>
-        <Autocomplete multiple size="small" limitTags={1} sx={{ minWidth: 170, flex: '1 1 170px' }} options={opc.empresas} value={f.empresas}
-          getOptionLabel={o => o === '05' ? 'Funat (05)' : o === '21' ? 'Stores (21)' : o} onChange={(_, v) => setF(x => ({ ...x, empresas: v, bodegas: bodegasDeEmpresa(x.bodegas, opc.tiendas, v) }))} renderInput={p => <TextField {...p} label="Empresa" />} />
         <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 240, flex: '2 1 240px' }} options={tiendasDeEmpresa(opc.tiendas, f.empresas).map(t => t.bodega_id)} value={f.bodegas}
           getOptionLabel={id => { const t = opc.tiendas.find(x => x.bodega_id === id); return t?.nombre ? `${id} · ${t.nombre}` : id }}
           onChange={(_, v) => setF(x => ({ ...x, bodegas: v }))} renderInput={p => <TextField {...p} label="Tienda" />} />

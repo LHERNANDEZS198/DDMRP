@@ -8,7 +8,7 @@ from sqlalchemy import text
 from .. import excel
 from ..activos import solo_activos
 from ..db import pg
-from ..security import usuario_actual, requiere
+from ..security import usuario_actual, requiere, empresas_permitidas
 from .control import _csv
 
 router = APIRouter(prefix="/lanzamientos", tags=["lanzamientos"], dependencies=[Depends(requiere("ver_control"))])
@@ -32,7 +32,7 @@ def _sql(w: str) -> str:
                WHERE {w} ORDER BY e.fecha DESC, e.empresa, e.producto_id"""
 
 
-def _donde(desde, hasta, tipo, min_dias, empresa, labs, crit, q, e="e"):
+def _donde(desde, hasta, tipo, min_dias, empresa, labs, crit, q, e="e", user=None):
     hasta = hasta or date.today()
     desde = desde or (hasta - timedelta(days=30))
     cond = ["e.fecha BETWEEN :d AND :h", solo_activos("e")]
@@ -45,6 +45,9 @@ def _donde(desde, hasta, tipo, min_dias, empresa, labs, crit, q, e="e"):
         cond.append("(e.tipo = 'PRIMERA' OR e.dias_sin_stock >= :md)"); p["md"] = min_dias
     if _csv(empresa):
         cond.append("e.empresa = ANY(:emp)"); p["emp"] = _csv(empresa)
+    permitidas = empresas_permitidas(user["id"]) if user else None
+    if permitidas:      # el usuario solo ve las empresas que tiene asignadas
+        cond.append("e.empresa = ANY(:emp_perm)"); p["emp_perm"] = permitidas
     if _csv(labs):
         cond.append("COALESCE(mi.categoria, '') = ANY(:labs)"); p["labs"] = [("" if x == "(sin laboratorio)" else x) for x in _csv(labs)]
     if q and q.strip():
@@ -83,7 +86,7 @@ def filtros(user=Depends(usuario_actual)):
 @router.get("")
 def listar(desde: date | None = None, hasta: date | None = None, tipo: str | None = None, min_dias: int = 0, empresa: str | None = None,
            labs: str | None = None, crit: str | None = None, q: str | None = None, limit: int = Query(3000, le=20000), user=Depends(usuario_actual)):
-    w, p, d, h = _donde(desde, hasta, tipo, min_dias, empresa, labs, crit, q)
+    w, p, d, h = _donde(desde, hasta, tipo, min_dias, empresa, labs, crit, q, user=user)
     with pg.connect() as c:
         filas = [dict(r) for r in c.execute(text(_sql(w) + " LIMIT :lim"), {**p, "lim": limit}).mappings()]
         n = c.execute(text(f"SELECT count(*) FROM ddmrp.cedi_evento e LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = e.producto_id WHERE {w}"), p).scalar()
@@ -102,7 +105,7 @@ COLS = [{"t": "Fecha", "k": "fecha", "w": 12}, {"t": "Tipo", "k": "tipo", "w": 1
 @router.get("/excel")
 def exportar(desde: date | None = None, hasta: date | None = None, tipo: str | None = None, min_dias: int = 0, empresa: str | None = None,
              labs: str | None = None, crit: str | None = None, q: str | None = None, user=Depends(usuario_actual)):
-    w, p, d, h = _donde(desde, hasta, tipo, min_dias, empresa, labs, crit, q)
+    w, p, d, h = _donde(desde, hasta, tipo, min_dias, empresa, labs, crit, q, user=user)
     wb = excel.libro()
     with pg.connect() as c:
         filas = c.execution_options(stream_results=True).execute(text(_sql(w)), p).mappings()

@@ -12,7 +12,7 @@ import { confirmar } from '../alertas'
 
 type Perm = { clave: string; label: string; grupo: string }
 type Perfil = { perfil_id: string; nombre: string; descripcion: string; nivel: string; permisos: string[]; sistema: boolean; usuarios: number }
-type Usr = { usuario_id: string; nombre: string; perfil_id: string; perfil: string; activo: boolean; bodegas: string[]; categorias: string[]; bootstrap: boolean }
+type Usr = { usuario_id: string; nombre: string; perfil_id: string; perfil: string; activo: boolean; bodegas: string[]; categorias: string[]; empresas?: string[]; bootstrap: boolean }
 type Op = { id: string; nombre: string }
 
 const NIVELES: Record<string, string> = {
@@ -20,7 +20,8 @@ const NIVELES: Record<string, string> = {
   edicion: 'Edición — puede corregir datos de sus tiendas',
   aprobacion: 'Aprobación — además aprueba y genera planos',
 }
-const alcance = (u: Usr) => `${u.bodegas.length ? u.bodegas.length + ' tienda(s)' : 'Todas las tiendas'} · ${u.categorias.length ? u.categorias.length + ' lab(s)' : 'todos los labs'}`
+const NOM_EMP: Record<string, string> = { '05': 'Funat', '21': 'Stores' }
+const alcance = (u: Usr) => `${(u.empresas ?? []).length ? (u.empresas ?? []).map(e => NOM_EMP[e] ?? e).join(' + ') : 'Ambas empresas'} · ${u.bodegas.length ? u.bodegas.length + ' tienda(s)' : 'Todas las tiendas'} · ${u.categorias.length ? u.categorias.length + ' lab(s)' : 'todos los labs'}`
 
 /* ---------------- Usuarios ---------------- */
 function Usuarios({ perfiles, setMsg }: { perfiles: Perfil[]; setMsg: (s: string) => void }) {
@@ -29,7 +30,7 @@ function Usuarios({ perfiles, setMsg }: { perfiles: Perfil[]; setMsg: (s: string
   const [q, setQ] = useState('')
   const [ed, setEd] = useState<Partial<Usr> & { nuevo?: boolean } | null>(null)
   const [op, setOp] = useState<{ tiendas: Op[]; laboratorios: Op[] }>({ tiendas: [], laboratorios: [] })
-  const [vc, setVc] = useState<{ perfil_id: string; bodegas: string[]; categorias: string[] } | null>(null)
+  const [vc, setVc] = useState<{ perfil_id: string; bodegas: string[]; categorias: string[]; empresas: string[] } | null>(null)
   const [reloj, setReloj] = useState<Op[]>([])
   const [relojOk, setRelojOk] = useState(true)
   const cargar = () => api('/usuarios').then(setLista).catch(e => setMsg('Error: ' + e.message))
@@ -52,7 +53,7 @@ function Usuarios({ perfiles, setMsg }: { perfiles: Perfil[]; setMsg: (s: string
   const guardar = async (u: Partial<Usr>, cerrar = true) => {
     try {
       await api('/usuarios/' + encodeURIComponent(u.usuario_id!.trim()), { method: 'PUT', body: JSON.stringify({
-        nombre: u.nombre ?? '', perfil_id: u.perfil_id, activo: u.activo ?? true, bodegas: u.bodegas ?? [], categorias: u.categorias ?? [] }) })
+        nombre: u.nombre ?? '', perfil_id: u.perfil_id, activo: u.activo ?? true, bodegas: u.bodegas ?? [], categorias: u.categorias ?? [], empresas: u.empresas ?? [] }) })
       setMsg(`Usuario ${u.usuario_id} guardado`); if (cerrar) setEd(null); cargar()
     } catch (e: any) { setMsg('Error: ' + e.message) }
   }
@@ -69,9 +70,9 @@ function Usuarios({ perfiles, setMsg }: { perfiles: Perfil[]; setMsg: (s: string
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
         <TextField size="small" label="Buscar" value={q} onChange={e => setQ(e.target.value)} sx={{ minWidth: 260 }} />
         <Box sx={{ flex: 1 }} />
-        <Button variant="outlined" startIcon={<Visibility />} onClick={() => setVc({ perfil_id: perfiles[0]?.perfil_id ?? '', bodegas: [], categorias: [] })}
+        <Button variant="outlined" startIcon={<Visibility />} onClick={() => setVc({ perfil_id: perfiles[0]?.perfil_id ?? '', bodegas: [], categorias: [], empresas: [] })}
           title="Entrar como un perfil, sin reloj, para ver sus menús">Ver como perfil</Button>
-        <Button variant="contained" startIcon={<Add />} onClick={() => setEd({ nuevo: true, usuario_id: '', nombre: '', perfil_id: 'consulta', activo: true, bodegas: [], categorias: [] })}>Agregar usuario</Button>
+        <Button variant="contained" startIcon={<Add />} onClick={() => setEd({ nuevo: true, usuario_id: '', nombre: '', perfil_id: 'consulta', activo: true, bodegas: [], categorias: [], empresas: [] })}>Agregar usuario</Button>
       </Stack>
       <Typography variant="body2" color="text.secondary">
         La clave sigue siendo la de reloj. Aquí se decide qué puede hacer cada persona (perfil) y sobre qué tiendas y laboratorios. Quien no esté en esta lista entra pero no ve nada.
@@ -92,7 +93,7 @@ function Usuarios({ perfiles, setMsg }: { perfiles: Perfil[]; setMsg: (s: string
                   onChange={e => guardar({ ...u, activo: e.target.checked }, false)} /></TableCell>
                 <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
                   <Tooltip title="Ver la aplicación como este usuario (sin reloj)"><span><IconButton size="small" disabled={!u.perfil_id || u.usuario_id === yo?.id}
-                    onClick={() => verComo(u.perfil_id!, u.bodegas, u.categorias).catch(e => setMsg('Error: ' + e.message))}><Visibility fontSize="small" /></IconButton></span></Tooltip>
+                    onClick={() => verComo(u.perfil_id!, u.bodegas, u.categorias, u.empresas ?? []).catch(e => setMsg('Error: ' + e.message))}><Visibility fontSize="small" /></IconButton></span></Tooltip>
                   <Tooltip title="Editar"><IconButton size="small" onClick={() => setEd(u)}><Edit fontSize="small" /></IconButton></Tooltip>
                   <Tooltip title="Quitar acceso"><span><IconButton size="small" disabled={u.usuario_id === yo?.id} onClick={() => borrar(u)}><DeleteOutline fontSize="small" /></IconButton></span></Tooltip>
                 </TableCell>
@@ -110,6 +111,9 @@ function Usuarios({ perfiles, setMsg }: { perfiles: Perfil[]; setMsg: (s: string
             <TextField select size="small" label="Perfil" value={vc?.perfil_id ?? ''} onChange={e => setVc(x => ({ ...x!, perfil_id: e.target.value }))}>
               {perfiles.map(p => <MenuItem key={p.perfil_id} value={p.perfil_id}>{p.nombre}</MenuItem>)}
             </TextField>
+            <Autocomplete multiple size="small" options={['05', '21']} value={vc?.empresas ?? []}
+              getOptionLabel={e => `${NOM_EMP[e] ?? e} (${e})`} onChange={(_, v) => setVc(x => ({ ...x!, empresas: v }))}
+              renderInput={p => <TextField {...p} label="Empresas" placeholder={vc?.empresas?.length ? '' : 'Ambas empresas'} />} />
             <Autocomplete multiple size="small" options={op.tiendas.map(t => t.id)} value={vc?.bodegas ?? []}
               getOptionLabel={id => { const t = op.tiendas.find(x => x.id === id); return t?.nombre ? `${id} · ${t.nombre}` : id }}
               onChange={(_, v) => setVc(x => ({ ...x!, bodegas: v }))}
@@ -122,7 +126,7 @@ function Usuarios({ perfiles, setMsg }: { perfiles: Perfil[]; setMsg: (s: string
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setVc(null)}>Cancelar</Button>
-          <Button variant="contained" disabled={!vc?.perfil_id} onClick={() => verComo(vc!.perfil_id, vc!.bodegas, vc!.categorias).catch(e => setMsg('Error: ' + e.message))}>Entrar</Button>
+          <Button variant="contained" disabled={!vc?.perfil_id} onClick={() => verComo(vc!.perfil_id, vc!.bodegas, vc!.categorias, vc!.empresas).catch(e => setMsg('Error: ' + e.message))}>Entrar</Button>
         </DialogActions>
       </Dialog>
       <Dialog open={!!ed} onClose={() => setEd(null)} maxWidth="sm" fullWidth>
@@ -142,6 +146,9 @@ function Usuarios({ perfiles, setMsg }: { perfiles: Perfil[]; setMsg: (s: string
               {perfiles.map(p => <MenuItem key={p.perfil_id} value={p.perfil_id}>{p.nombre}</MenuItem>)}
             </TextField>
             {esAdminPerfil ? <Typography variant="body2" color="text.secondary">El administrador ve todas las tiendas y laboratorios.</Typography> : <>
+              <Autocomplete multiple size="small" options={['05', '21']} value={ed?.empresas ?? []}
+                getOptionLabel={e => `${NOM_EMP[e] ?? e} (${e})`} onChange={(_, v) => setEd(x => ({ ...x!, empresas: v }))}
+                renderInput={p => <TextField {...p} label="Empresas" placeholder={ed?.empresas?.length ? '' : 'Ambas empresas'} helperText="Vacío = ambas. Con una sola, el usuario no ve datos de la otra" />} />
               <Autocomplete multiple size="small" options={op.tiendas.map(t => t.id)} value={ed?.bodegas ?? []}
                 getOptionLabel={id => { const t = op.tiendas.find(x => x.id === id); return t?.nombre ? `${id} · ${t.nombre}` : id }}
                 onChange={(_, v) => setEd(x => ({ ...x!, bodegas: v }))}

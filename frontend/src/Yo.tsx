@@ -1,6 +1,6 @@
 import { createContext, useContext } from 'react'
 
-export type Yo = { id: string; nombre: string; funciones: string[]; es_admin: boolean }
+export type Yo = { id: string; nombre: string; funciones: string[]; es_admin: boolean; empresas?: string[] }
 export const YoCtx = createContext<Yo | null>(null)
 
 /** Quién es el usuario y qué funciones tiene su perfil. `puede('a','b')` = tiene alguna de las dos. */

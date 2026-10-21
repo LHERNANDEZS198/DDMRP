@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { AppBar, Avatar, Box, Divider, Drawer, IconButton, List, ListItemButton, ListItemIcon, ListItemText, ListSubheader, Menu, MenuItem,
-  Toolbar, Typography, useMediaQuery, useTheme, Button } from '@mui/material'
+  Toolbar, Tooltip, Typography, useMediaQuery, useTheme, Button, Select } from '@mui/material'
 import ExpandMore from '@mui/icons-material/ExpandMore'
 import MenuIcon from '@mui/icons-material/Menu'
 import LogoutIcon from '@mui/icons-material/Logout'
@@ -14,6 +14,7 @@ import ManageAccounts from '@mui/icons-material/ManageAccounts'
 import History from '@mui/icons-material/History'
 import FactCheck from '@mui/icons-material/FactCheck'
 import { useYo } from './Yo'
+import { NOMBRE_EMPRESA, useEmpresa } from './Empresa'
 import { BannerSalud } from './Salud'
 import Errores from './Errores'
 import { enPrueba, getUser, logout, volverDePrueba } from './api'
@@ -41,7 +42,7 @@ export const NAV = [
 ]
 
 export default function Shell() {
-  const { yo, puede } = useYo()
+  const { yo, puede } = useYo(); const { empresa, setEmpresa, opciones } = useEmpresa()
   const NAV_OK = NAV.filter(n => puede(...n.req))
   const VISTAS_OK = VISTAS.filter(v => puede(...v.req))
   const theme = useTheme(); const movil = useMediaQuery(theme.breakpoints.down('md'))
@@ -74,6 +75,14 @@ export default function Shell() {
               {n.label}</Button>))
             : <Typography sx={{ flex: 1 }}>{titulo}</Typography>}
           <Box sx={{ flex: 1 }} />
+          <Tooltip title="Empresa con la que trabajas en todas las pantallas. Se conserva hasta que la cambies.">
+            {opciones.length > 1 ? (
+              <Select size="small" value={empresa} onChange={e => setEmpresa(e.target.value)} variant="outlined"
+                sx={{ color: '#fff', height: 32, fontSize: 14, fontWeight: 600, '.MuiSelect-icon': { color: '#fff' }, '.MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(255,255,255,.6)' }, '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#fff' } }}>
+                {opciones.map(o => <MenuItem key={o} value={o}>{o === '*' ? 'Ambas empresas' : `${NOMBRE_EMPRESA[o] ?? o} (${o})`}</MenuItem>)}
+              </Select>) : (
+              <Box sx={{ border: '1px solid rgba(255,255,255,.6)', borderRadius: 1, px: 1, py: .25, fontSize: 14, fontWeight: 600 }}>{NOMBRE_EMPRESA[empresa] ?? empresa} ({empresa})</Box>)}
+          </Tooltip>
           <IconButton onClick={e => setAncla(e.currentTarget)} size="small">
             <Avatar sx={{ width: 32, height: 32, bgcolor: '#fff', color: 'primary.main', fontSize: 14, fontWeight: 700 }}>{(((yo?.nombre || '').trim() || user)[0] || '?').toUpperCase()}</Avatar>
           </IconButton>

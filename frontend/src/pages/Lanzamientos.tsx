@@ -3,6 +3,7 @@ import { ColDef, ICellRendererParams } from 'ag-grid-community'
 import { Autocomplete, Alert, Box, Button, Chip, MenuItem, Paper, TextField, Tooltip, Typography } from '@mui/material'
 import Tabla from '../Tabla'
 import { api, bajar } from '../api'
+import { useEmpresa } from '../Empresa'
 
 const hoy = () => new Date().toISOString().slice(0, 10)
 const hace = (d: number) => new Date(Date.now() - d * 86400000).toISOString().slice(0, 10)
@@ -27,7 +28,7 @@ const COLS: ColDef[] = [
 
 export default function Lanzamientos() {
   const [desde, setDesde] = useState(hace(30)); const [hasta, setHasta] = useState(hoy())
-  const [tipo, setTipo] = useState(''); const [minDias, setMinDias] = useState(0); const [empresa, setEmpresa] = useState('')
+  const [tipo, setTipo] = useState(''); const [minDias, setMinDias] = useState(0); const { una: empresa } = useEmpresa()
   const [labs, setLabs] = useState<string[]>([]); const [plan, setPlan] = useState(''); const [crit, setCrit] = useState<string[]>([])
   const [q, setQ] = useState(''); const [qd, setQd] = useState('')
   const [opc, setOpc] = useState<any>({ laboratorios: [], criterios: [], base: [] })
@@ -71,8 +72,6 @@ export default function Lanzamientos() {
         <TextField select size="small" label="Tipo" value={tipo} onChange={e => setTipo(e.target.value)} sx={{ width: 150 }}>
           <MenuItem value="">Todos</MenuItem><MenuItem value="PRIMERA">Lanzamientos</MenuItem><MenuItem value="REINGRESO">Reingresos</MenuItem></TextField>
         <Tooltip placement="top" title="Solo reingresos que estuvieron al menos estos días sin stock (los lanzamientos siempre salen)"><TextField size="small" type="number" label="Mín. días sin stock" value={minDias} onChange={e => setMinDias(Math.max(0, Number(e.target.value)))} sx={{ width: 160 }} /></Tooltip>
-        <TextField select size="small" label="Empresa" value={empresa} onChange={e => setEmpresa(e.target.value)} sx={{ width: 140 }}>
-          <MenuItem value="">Todas</MenuItem><MenuItem value="05">05 · Funat</MenuItem><MenuItem value="21">21 · Stores</MenuItem></TextField>
         <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 240, flex: '2 1 240px' }} options={opc.laboratorios.map((l: any) => l.codigo)} value={labs}
           getOptionLabel={(o: string) => nl(o) ? `${o} · ${nl(o)}` : o} onChange={(_, v) => setLabs(v)} renderInput={p => <TextField {...p} label="Laboratorio" />} />
         {opc.criterios.length > 0 && <>

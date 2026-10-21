@@ -2,7 +2,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import OAuth2PasswordRequestForm
 from ..auth.mysql_auth import autenticar
-from ..security import crear_token, usuario_actual, asignaciones, permisos
+from ..security import crear_token, usuario_actual, asignaciones, permisos, empresas_permitidas, EMPRESAS
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 log = logging.getLogger("auth")
@@ -23,7 +23,8 @@ def login(form: OAuth2PasswordRequestForm = Depends()):
 @router.get("/me")
 def me(user=Depends(usuario_actual)):
     a = asignaciones(user["id"])
-    return {**user, "funciones": sorted(permisos(user["id"])), "es_admin": any(x["es_admin"] for x in a), "alcance": a}
+    return {**user, "funciones": sorted(permisos(user["id"])), "es_admin": any(x["es_admin"] for x in a), "alcance": a,
+            "empresas": empresas_permitidas(user["id"]) or list(EMPRESAS)}
 
 
 @router.post("/salir-prueba")

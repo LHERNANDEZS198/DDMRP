@@ -15,6 +15,7 @@ import { useYo } from '../Yo'
 import { confirmar } from '../alertas'
 import { GuiaDespacho } from '../guias'
 import HelpOutline from '@mui/icons-material/HelpOutline'
+import { useEmpresa } from '../Empresa'
 
 const cop = (v: number) => '$' + Math.round(v).toLocaleString('es-CO')
 const unidades = (r: any) => Number(r.cantidad_aprobada ?? r.cantidad_sugerida) || 0
@@ -63,8 +64,7 @@ export default function Despacho() {
   const [cedi, setCedi] = useState<any>(null)
   const [guia, setGuia] = useState(false)
   // empresa obligatoria (05 Funat / 21 Stores): cada una tiene su CEDI, su matriz y su plano
-  const [empresa, setEmpresa] = useState<string>(() => { try { return localStorage.getItem('despacho_empresa') ?? '' } catch { return '' } })
-  const elegirEmpresa = (v: string) => { setEmpresa(v); setDia(''); setFiltrar(false); setTiendas([]); try { localStorage.setItem('despacho_empresa', v) } catch { /* sin almacenamiento */ } }
+  const { una: empresa } = useEmpresa()
   // filtros de la lista (en pantalla): texto, laboratorio, zona, solo lo limitado por el CEDI
   const [fTexto, setFTexto] = useState(''); const [fLab, setFLab] = useState(''); const [fZona, setFZona] = useState(''); const [fLim, setFLim] = useState(false)
   const [fTienda, setFTienda] = useState<string | null>(null)   // ver el detalle de los items de una sola tienda
@@ -100,6 +100,7 @@ export default function Despacho() {
       .then(r => { if (n === peticion.current) setRows(r) })
       .finally(() => { if (n === peticion.current) setCargando(false) })
   }
+  useEffect(() => { setDia(''); setFiltrar(false); setTiendas([]) }, [empresa])
   useEffect(() => { setRows([]); setCargando(true); cargar() }, [filtrar, tiendas.join(','), ver, empresa])
   const [nombres, setNombres] = useState<Record<string, string>>({})   // código de tienda -> nombre (Éxito Envigado…)
   useEffect(() => { api('/control/filtros').then(r => setNombres(Object.fromEntries((r.tiendas ?? []).map((t: any) => [t.bodega_id, t.nombre ?? ''])))).catch(() => {}) }, [])
@@ -173,8 +174,6 @@ export default function Despacho() {
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 1.5, minHeight: 500 }}>
       <Paper variant="outlined" sx={{ p: 1.5, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
-        <TextField select size="small" required label="Empresa" value={empresa} onChange={e => elegirEmpresa(e.target.value)} error={!empresa} sx={{ minWidth: 170 }}>
-          <MenuItem value="05">05 · Funat</MenuItem><MenuItem value="21">21 · Stores</MenuItem></TextField>
         <Typography sx={{ fontWeight: 700 }}>Corrida</Typography>
         <TextField select size="small" value={dia} onChange={e => elegirDia(e.target.value)} sx={{ minWidth: 220 }} slotProps={{ select: { displayEmpty: true } }}>
           <MenuItem value="">Todas las tiendas</MenuItem>
@@ -254,7 +253,7 @@ export default function Despacho() {
           </Table>
         </Paper>)}
       <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 300, display: porTienda ? 'none' : 'block' }}>
-        {!empresa && <Alert severity="warning" sx={{ mb: 1 }}>Elige la empresa (05 Funat o 21 Stores) para ver la matriz: cada una tiene su CEDI y su plano.</Alert>}
+        {!empresa && <Alert severity="warning" sx={{ mb: 1 }}>El despacho se trabaja de a una empresa: elige Funat o Stores en la barra de arriba (cada una tiene su CEDI y su plano).</Alert>}
         <Tabla cargando={cargando} textoCargando="Cargando la matriz…" vacio="No hay filas con este filtro" rowData={vista} columnDefs={ayudar(cols)} tooltipShowDelay={300} rowSelection="multiple" rowBuffer={20}
           getRowStyle={(p: any) => bajoMin.has(p.data?.bodega_id) ? { color: '#9e9e9e', background: 'rgba(158,158,158,0.12)' } : undefined}
           context={{ aprobar: pAprobar }} onCellValueChanged={() => setEdiciones(n => n + 1)} onGridReady={e => setGrid(e.api)} defaultColDef={{ resizable: true, sortable: true }} />

@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from ..config import settings
 from ..db import pg, mysql_engine
-from ..security import crear_token, usuario_actual, requiere, permisos, PERMISOS, CLAVES_PERMISO, _bootstrap
+from ..security import crear_token, usuario_actual, requiere, permisos, PERMISOS, CLAVES_PERMISO, EMPRESAS, _bootstrap
 
 router = APIRouter(prefix="/usuarios", tags=["usuarios"], dependencies=[Depends(requiere("admin_usuarios"))])
 NIVELES = ("lectura", "edicion", "aprobacion")
@@ -134,7 +134,7 @@ def borrar_perfil(perfil_id: str, user=Depends(usuario_actual)):
 @router.get("")
 def usuarios():
     with pg.connect() as c:
-        r = c.execute(text("SELECT u.usuario_id, u.nombre, u.perfil_id, p.nombre AS perfil, u.activo, u.bodegas, u.categorias "
+        r = c.execute(text("SELECT u.usuario_id, u.nombre, u.perfil_id, p.nombre AS perfil, u.activo, u.bodegas, u.categorias, u.empresas "
                            "FROM ddmrp.usuario u LEFT JOIN ddmrp.perfil p ON p.perfil_id = u.perfil_id WHERE u.usuario_id NOT LIKE 'prueba:%' ORDER BY u.activo DESC, u.usuario_id")).mappings().all()
     return [{**dict(x), "bootstrap": _bootstrap(x["usuario_id"])} for x in r]
 
@@ -145,12 +145,14 @@ class UsuarioIn(BaseModel):
     activo: bool = True
     bodegas: list[str] = []      # vacio = todas las tiendas
     categorias: list[str] = []   # vacio = todos los laboratorios
+    empresas: list[str] = []     # vacio = ambas empresas (05 Funat, 21 Stores)
 
 
 class VerComoIn(BaseModel):
     perfil_id: str
     bodegas: list[str] = []
     categorias: list[str] = []
+    empresas: list[str] = []
 
 
 @router.post("/ver-como")
@@ -162,15 +164,16 @@ def ver_como(b: VerComoIn, user=Depends(usuario_actual)):
     uid = "prueba:" + user["id"]
     bodegas = [x for x in dict.fromkeys(b.bodegas) if x and x != "*"]
     cats = [x for x in dict.fromkeys(b.categorias) if x and x != "*"]
+    emps = [x for x in dict.fromkeys(b.empresas) if x in EMPRESAS]
     with pg.begin() as c:
         p = c.execute(text("SELECT nombre FROM ddmrp.perfil WHERE perfil_id = :p"), {"p": b.perfil_id}).first()
         if not p:
             raise HTTPException(400, "Perfil inexistente")
         nombre = f"PRUEBA · {p[0]}"
-        c.execute(text("INSERT INTO ddmrp.usuario (usuario_id, nombre, perfil_id, activo, bodegas, categorias, actualizado) "
-                       "VALUES (:u, :n, :p, true, :b, :k, now()) ON CONFLICT (usuario_id) DO UPDATE SET nombre = EXCLUDED.nombre, "
-                       "perfil_id = EXCLUDED.perfil_id, activo = true, bodegas = EXCLUDED.bodegas, categorias = EXCLUDED.categorias, actualizado = now()"),
-                  {"u": uid, "n": nombre, "p": b.perfil_id, "b": bodegas, "k": cats})
+        c.execute(text("INSERT INTO ddmrp.usuario (usuario_id, nombre, perfil_id, activo, bodegas, categorias, empresas, actualizado) "
+                       "VALUES (:u, :n, :p, true, :b, :k, :e, now()) ON CONFLICT (usuario_id) DO UPDATE SET nombre = EXCLUDED.nombre, "
+                       "perfil_id = EXCLUDED.perfil_id, activo = true, bodegas = EXCLUDED.bodegas, categorias = EXCLUDED.categorias, empresas = EXCLUDED.empresas, actualizado = now()"),
+                  {"u": uid, "n": nombre, "p": b.perfil_id, "b": bodegas, "k": cats, "e": emps})
         sincronizar_rbac(c, uid)
         _audit(c, user, uid, "ver_como", None, f"{b.perfil_id} t={len(bodegas) or 'todas'} l={len(cats) or 'todos'}")
     return {"access_token": crear_token({"id": uid, "nombre": nombre}, 120), "token_type": "bearer", "usuario": nombre}
@@ -183,6 +186,9 @@ def guardar_usuario(usuario_id: str, b: UsuarioIn, user=Depends(usuario_actual))
         raise HTTPException(400, "Falta el codigo del usuario (el mismo con el que entra en reloj)")
     bodegas = [x for x in dict.fromkeys(b.bodegas) if x and x != "*"]
     cats = [x for x in dict.fromkeys(b.categorias) if x and x != "*"]
+    emps = [x for x in dict.fromkeys(b.empresas) if x in EMPRESAS]
+    if len(emps) == len(EMPRESAS):
+        emps = []         # las dos = sin restriccion
     with pg.begin() as c:
         p = c.execute(text("SELECT permisos FROM ddmrp.perfil WHERE perfil_id = :p"), {"p": b.perfil_id}).first()
         if not p:
@@ -191,13 +197,13 @@ def guardar_usuario(usuario_id: str, b: UsuarioIn, user=Depends(usuario_actual))
             if not b.activo or not ({"admin", "admin_usuarios"} & set(p[0])):
                 raise HTTPException(400, "No puedes desactivarte ni quitarte el acceso a Usuarios tu mismo")
         ant = c.execute(text("SELECT perfil_id || ' ' || activo FROM ddmrp.usuario WHERE usuario_id = :u"), {"u": usuario_id}).scalar()
-        c.execute(text("INSERT INTO ddmrp.usuario (usuario_id, nombre, perfil_id, activo, bodegas, categorias, actualizado) "
-                       "VALUES (:u, :n, :p, :a, :b, :k, now()) ON CONFLICT (usuario_id) DO UPDATE SET nombre = EXCLUDED.nombre, "
+        c.execute(text("INSERT INTO ddmrp.usuario (usuario_id, nombre, perfil_id, activo, bodegas, categorias, empresas, actualizado) "
+                       "VALUES (:u, :n, :p, :a, :b, :k, :e, now()) ON CONFLICT (usuario_id) DO UPDATE SET nombre = EXCLUDED.nombre, "
                        "perfil_id = EXCLUDED.perfil_id, activo = EXCLUDED.activo, bodegas = EXCLUDED.bodegas, "
-                       "categorias = EXCLUDED.categorias, actualizado = now()"),
-                  {"u": usuario_id, "n": b.nombre.strip() or usuario_id, "p": b.perfil_id, "a": b.activo, "b": bodegas, "k": cats})
+                       "categorias = EXCLUDED.categorias, empresas = EXCLUDED.empresas, actualizado = now()"),
+                  {"u": usuario_id, "n": b.nombre.strip() or usuario_id, "p": b.perfil_id, "a": b.activo, "b": bodegas, "k": cats, "e": emps})
         sincronizar_rbac(c, usuario_id)
-        _audit(c, user, usuario_id, "usuario", ant, f"{b.perfil_id} {b.activo} t={len(bodegas) or 'todas'} l={len(cats) or 'todos'}")
+        _audit(c, user, usuario_id, "usuario", ant, f"{b.perfil_id} {b.activo} t={len(bodegas) or 'todas'} l={len(cats) or 'todos'} e={','.join(emps) or 'ambas'}")
     return {"ok": True}
 
 

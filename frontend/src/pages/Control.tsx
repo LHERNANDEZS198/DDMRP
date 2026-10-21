@@ -7,6 +7,7 @@ import { BufferTrend, ZonaShare, Punto } from '../TrendCharts'
 import { api, bajar } from '../api'
 import { bodegasDeEmpresa, tiendasDeEmpresa } from '../filtros'
 import { AYUDA, ayudar } from '../ayuda'
+import { useEmpresa } from '../Empresa'
 
 const COLOR: Record<string, string> = { ROJA: '#c62828', AMARILLA: '#f9a825', VERDE: '#2e7d32', EXCESO: '#1565c0' }
 const HEAT: Record<string, string> = { R: '#E8B9B7', A: '#FFC000', V: '#92D050', E: '#4792DC' }   // mismos colores del Excel de control
@@ -110,7 +111,9 @@ export default function Control() {
   // ?tienda=SV011&item=058076 (viene del boton de la matriz de despacho): abre filtrado en el detalle de esa tienda e item
   const [sp] = useSearchParams()
   const tiendaUrl = sp.get('tienda') ?? '', itemUrl = sp.get('item') ?? ''
-  const [f, setF] = useState<F>(() => ({ ...VACIO, bodegas: tiendaUrl ? [tiendaUrl] : [], q: itemUrl }))
+  const { lista: empG } = useEmpresa()
+  const [f0, setF] = useState<F>(() => ({ ...VACIO, bodegas: tiendaUrl ? [tiendaUrl] : [], q: itemUrl }))
+  const f = useMemo<F>(() => ({ ...f0, empresa: empG }), [f0, empG.join()])
   const [qTxt, setQTxt] = useState(itemUrl)
   const [nivel, setNivel] = useState<Nivel>(tiendaUrl || itemUrl ? 'detalle' : 'empresa')
   const [opc, setOpc] = useState<any>({ tiendas: [], laboratorios: [], dias: [], empresas: [], criterios: [], ejecucion: null })
@@ -166,7 +169,7 @@ export default function Control() {
     setF(x => ({ ...x, [k]: Array.isArray(x[k]) ? (x[k] as string[]).filter(y => y !== v) : '' }))
     if (k === 'q') setQTxt('')
   }
-  const hayFiltros = f.empresa.length + f.bodegas.length + f.labs.length + f.zonas.length + f.crit.length > 0 || !!f.q || !!f.dia
+  const hayFiltros = f.bodegas.length + f.labs.length + f.zonas.length + f.crit.length > 0 || !!f.q || !!f.dia
 
   const colsGrupo: ColDef[] = useMemo(() => [
     { field: 'clave', headerName: NIVELES.find(n => n.k === nivel)?.label, width: 130, pinned: 'left' },
@@ -286,9 +289,6 @@ export default function Control() {
 
       {/* Filtros */}
       <Paper variant="outlined" sx={{ flexShrink: 0, p: 1.25, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
-        <Autocomplete multiple size="small" limitTags={1} sx={{ minWidth: 200, flex: '1 1 200px' }} options={opc.empresas} value={f.empresa}
-          getOptionLabel={(o: string) => o === '05' ? 'Funat (05)' : o === '21' ? 'Stores (21)' : o}
-          onChange={(_, v) => setF(x => ({ ...x, empresa: v, bodegas: bodegasDeEmpresa(x.bodegas, opc.tiendas, v) }))} renderInput={p => <TextField {...p} label="Empresa" />} />
         <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 240, flex: '2 1 240px' }} options={tiendasDeEmpresa(opc.tiendas, f.empresa).map((t: any) => t.bodega_id)} value={f.bodegas}
           getOptionLabel={(o: string) => nombreTienda(o) ? `${o} · ${nombreTienda(o)}` : o}
           onChange={(_, v) => setF(x => ({ ...x, bodegas: v }))} renderInput={p => <TextField {...p} label="Tienda" />} />
@@ -350,7 +350,7 @@ export default function Control() {
       {tendModo && (
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
           <Box sx={{ flex: 1 }} />
-          {f.empresa.map(v => <Chip key={'e' + v} size="small" color="primary" label={`Empresa ${v}`} onDelete={() => quitar('empresa', v)} />)}
+          
           {f.bodegas.map(v => <Chip key={'b' + v} size="small" color="primary" label={`Tienda ${v}`} onDelete={() => quitar('bodegas', v)} />)}
           {f.labs.map(v => <Chip key={'l' + v} size="small" color="primary" label={`Lab ${v}`} onDelete={() => quitar('labs', v)} />)}
           {f.crit.map(v => <Chip key={'c' + v} size="small" color="primary" label={`${planNombre(f.plan)}: ${critNombre(f.plan, v)}`} onDelete={() => quitar('crit', v)} />)}
@@ -370,7 +370,7 @@ export default function Control() {
           {NIVELES.map(n => <Tab key={n.k} value={n.k} label={<Tooltip title={AYUDA[n.label] ?? ''} placement="top"><span>{n.label}</span></Tooltip>} />)}
         </Tabs>}
         <Box sx={{ flex: 1 }} />
-        {f.empresa.map(v => <Chip key={'e' + v} size="small" color="primary" label={`Empresa ${v}`} onDelete={() => quitar('empresa', v)} />)}
+        
         {f.bodegas.map(v => <Chip key={'b' + v} size="small" color="primary" label={`Tienda ${v}`} onDelete={() => quitar('bodegas', v)} />)}
         {f.labs.map(v => <Chip key={'l' + v} size="small" color="primary" label={`Lab ${v}`} onDelete={() => quitar('labs', v)} />)}
         {f.crit.map(v => <Chip key={'c' + v} size="small" color="primary" label={`${planNombre(f.plan)}: ${critNombre(f.plan, v)}`} onDelete={() => quitar('crit', v)} />)}

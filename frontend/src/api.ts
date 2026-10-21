@@ -6,8 +6,8 @@ export const logout = () => { ['token', 'user', 'token_admin', 'user_admin'].for
 
 /** Modo "ver como perfil": se guarda el token del administrador y se entra con uno temporal del perfil elegido (sin reloj). */
 export const enPrueba = () => !!localStorage.getItem('token_admin')
-export async function verComo(perfil_id: string, bodegas: string[], categorias: string[]) {
-  const r = await api('/usuarios/ver-como', { method: 'POST', body: JSON.stringify({ perfil_id, bodegas, categorias }) })
+export async function verComo(perfil_id: string, bodegas: string[], categorias: string[], empresas: string[] = []) {
+  const r = await api('/usuarios/ver-como', { method: 'POST', body: JSON.stringify({ perfil_id, bodegas, categorias, empresas }) })
   if (!enPrueba()) { localStorage.setItem('token_admin', token); localStorage.setItem('user_admin', getUser()) }
   setToken(r.access_token); localStorage.setItem('user', r.usuario); location.href = '/'
 }
