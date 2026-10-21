@@ -3,6 +3,7 @@ import { ColDef, ICellRendererParams } from 'ag-grid-community'
 import { Alert, Autocomplete, Box, Button, Card, CardActionArea, Chip, MenuItem, Paper, TextField, Tooltip, Typography } from '@mui/material'
 import Tabla from '../Tabla'
 import { api, bajar } from '../api'
+import { bodegasDeEmpresa, tiendasDeEmpresa } from '../filtros'
 
 const ZCOLOR: Record<string, string> = { ROJA: '#c62828', AMARILLA: '#f9a825', VERDE: '#2e7d32', EXCESO: '#1565c0' }
 const COP = (v: any) => v == null ? '' : '$' + Math.round(v).toLocaleString('es-CO')
@@ -93,8 +94,8 @@ export default function Salud() {
           slotProps={{ select: { multiple: true } }} sx={{ width: 150 }}>
           {['ROJA', 'AMARILLA', 'VERDE', 'EXCESO'].map(z => <MenuItem key={z} value={z}>{z}</MenuItem>)}</TextField>
         <Autocomplete multiple size="small" limitTags={1} sx={{ minWidth: 170, flex: '1 1 170px' }} options={opc.empresas} value={empresa}
-          getOptionLabel={(o: string) => o === '05' ? 'Funat (05)' : o === '21' ? 'Stores (21)' : o} onChange={(_, v) => setEmpresa(v)} renderInput={p => <TextField {...p} label="Empresa" />} />
-        <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 230, flex: '2 1 230px' }} options={opc.tiendas.map((t: any) => t.bodega_id)} value={bodegas}
+          getOptionLabel={(o: string) => o === '05' ? 'Funat (05)' : o === '21' ? 'Stores (21)' : o} onChange={(_, v) => { setEmpresa(v); setBodegas(b => bodegasDeEmpresa(b, opc.tiendas, v)) }} renderInput={p => <TextField {...p} label="Empresa" />} />
+        <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 230, flex: '2 1 230px' }} options={tiendasDeEmpresa(opc.tiendas, empresa).map((t: any) => t.bodega_id)} value={bodegas}
           getOptionLabel={(o: string) => nt(o) ? `${o} · ${nt(o)}` : o} onChange={(_, v) => setBodegas(v)} renderInput={p => <TextField {...p} label="Tienda" />} />
         <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 230, flex: '2 1 230px' }} options={opc.laboratorios.map((l: any) => l.codigo)} value={labs}
           getOptionLabel={(o: string) => nl(o) ? `${o} · ${nl(o)}` : o} onChange={(_, v) => setLabs(v)} renderInput={p => <TextField {...p} label="Laboratorio" />} />

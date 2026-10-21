@@ -5,6 +5,7 @@ import { Autocomplete, Box, Button, Card, CardActionArea, Chip, MenuItem, Paper,
 import { useLocation, useSearchParams } from 'react-router-dom'
 import { BufferTrend, ZonaShare, Punto } from '../TrendCharts'
 import { api, bajar } from '../api'
+import { bodegasDeEmpresa, tiendasDeEmpresa } from '../filtros'
 import { AYUDA, ayudar } from '../ayuda'
 
 const COLOR: Record<string, string> = { ROJA: '#c62828', AMARILLA: '#f9a825', VERDE: '#2e7d32', EXCESO: '#1565c0' }
@@ -287,8 +288,8 @@ export default function Control() {
       <Paper variant="outlined" sx={{ flexShrink: 0, p: 1.25, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
         <Autocomplete multiple size="small" limitTags={1} sx={{ minWidth: 200, flex: '1 1 200px' }} options={opc.empresas} value={f.empresa}
           getOptionLabel={(o: string) => o === '05' ? 'Funat (05)' : o === '21' ? 'Stores (21)' : o}
-          onChange={(_, v) => setF(x => ({ ...x, empresa: v }))} renderInput={p => <TextField {...p} label="Empresa" />} />
-        <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 240, flex: '2 1 240px' }} options={opc.tiendas.map((t: any) => t.bodega_id)} value={f.bodegas}
+          onChange={(_, v) => setF(x => ({ ...x, empresa: v, bodegas: bodegasDeEmpresa(x.bodegas, opc.tiendas, v) }))} renderInput={p => <TextField {...p} label="Empresa" />} />
+        <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 240, flex: '2 1 240px' }} options={tiendasDeEmpresa(opc.tiendas, f.empresa).map((t: any) => t.bodega_id)} value={f.bodegas}
           getOptionLabel={(o: string) => nombreTienda(o) ? `${o} · ${nombreTienda(o)}` : o}
           onChange={(_, v) => setF(x => ({ ...x, bodegas: v }))} renderInput={p => <TextField {...p} label="Tienda" />} />
         <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 240, flex: '2 1 240px' }} options={opc.laboratorios.map((l: any) => l.codigo)} value={f.labs}

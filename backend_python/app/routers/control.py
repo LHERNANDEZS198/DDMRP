@@ -62,7 +62,7 @@ def filtros(user=Depends(usuario_actual)):
     with pg.connect() as c:
         ej = c.execute(text(f"SELECT id, fecha_calculo, fin FROM ddmrp.ejecucion_motor WHERE id = {ULTIMA}")).mappings().first()
         tiendas = [dict(r) for r in c.execute(text(
-            f"SELECT s.bodega_id, string_agg(DISTINCT mb.descripcion, ' / ') AS nombre {base} GROUP BY s.bodega_id ORDER BY 1"), p).mappings()]
+            f"SELECT s.bodega_id, string_agg(DISTINCT mb.descripcion, ' / ') AS nombre, string_agg(DISTINCT s.empresa, ',') AS empresa {base} GROUP BY s.bodega_id ORDER BY 1"), p).mappings()]
         labs = [dict(r) for r in c.execute(text(
             f"SELECT DISTINCT COALESCE(mi.categoria, '') AS codigo, lb.nombre {base} ORDER BY 1"), p).mappings()]
         empresas = [r[0] for r in c.execute(text(f"SELECT DISTINCT s.empresa {base} ORDER BY 1"), p)]

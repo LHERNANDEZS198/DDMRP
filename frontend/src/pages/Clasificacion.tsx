@@ -10,6 +10,7 @@ import Tabla from '../Tabla'
 import { CampoSelect } from '../Campos'
 import HelpOutline from '@mui/icons-material/HelpOutline'
 import { api, bajar } from '../api'
+import { bodegasDeEmpresa, tiendasDeEmpresa } from '../filtros'
 import { confirmar } from '../alertas'
 import { GuiaClasificacion } from '../guias'
 
@@ -170,8 +171,8 @@ export default function Clasificacion() {
         <Tooltip placement="top" title="A = lo que junta hasta este % acumulado del criterio"><TextField size="small" type="number" label="Corte A %" value={corteA} onChange={e => setCorteA(Number(e.target.value))} error={!valido} sx={{ width: 100 }} /></Tooltip>
         <Tooltip placement="top" title="B = hasta este % acumulado; el resto es C"><TextField size="small" type="number" label="Corte B %" value={corteB} onChange={e => setCorteB(Number(e.target.value))} error={!valido} sx={{ width: 100 }} /></Tooltip>
         <Autocomplete multiple size="small" limitTags={1} sx={{ minWidth: 170, flex: '1 1 170px' }} options={opc.empresas} value={empresa}
-          getOptionLabel={(o: string) => o === '05' ? 'Funat (05)' : o === '21' ? 'Stores (21)' : o} onChange={(_, v) => setEmpresa(v)} renderInput={p => <TextField {...p} label="Empresa" />} />
-        <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 230, flex: '2 1 230px' }} options={opc.tiendas.map((t: any) => t.bodega_id)} value={bodegas}
+          getOptionLabel={(o: string) => o === '05' ? 'Funat (05)' : o === '21' ? 'Stores (21)' : o} onChange={(_, v) => { setEmpresa(v); setBodegas(b => bodegasDeEmpresa(b, opc.tiendas, v)) }} renderInput={p => <TextField {...p} label="Empresa" />} />
+        <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 230, flex: '2 1 230px' }} options={tiendasDeEmpresa(opc.tiendas, empresa).map((t: any) => t.bodega_id)} value={bodegas}
           getOptionLabel={(o: string) => nt(o) ? `${o} · ${nt(o)}` : o} onChange={(_, v) => setBodegas(v)} renderInput={p => <TextField {...p} label="Tienda" />} />
         <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 230, flex: '2 1 230px' }} options={opc.laboratorios.map((l: any) => l.codigo)} value={labs}
           getOptionLabel={(o: string) => nl(o) ? `${o} · ${nl(o)}` : o} onChange={(_, v) => setLabs(v)} renderInput={p => <TextField {...p} label="Laboratorio" />} />
