@@ -92,7 +92,8 @@ def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, l
            k.zona, k.pct_buffer, k.flujo_neto, k.sugerido, k.inv_suma, k.dias_hist, k.dias_cero,
            (SELECT ci.costo::float8 FROM ddmrp.costo_item ci WHERE ci.producto_id = k.producto_id) AS costo
     FROM k LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = k.producto_id LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = k.bodega_id AND mb.empresa = k.empresa
-    WHERE {' AND '.join(cond)}"""
+    WHERE {' AND '.join(cond)}
+      AND (COALESCE(k.cant, 0) > 0 OR COALESCE(k.valor, 0) > 0 OR COALESCE(k.inventario, 0) > 0)"""   # sin venta y sin inventario no es un D: no se lista
     return [dict(r) for r in c.execute(text(sql), p).mappings()]
 
 
@@ -233,7 +234,7 @@ METODOLOGIA = [
     ("Infaltables (I)", "Solo con el metodo 'percentil': los items se ordenan por el criterio y se mide su posicion entre los clasificables (1 = el mejor, 0 = el peor, como PERCENTRANK de Excel). "
                         "I = percentil >= {corte_i}%, A = >= {corte_a}%, B = >= {corte_b}%, C el resto. Con el metodo 'pareto' no hay Infaltables."),
     ("XYZ", "Por el indice de variabilidad (IV) del motor: X = IV < {c1}, Y = {c1} a {c2}, Z = IV > {c2} (cortes de la tabla de factores VAR). A nivel item es el IV de sus tiendas ponderado por la venta diaria (ADU)."),
-    ("D", "Sin venta en las tiendas en la ventana (no cuenta lo que el CEDI vende a wholesale o digital; puede tener inventario: ver Inventario a costo)."),
+    ("D", "Sin venta en las tiendas en la ventana (no cuenta lo que el CEDI vende a wholesale o digital) PERO con inventario: lo que no vende ni tiene stock no se lista (ver Inventario a costo)."),
     ("N", "Producto nuevo: su primera venta es de {nuevo_desde} en adelante; aun no tiene historia para clasificarlo. Solo se aplica con ventanas de 6 meses o mas."),
     ("S", "Sin costo conocido en Siesa: no se puede calcular margen ni consumo a costo."),
     ("GMROI", "Margen anualizado / inventario PROMEDIO a costo. El promedio sale de la foto diaria de inventario de las tiendas dentro de la ventana (resumida por mes); donde no hay historia se usa el inventario de hoy (ver 'Dias con historia'). Cuantos pesos de margen deja cada peso invertido en inventario al año. En grupos y totales se calcula con las sumas en pesos, no promediando los de cada item."),
