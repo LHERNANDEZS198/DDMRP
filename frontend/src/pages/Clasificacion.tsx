@@ -205,6 +205,9 @@ export default function Clasificacion() {
       {!valido && <Typography color="error" variant="body2">Los cortes deben cumplir 0 &lt; A &lt; B ≤ 100.</Typography>}
       {err && <Typography color="error" variant="body2">{err}</Typography>}
 
+      {d && d.meta.meses_con_datos < d.meta.meses && <Alert severity="warning" sx={{ py: 0 }}>
+        Pediste {d.meta.meses} meses pero las ventas cargadas cubren solo {d.meta.meses_con_datos}{d.meta.primer_mes_datos ? ` (desde ${String(d.meta.primer_mes_datos).slice(0, 4)}-${String(d.meta.primer_mes_datos).slice(4)})` : ''}. Las ventas, el ranking y las clases salen de ese periodo más corto: sube «Meses de historia de ventas» en Reglas de pedido y vuelve a traer las ventas.
+      </Alert>}
       {d && <Paper variant="outlined" sx={{ flexShrink: 0, p: 1.25, overflow: 'auto' }}>
         <Typography variant="caption" color="text.secondary">
           {d.meta.criterio_nombre} · ventana {String(d.meta.desde).slice(0, 10)} a {String(d.meta.hasta).slice(0, 10)} · XYZ por IV del motor (X &lt; {d.meta.cortes_iv[0]}, Y hasta {d.meta.cortes_iv[1]}, Z mayor) · clic en una clase o celda para filtrar la lista (Ctrl/Mayús+clic en una clase suma otra); lo que no está filtrado se atenúa

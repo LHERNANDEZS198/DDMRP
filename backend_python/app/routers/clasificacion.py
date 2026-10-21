@@ -153,7 +153,8 @@ def _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, 
     nuevo = cl.mes_nuevo(date.today(), 3) if meses >= 6 else None     # con ventanas cortas todo seria 'nuevo'
     with pg.connect() as c:
         cortes = _cortes_iv(c)
-        c.execute(text("SET LOCAL statement_timeout = 50000"))     # menos que el timeout de nginx (60 s): falla con mensaje en vez de dejar consultas colgadas
+        c.execute(text("SET LOCAL statement_timeout = 50000"))
+        meses_datos = [r[0] for r in c.execute(text("SELECT DISTINCT mes FROM ddmrp.ventas_mensual WHERE mes >= :m ORDER BY 1"), {"m": mes_desde})]     # menos que el timeout de nginx (60 s): falla con mensaje en vez de dejar consultas colgadas
         try:
             filas = _filas(c, user, mes_desde, True, empresa, bodegas, labs, crit, q, planes=planes, solo_con=solo_con)
             hay_filtro = bool(_csv(empresa) or _csv(bodegas) or _csv(labs) or _csv(crit) or (q and q.strip()) or (solo_con and _csv(planes)))
@@ -172,7 +173,8 @@ def _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, 
             it["clase_global"] = it["clase"]
     meta = {"nivel": nivel, "criterio": criterio, "criterio_nombre": cl.CRITERIOS[criterio], "meses": min(max(meses, 1), 12), "desde": d0, "hasta": date.today(),
             "dias": dias, "corte_a": corte_a, "corte_b": corte_b, "corte_i": corte_i, "metodo": metodo, "cortes_iv": cortes, "nuevo_desde": nuevo,
-            "sin_valor": not any(i["valor"] for i in items) and bool(items)}
+            "sin_valor": not any(i["valor"] for i in items) and bool(items),
+            "meses_con_datos": len(meses_datos), "primer_mes_datos": meses_datos[0] if meses_datos else None}
     return items, meta
 
 
