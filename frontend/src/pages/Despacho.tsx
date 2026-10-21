@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Tabla from '../Tabla'
 import { ColDef, GridApi, ICellRendererParams } from 'ag-grid-community'
-import { Alert, Box, Button, Checkbox, Chip, Collapse, FormControlLabel, IconButton, MenuItem, Paper, Stack, Table, TableBody, TableCell, TableHead, TableRow, TextField, Tooltip, Typography } from '@mui/material'
+import { Alert, Autocomplete, Box, Button, Checkbox, Chip, Collapse, FormControlLabel, IconButton, MenuItem, Paper, Stack, Table, TableBody, TableCell, TableHead, TableRow, TextField, Tooltip, Typography } from '@mui/material'
 import Insights from '@mui/icons-material/Insights'
 import Check from '@mui/icons-material/Check'
 import Download from '@mui/icons-material/Download'
@@ -67,6 +67,7 @@ export default function Despacho() {
   const elegirEmpresa = (v: string) => { setEmpresa(v); setDia(''); setFiltrar(false); setTiendas([]); try { localStorage.setItem('despacho_empresa', v) } catch { /* sin almacenamiento */ } }
   // filtros de la lista (en pantalla): texto, laboratorio, zona, solo lo limitado por el CEDI
   const [fTexto, setFTexto] = useState(''); const [fLab, setFLab] = useState(''); const [fZona, setFZona] = useState(''); const [fLim, setFLim] = useState(false)
+  const [fTienda, setFTienda] = useState<string | null>(null)   // ver el detalle de los items de una sola tienda
   const [fCero, setFCero] = useState(false)   // filas con 0 a enviar: ocultas por defecto (a la tienda no le llega nada)
   const [porTienda, setPorTienda] = useState(false)
   const [ediciones, setEdiciones] = useState(0)   // al cambiar "A enviar" a mano se recalculan los totales
@@ -100,13 +101,15 @@ export default function Despacho() {
       .finally(() => { if (n === peticion.current) setCargando(false) })
   }
   useEffect(() => { setRows([]); setCargando(true); cargar() }, [filtrar, tiendas.join(','), ver, empresa])
+  const tiendasEnFilas = useMemo(() => [...new Set(rows.map(r => r.bodega_id).filter(Boolean))].sort() as string[], [rows])
+  useEffect(() => { if (fTienda && !tiendasEnFilas.includes(fTienda)) setFTienda(null) }, [tiendasEnFilas])   // cambió la corrida o la empresa
   const labs = useMemo(() => [...new Set(rows.map(r => r.categoria).filter(Boolean))].sort() as string[], [rows])
   const vista = useMemo(() => {
     const t = fTexto.trim().toLowerCase()
-    return rows.filter(r => (!t || `${r.producto_id} ${r.descripcion ?? ''} ${r.bodega_id}`.toLowerCase().includes(t)) && (!fLab || r.categoria === fLab)
+    return rows.filter(r => (!t || `${r.producto_id} ${r.descripcion ?? ''} ${r.bodega_id}`.toLowerCase().includes(t)) && (!fLab || r.categoria === fLab) && (!fTienda || r.bodega_id === fTienda)
       && (!fZona || r.zona === fZona) && (!fLim || r.limitado) && (fCero || fLim || unidades(r) > 0))   // 'solo limitadas' muestra tambien las de 0: son justo las que el CEDI no alcanzo a cubrir
-  }, [rows, fTexto, fLab, fZona, fLim, fCero])
-  const hayFiltro = !!(fTexto || fLab || fZona || fLim)
+  }, [rows, fTexto, fLab, fTienda, fZona, fLim, fCero])
+  const hayFiltro = !!(fTexto || fLab || fTienda || fZona || fLim)
   // totales de lo que se ve: unidades y costo, en total y por tienda
   const tot = useMemo(() => {
     const por = new Map<string, { filas: number; uds: number; valor: number; sinCosto: number }>()
@@ -211,6 +214,8 @@ export default function Despacho() {
       </Paper>
       <Paper variant="outlined" sx={{ p: 1, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
         <TextField size="small" label="Buscar item, descripción o tienda" value={fTexto} onChange={e => setFTexto(e.target.value)} sx={{ width: 260 }} />
+        <Autocomplete size="small" sx={{ width: 170 }} options={tiendasEnFilas} value={fTienda} onChange={(_, v) => setFTienda(v)} noOptionsText="Sin tiendas"
+          renderInput={p => <TextField {...p} label="Tienda (detalle)" placeholder="Todas" />} />
         <TextField select size="small" label="Laboratorio" value={fLab} onChange={e => setFLab(e.target.value)} sx={{ minWidth: 160 }}>
           <MenuItem value="">Todos</MenuItem>{labs.map(l => <MenuItem key={l} value={l}>{l}</MenuItem>)}</TextField>
         <TextField select size="small" label="Zona" value={fZona} onChange={e => setFZona(e.target.value)} sx={{ minWidth: 130 }}>
@@ -218,7 +223,7 @@ export default function Despacho() {
         <FormControlLabel control={<Checkbox size="small" checked={fLim} onChange={e => setFLim(e.target.checked)} />} label="Solo limitadas por el CEDI" />
         <Tooltip placement="top" title={fLim ? 'Con “Solo limitadas por el CEDI” se ven también las que quedaron en 0' : 'Filas en las que no se le enviará nada a la tienda (A enviar = 0). Ocultas por defecto.'}><span>
           <FormControlLabel control={<Checkbox size="small" checked={fCero || fLim} disabled={fLim} onChange={e => setFCero(e.target.checked)} />} label="Mostrar items con enviar en 0" /></span></Tooltip>
-        {hayFiltro && <Button size="small" onClick={() => { setFTexto(''); setFLab(''); setFZona(''); setFLim(false) }}>Quitar filtros</Button>}
+        {hayFiltro && <Button size="small" onClick={() => { setFTexto(''); setFLab(''); setFTienda(null); setFZona(''); setFLim(false) }}>Quitar filtros</Button>}
         <Box sx={{ flex: 1 }} />
         <Chip label={`${vista.length.toLocaleString()}${vista.length !== rows.length ? ` de ${rows.length.toLocaleString()}` : ''} filas`} size="small" />
         <Chip label={`${Math.round(tot.uds).toLocaleString('es-CO')} uds a enviar`} size="small" color="primary" />
