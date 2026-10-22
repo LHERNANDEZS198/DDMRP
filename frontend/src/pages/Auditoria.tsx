@@ -37,7 +37,7 @@ export default function Auditoria() {
   const [opc, setOpc] = useState<Opc>({ tiendas: [], laboratorios: [], empresas: [], ejecucion: null })
   const { lista: empG } = useEmpresa()
   const [f0, setF] = useState({ empresas: [] as string[], bodegas: [] as string[], labs: [] as string[], q: '', zonas: [] as string[], solo: true, limite: 10000 })
-  const f = { ...f0, empresas: empG }
+  const f = useMemo(() => ({ ...f0, empresas: empG }), [f0, empG.join()])
   const [d, setD] = useState<{ total: number; filas: any[]; tope_excel: number; ejecucion: any } | null>(null)
   const [cargando, setCargando] = useState(true)
   const [msg, setMsg] = useState(''); const [bajando, setBajando] = useState(false)
