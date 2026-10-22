@@ -8,11 +8,11 @@ import { useYo } from '../Yo'
 import { useSalud } from '../Salud'
 import { RepartoDias } from './Reglas'
 
-const Lista = ({ children }: { children: ReactNode }) => <Box component="ul" sx={{ m: 0, pl: 3, display: 'grid', gap: .5, '& li': { fontSize: 14 } }}>{children}</Box>
+const Lista = ({ children }: { children: ReactNode }) => <Box component="ul" sx={{ m: 0, pl: 3, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: .5, '& li': { fontSize: 14 } }}>{children}</Box>
 const Seccion = ({ titulo, children }: { titulo: string; children: ReactNode }) => (
   <Card variant="outlined">
     <CardHeader title={titulo} slotProps={{ title: { variant: 'subtitle1', fontWeight: 700 } }} sx={{ bgcolor: '#eef2e3', py: 1 }} />
-    <CardContent sx={{ display: 'grid', gap: 1.5 }}>{children}</CardContent>
+    <CardContent sx={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 1.5 }}>{children}</CardContent>
   </Card>)
 const fechaHora = (s?: string) => s ? new Date(s).toLocaleString('es-CO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''
 
@@ -42,10 +42,10 @@ export default function Motor() {
   const ult = salud?.ultimo_motor_ok
 
   return (
-    <Box sx={{ maxWidth: 980, mx: 'auto', display: 'grid', gap: 2 }}>
+    <Box sx={{ maxWidth: 980, mx: 'auto', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 2 }}>
       <Dialog open={!!aviso} onClose={() => setAviso(null)} maxWidth="sm" fullWidth>
         <DialogTitle>{aviso?.d.corrio_hoy ? 'El motor ya corrió hoy' : (aviso?.que === 'pipeline' ? 'Correr ETL + motor' : 'Recalcular con el motor')}</DialogTitle>
-        <DialogContent sx={{ display: 'grid', gap: 1.5 }}>
+        <DialogContent sx={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 1.5 }}>
           <Alert severity="info" sx={{ '& .MuiAlert-message': { width: '100%' } }}>
             <RepartoDias editar={editar} compacto onCambio={m => { if (m.startsWith('Error')) setMsg(m) }}
               onElegidos={e => setAviso(p => p ? { ...p, d: { ...p.d, dias_reparto: e } } : p)} />
@@ -60,7 +60,7 @@ export default function Motor() {
             Ya hay {aviso?.d.corridas} corrida(s) de hoy (la última a las {aviso?.d.ultima ? new Date(aviso.d.ultima).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }) : ''}).
             Si corres de nuevo:
           </Typography>}
-          <Box component="ul" sx={{ m: 0, pl: 3, display: 'grid', gap: 0.5 }}>
+          <Box component="ul" sx={{ m: 0, pl: 3, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 0.5 }}>
             {aviso?.d.corrio_hoy && <li>La matriz de despacho y el plano pasan a usar <b>solo la corrida nueva</b>.</li>}
             {aviso?.d.corrio_hoy && <li>Lo <b>Enviado</b> se conserva; lo aprobado sin enviar y las cantidades editadas a mano vuelven a <b>Pendiente</b>.</li>}
             {aviso?.d.corrio_hoy && <li>Las cantidades pueden cambiar porque el CEDI se reparte con el stock fresco de PT001.</li>}
@@ -90,7 +90,7 @@ export default function Motor() {
       {/* Las dos acciones */}
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2 }}>
         <Card variant="outlined" sx={{ display: 'flex', flexDirection: 'column' }}>
-          <CardContent sx={{ display: 'grid', gap: 1.25, flex: 1, alignContent: 'start' }}>
+          <CardContent sx={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 1.25, flex: 1, alignContent: 'start' }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}><Calculate color="primary" /><Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Recalcular ahora (solo motor)</Typography></Box>
             <Typography variant="body2">Vuelve a calcular los buffers y las cantidades sugeridas <b>con los datos de Siesa que ya están guardados</b>. No consulta Siesa, salvo el inventario del CEDI, que sí se lee fresco.</Typography>
             <Typography variant="caption" sx={{ fontWeight: 700 }}>Úsalo cuando cambiaste…</Typography>
@@ -106,7 +106,7 @@ export default function Motor() {
           </Box>
         </Card>
         <Card variant="outlined" sx={{ display: 'flex', flexDirection: 'column' }}>
-          <CardContent sx={{ display: 'grid', gap: 1.25, flex: 1, alignContent: 'start' }}>
+          <CardContent sx={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 1.25, flex: 1, alignContent: 'start' }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}><PlayCircle color="primary" /><Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Correr ETL + motor completo</Typography></Box>
             <Typography variant="body2">Primero <b>lee Siesa de nuevo</b> (ETL) y después calcula con el motor. Es lo mismo que corre solo cada noche.</Typography>
             <Typography variant="caption" sx={{ fontWeight: 700 }}>Úsalo cuando…</Typography>
@@ -128,7 +128,7 @@ export default function Motor() {
       <Divider textAlign="left"><Chip size="small" label="Cómo funciona" /></Divider>
 
       <Seccion titulo="El flujo completo, paso a paso">
-        <Box component="ol" sx={{ m: 0, pl: 3, display: 'grid', gap: 1, '& li': { fontSize: 14 } }}>
+        <Box component="ol" sx={{ m: 0, pl: 3, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 1, '& li': { fontSize: 14 } }}>
           <li><b>ETL (Siesa → base de datos).</b> Trae las tiendas, el inventario de cada tienda (disponible = existencia − comprometido, según las reglas de «Datos de Siesa»), los costos promedio, los traslados en tránsito, los items con sus criterios, laboratorio y <b>estado</b>, y el inventario físico del CEDI. Con la regla «Solo items activos» en Sí, los items inactivos o bloqueados en Siesa no entran. Los items <b>REC</b> se suman a su original. Si la regla lo indica, también trae las <b>ventas por mes</b> (unidades y valor en pesos sin IVA).</li>
           <li><b>Motor (cálculo del buffer).</b> Para cada tienda × item calcula la venta diaria (ADU) y su variabilidad (IV), las zonas del buffer —<span style={{ color: '#c62828', fontWeight: 700 }}>roja</span>, <span style={{ color: '#b28704', fontWeight: 700 }}>amarilla</span> y <span style={{ color: '#2e7d32', fontWeight: 700 }}>verde</span>— con sus topes (TOR, TOY, TOG), y el <b>flujo neto</b> (inventario + tránsito − demanda calificada). Con eso y las reglas de pedido decide si pide, cuánto, y lo lleva a la unidad de despacho.</li>
           <li><b>Reparto del CEDI.</b> Si el stock del CEDI no alcanza para todo lo que piden las tiendas, lo reparte según la regla de reparto, respetando la reserva del CEDI y, si lo configuraste, solo entre las tiendas de los DIAs elegidos.</li>

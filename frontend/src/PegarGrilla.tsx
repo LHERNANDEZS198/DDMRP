@@ -155,7 +155,7 @@ export default function PegarGrilla({ titulo, ayuda, columnas, ocupado, onFinali
   const celda = { borderRight: '1px solid', borderBottom: '1px solid', borderColor: 'divider', px: 1, display: 'flex', alignItems: 'center', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontSize: 13, position: 'relative' as const }
 
   return (
-    <Paper variant="outlined" sx={{ borderTop: '3px solid', borderTopColor: 'primary.main', p: 2, display: 'grid', gap: 1.5 }}>
+    <Paper variant="outlined" sx={{ borderTop: '3px solid', borderTopColor: 'primary.main', p: 2, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 1.5 }}>
       <Typography variant="subtitle1" sx={{ textTransform: 'uppercase', fontWeight: 400 }}>Cargar datos a <b>{titulo}</b></Typography>
       <Alert severity="info" icon={false} sx={{ py: 0.25, fontStyle: 'italic' }}>
         Copia las celdas directamente de Excel y pégalas aquí con <b>Ctrl+V</b> (puedes incluir la fila de encabezados o no). También puedes escribir celda por celda.

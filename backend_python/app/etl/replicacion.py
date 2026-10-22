@@ -660,6 +660,10 @@ def _sincronizar_ventas() -> dict:
                                SELECT empresa, mes, bodega_id, producto_id, SUM(cantidad), COALESCE(SUM(valor), 0) FROM stg_vm
                                WHERE mes >= %s GROUP BY 1, 2, 3, 4""", (f"{desde:%Y%m}",))
                 res["meses_desde"] = f"{desde:%Y%m}"
+                ret = _param(cur, "meses_retencion_ventas")
+                ret = int(min(max(ret if ret else 36, 13), 120))
+                cur.execute("DELETE FROM ddmrp.ventas_mensual WHERE mes < to_char(current_date - make_interval(months => %s), 'YYYYMM')", (ret,))
+                res["ventas_borradas_por_antiguas"] = cur.rowcount
                 res["fuera_del_maestro"] = _purgar_fuera_del_maestro(cur)
             raw.commit()
         except Exception:

@@ -31,7 +31,7 @@ export function RepartoDias({ editar, onCambio, compacto, onElegidos }: { editar
   const todas = d.elegidos.length === 0
   const alternar = (dia: number) => guardar(d.elegidos.includes(dia) ? d.elegidos.filter(x => x !== dia) : [...d.elegidos, dia].sort((a, b) => a - b))
   return (
-    <Box sx={{ display: 'grid', gap: 1 }}>
+    <Box sx={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 1 }}>
       <Box><Typography sx={{ fontWeight: 600 }}>{compacto ? '¿Entre qué tiendas se reparte el stock del CEDI en esta corrida?' : 'Entre qué tiendas se reparte el inventario del CEDI'}</Typography>
         {!compacto && <Typography variant="caption" color="text.secondary">
           La necesidad de cada referencia se suma entre las tiendas que entran al reparto; si el CEDI no alcanza, se reparte entre ellas con la regla de arriba.
@@ -58,7 +58,7 @@ function Diagnostico() {
   }
   const inv = res?.local?.inventario_actual?.[0]
   return (
-    <Box sx={{ display: 'grid', gap: 1.5 }}>
+    <Box sx={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 1.5 }}>
       <Typography variant="body2" color="text.secondary">
         Escribe la tienda y la referencia (ej. SV021 y 190240): se consulta Siesa en vivo (existencia, comprometida y costos) y se compara con el inventario que tiene este sistema.
       </Typography>
@@ -68,7 +68,7 @@ function Diagnostico() {
         <Button variant="outlined" disabled={!bodega.trim() || !prod.trim() || cargando} onClick={consultar}>{cargando ? 'Consultando…' : 'Consultar'}</Button>
       </Stack>
       {err && <Alert severity="error">{err}</Alert>}
-      {res && (<Box sx={{ display: 'grid', gap: 1 }}>
+      {res && (<Box sx={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 1 }}>
         <Alert severity={res.local.en_bitacora.length ? 'success' : 'warning'} sx={{ py: 0 }}>
           {res.local.en_bitacora.length ? `La tienda ${res.bodega} está en la bitácora (empresa ${res.local.en_bitacora[0].empresa}): el ETL trae su inventario.`
             : `La tienda ${res.bodega} NO está en la bitácora: el ETL no trae su inventario y el motor la ignora. Cárgala en Maestros → Bitácora.`}
@@ -118,7 +118,7 @@ export default function Reglas() {
     catch (e: any) { setMsg('Error: ' + e.message) }
   }
   return (
-    <Box sx={{ maxWidth: 860, mx: 'auto', display: 'grid', gap: 2 }}>
+    <Box sx={{ maxWidth: 860, mx: 'auto', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 2 }}>
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ alignItems: { sm: 'center' } }}>
         <Typography variant="h6" sx={{ flex: 1, fontWeight: 700 }}>Reglas de pedido</Typography>
         {motor && <Button variant="outlined" component={RouterLink} to="/motor">Ir a Motor DDMRP (recalcular / ETL)</Button>}
@@ -129,7 +129,7 @@ export default function Reglas() {
       {grupos.map(([titulo, claves]) => (
         <Card key={titulo} variant="outlined">
           <CardHeader title={titulo} slotProps={{ title: { variant: 'subtitle1', fontWeight: 700 } }} sx={{ bgcolor: '#eef2e3', py: 1 }} />
-          <CardContent sx={{ display: 'grid', gap: 2 }}>
+          <CardContent sx={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 2 }}>
             {claves.map(k => reglas.find(r => r.clave === k)).filter((r): r is Regla => !!r).map(r => (
               <Box key={r.clave} sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 280px' }, gap: 1, alignItems: 'center' }}>
                 <Box><Typography sx={{ fontWeight: 600 }}>{r.titulo}</Typography><Typography variant="caption" color="text.secondary">{r.ayuda}</Typography></Box>

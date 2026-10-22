@@ -12,6 +12,7 @@ import Insights from '@mui/icons-material/Insights'
 import Storage from '@mui/icons-material/Storage'
 import ManageAccounts from '@mui/icons-material/ManageAccounts'
 import History from '@mui/icons-material/History'
+import MonitorHeart from '@mui/icons-material/MonitorHeart'
 import FactCheck from '@mui/icons-material/FactCheck'
 import { useYo } from './Yo'
 import { NOMBRE_EMPRESA, useEmpresa } from './Empresa'
@@ -39,6 +40,7 @@ export const NAV = [
   { to: '/config', label: 'Maestros', icon: <Storage />, req: ['ver_maestros', 'cargar_maestros', 'sincronizar_siesa'] },
   { to: '/usuarios', label: 'Usuarios', icon: <ManageAccounts />, req: ['admin_usuarios'] },
   { to: '/log', label: 'Log', icon: <History />, req: ['ver_log'] },
+  { to: '/diagnostico', label: 'Diagnóstico', icon: <MonitorHeart />, req: ['ver_diagnostico'] },
 ]
 
 export default function Shell() {
@@ -53,12 +55,12 @@ export default function Shell() {
   const titulo = VISTAS.find(v => loc.pathname === v.to)?.label ?? NAV.find(n => !(n as any).vistas && loc.pathname.startsWith(n.to))?.label ?? ''
   const activo = (n: any) => n.vistas ? enInformes : loc.pathname.startsWith(n.to)
   return (
-    <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <Box sx={{ height: '100dvh', width: '100%', maxWidth: '100vw', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
       <AppBar position="static" color="primary">
-        <Toolbar variant="dense" sx={{ gap: 1 }}>
+        <Toolbar variant="dense" sx={{ gap: { xs: .5, md: 1 }, minWidth: 0, px: { xs: 1, md: 2 } }}>
           {movil && <IconButton color="inherit" edge="start" onClick={() => setAbierto(true)}><MenuIcon /></IconButton>}
-          <Box component="img" src="/logo-sersa.jpeg" alt="" sx={{ height: 30, borderRadius: 1, bgcolor: 'white', p: .3 }} />
-          <Typography sx={{ fontWeight: 700, mr: 2 }}>DDMRP</Typography>
+          <Box component="img" src="/logo-sersa.jpeg" alt="" sx={{ height: 28, borderRadius: 1, bgcolor: 'white', p: .3, flexShrink: 0, display: { xs: 'none', sm: 'block' } }} />
+          <Typography sx={{ fontWeight: 700, mr: { xs: 0, md: 2 }, display: { xs: 'none', sm: 'block' } }}>DDMRP</Typography>
           {!movil ? NAV_OK.map(n => (n as any).vistas ? (
             <Box key={n.to}>
               <Button color="inherit" startIcon={n.icon} endIcon={<ExpandMore />} onClick={e => setAnclaV(e.currentTarget)}
@@ -73,11 +75,12 @@ export default function Shell() {
             <Button key={n.to} component={NavLink} to={n.to} color="inherit" startIcon={n.icon}
               sx={{ opacity: activo(n) ? 1 : .75, borderBottom: activo(n) ? '2px solid #fff' : '2px solid transparent', borderRadius: 0 }}>
               {n.label}</Button>))
-            : <Typography sx={{ flex: 1 }}>{titulo}</Typography>}
+            
+            : <Typography noWrap sx={{ flex: 1, minWidth: 0, fontSize: { xs: 15, sm: 16 } }}>{titulo}</Typography>}
           <Box sx={{ flex: 1 }} />
           <Tooltip title="Empresa con la que trabajas en todas las pantallas. Se conserva hasta que la cambies.">
             {opciones.length > 1 ? (
-              <Select size="small" value={empresa} onChange={e => setEmpresa(e.target.value)} variant="outlined"
+              <Select size="small" value={empresa} onChange={e => setEmpresa(e.target.value)} variant="outlined" renderValue={(v: string) => movil ? (v === '*' ? 'Ambas' : (NOMBRE_EMPRESA[v] ?? v)) : (v === '*' ? 'Ambas empresas' : `${NOMBRE_EMPRESA[v] ?? v} (${v})`)}
                 sx={{ color: '#fff', height: 32, fontSize: 14, fontWeight: 600, '.MuiSelect-icon': { color: '#fff' }, '.MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(255,255,255,.6)' }, '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#fff' } }}>
                 {opciones.map(o => <MenuItem key={o} value={o}>{o === '*' ? 'Ambas empresas' : `${NOMBRE_EMPRESA[o] ?? o} (${o})`}</MenuItem>)}
               </Select>) : (
@@ -107,6 +110,6 @@ export default function Shell() {
           <Box sx={{ flex: 1 }}>Modo prueba: ves la aplicación como <b>{user}</b>, sin reloj. Lo que hagas queda registrado con ese nombre.</Box>
           <Button size="small" variant="outlined" color="inherit" onClick={volverDePrueba}>Volver a mi usuario</Button>
         </Box>)}
-      <Box component="main" sx={{ flex: 1, minHeight: 0, p: { xs: 1, md: 2 }, overflow: 'auto' }}><BannerSalud /><Errores clave={loc.pathname}><Outlet /></Errores></Box>
+      <Box component="main" sx={{ flex: 1, minHeight: 0, minWidth: 0, p: { xs: 1, md: 2 }, overflow: 'auto' }}><BannerSalud /><Errores clave={loc.pathname}><Outlet /></Errores></Box>
     </Box>)
 }

@@ -308,7 +308,7 @@ export default function Config() {
       </Box>
       <Dialog open={agregar} onClose={() => setAgregar(false)} maxWidth="xs" fullWidth>
         <DialogTitle>Agregar fila · {def?.label}</DialogTitle>
-        <DialogContent sx={{ display: 'grid', gap: 1.5, pt: '8px !important' }}>
+        <DialogContent sx={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 1.5, pt: '8px !important' }}>
           {def && [...def.llave, ...def.editable].map(k => (
             <TextField key={k} size="small" label={k + (def.llave.includes(k) ? (k === 'empresa' ? ' (vacío = se deduce)' : k === 'bodega_id' && def.todas ? ' (vacío o * = todas)' : '') : '')}
               value={nueva[k] ?? ''} onChange={e => setNueva({ ...nueva, [k]: e.target.value })} />))}

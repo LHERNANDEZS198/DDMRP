@@ -13,6 +13,7 @@ import Reglas from './pages/Reglas'
 import Motor from './pages/Motor'
 import Usuarios from './pages/Usuarios'
 import Log from './pages/Log'
+import Diagnostico from './pages/Diagnostico'
 import Auditoria from './pages/Auditoria'
 import Lanzamientos from './pages/Lanzamientos'
 import Clasificacion from './pages/Clasificacion'
@@ -34,6 +35,7 @@ export const PANTALLAS = [
   { to: '/config', req: ['ver_maestros', 'cargar_maestros', 'sincronizar_siesa'] },
   { to: '/usuarios', req: ['admin_usuarios'] },
   { to: '/log', req: ['ver_log'] },
+  { to: '/diagnostico', req: ['ver_diagnostico'] },
 ]
 
 function Req({ to, children }: { to: string; children: ReactElement }) {
@@ -47,7 +49,7 @@ function Inicio() {
   const p = PANTALLAS.find(x => puede(...x.req))
   if (p) return <Navigate to={p.to} replace />
   return (
-    <Box sx={{ maxWidth: 520, mx: 'auto', mt: 8, textAlign: 'center', display: 'grid', gap: 1.5 }}>
+    <Box sx={{ maxWidth: 520, mx: 'auto', mt: 8, textAlign: 'center', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 1.5 }}>
       <Typography variant="h6" sx={{ fontWeight: 700 }}>Tu usuario aún no tiene un perfil</Typography>
       <Typography color="text.secondary">Entraste como {yo?.nombre}, pero nadie te ha dado acceso a esta aplicación. Pídele al administrador que te asigne un perfil.</Typography>
       <Box><Button onClick={logout}>Cerrar sesión</Button></Box>
@@ -79,6 +81,7 @@ export default function App() {
           <Route path="/usuarios" element={<Req to="/usuarios"><Usuarios /></Req>} />
           <Route path="/auditoria" element={<Req to="/auditoria"><Auditoria /></Req>} />
           <Route path="/log" element={<Req to="/log"><Log /></Req>} />
+          <Route path="/diagnostico" element={<Req to="/diagnostico"><Diagnostico /></Req>} />
           <Route path="*" element={<Inicio />} />
         </Route>
       </Routes>

@@ -68,7 +68,7 @@ function Usuarios({ perfiles, setMsg }: { perfiles: Perfil[]; setMsg: (s: string
   return (
     <Stack spacing={1.5}>
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-        <TextField size="small" label="Buscar" value={q} onChange={e => setQ(e.target.value)} sx={{ minWidth: 260 }} />
+        <TextField size="small" label="Buscar" value={q} onChange={e => setQ(e.target.value)} sx={{ minWidth: { sm: 260 } }} />
         <Box sx={{ flex: 1 }} />
         <Button variant="outlined" startIcon={<Visibility />} onClick={() => setVc({ perfil_id: perfiles[0]?.perfil_id ?? '', bodegas: [], categorias: [], empresas: [] })}
           title="Entrar como un perfil, sin reloj, para ver sus menús">Ver como perfil</Button>
@@ -259,7 +259,7 @@ export default function UsuariosPage() {
   const cargar = () => api('/usuarios/perfiles').then(setPerfiles).catch(e => setMsg('Error: ' + e.message))
   useEffect(() => { cargar(); api('/usuarios/catalogo').then(x => setPermisos(x.permisos)) }, [])
   return (
-    <Box sx={{ maxWidth: 1100, mx: 'auto', display: 'grid', gap: 1.5 }}>
+    <Box sx={{ maxWidth: 1100, mx: 'auto', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 1.5 }}>
       <Typography variant="h6" sx={{ fontWeight: 700 }}>Usuarios y perfiles</Typography>
       <Tabs value={tab} onChange={(_, v) => { setTab(v); cargar() }}><Tab label="Usuarios" /><Tab label="Perfiles y permisos" /></Tabs>
       {tab === 0 ? <Usuarios perfiles={perfiles} setMsg={setMsg} /> : <Perfiles perfiles={perfiles} permisos={permisos} recargar={cargar} setMsg={setMsg} />}

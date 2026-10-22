@@ -12,3 +12,9 @@
   background-color: rgba(110, 138, 55, .22) !important;
   user-select: none;
 }
+
+/* celulares: nada debe ensanchar la pagina (si algo se sale, Chrome aleja el zoom y todo se ve diminuto) */
+html, body, #root { max-width: 100%; overflow-x: hidden; }
+@media (max-width: 600px) {
+  .ag-theme-quartz { --ag-font-size: 13px; --ag-grid-size: 5px; }
+}

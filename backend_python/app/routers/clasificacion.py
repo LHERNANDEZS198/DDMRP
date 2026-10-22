@@ -1,6 +1,6 @@
 """Clasificacion ABC x XYZ de items sobre las ventas de la ultima ventana de meses, recalculada con los filtros que escoja el usuario
 (tiendas, laboratorios, criterios, empresa) y descargable a Excel. Metodologia en app/clasificacion.py y en la hoja 'Metodologia' del Excel."""
-import re
+import re, time
 from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
@@ -8,6 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from .. import clasificacion as cl, excel
 from ..activos import solo_activos
+from ..consultas import anotar
 from ..db import pg
 from ..security import usuario_actual, filtro_sql_permisos, requiere
 from .control import _csv
@@ -127,7 +128,9 @@ def _clase_global(c, user, mes_desde, nivel, criterio, corte_a, corte_b, nuevo, 
     clave_c = (ej, w, tuple(sorted((k, str(v)) for k, v in p.items())), mes_desde, nivel, criterio, corte_a, corte_b, str(nuevo), tuple(cortes), metodo, corte_i)
     hit = _CACHE_GLOBAL.get(clave_c)
     if hit and time.time() - hit[0] < _CACHE_TTL:
+        anotar(cache_global="hit")
         return hit[1]
+    anotar(cache_global="miss")
     filas_g = _filas(c, user, mes_desde, False, hist=False)
     glob = cl.agregar(filas_g, nivel); cl.calcular(glob, dias); cl.clasificar(glob, criterio, corte_a, corte_b, nuevo, cortes, metodo, corte_i)
     clave = (lambda x: (x["empresa"], x["bodega_id"], x["producto_id"])) if nivel == "tienda_item" else (lambda x: x["producto_id"])
@@ -151,6 +154,7 @@ def _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, 
         raise HTTPException(400, "Los cortes por percentil deben cumplir 0 < B < A < Infaltable < 100")
     mes_desde, d0, dias = _ventana(meses)
     nuevo = cl.mes_nuevo(date.today(), 3) if meses >= 6 else None     # con ventanas cortas todo seria 'nuevo'
+    t_ini = time.perf_counter()
     with pg.connect() as c:
         cortes = _cortes_iv(c)
         c.execute(text("SET LOCAL statement_timeout = 50000"))
@@ -161,9 +165,12 @@ def _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, 
             g = _clase_global(c, user, mes_desde, nivel, criterio, corte_a, corte_b, nuevo, cortes, dias, metodo, corte_i) if (con_global and hay_filtro) else None
         except DBAPIError as e:
             if "statement timeout" in str(e):
+                anotar(estado="timeout", error="statement_timeout 50 s", ms_sql=int((time.perf_counter() - t_ini) * 1000))
                 raise HTTPException(503, "El informe tardo demasiado. Acota con una tienda o un laboratorio, o avisa a sistemas (estadisticas de la base).")
             raise
+    t_sql = time.perf_counter()
     items = cl.agregar(filas, nivel); cl.calcular(items, dias); cl.clasificar(items, criterio, corte_a, corte_b, nuevo, cortes, metodo, corte_i)
+    anotar(ms_sql=int((t_sql - t_ini) * 1000), ms_calc=int((time.perf_counter() - t_sql) * 1000), filas=len(items), filas_sql=len(filas), nivel=nivel, con_global=g is not None)
     if g is not None:       # clase de cada item contra TODO el universo que el usuario puede ver (sin los filtros de pantalla)
         clave = (lambda x: (x["empresa"], x["bodega_id"], x["producto_id"])) if nivel == "tienda_item" else (lambda x: x["producto_id"])
         for it in items:
