@@ -8,6 +8,8 @@ import { ayudar } from '../ayuda'
 import { useEmpresa } from '../Empresa'
 
 const num = (p: any) => p.value == null ? '' : Number(p.value).toLocaleString('es-CO', { maximumFractionDigits: 2 })
+const COP = (p: any) => p.value == null ? '' : '$' + Math.round(p.value).toLocaleString('es-CO')
+const MM = (v: number) => '$' + (Math.abs(v) >= 1e6 ? (v / 1e6).toLocaleString('es-CO', { maximumFractionDigits: 1 }) + ' M' : Math.round(v).toLocaleString('es-CO'))
 const cols: ColDef[] = [
   { field: 'bodega_id', headerName: 'Bodega', filter: true, width: 110 },
   { field: 'producto_id', headerName: 'Producto', filter: true, width: 110 },
@@ -20,6 +22,8 @@ const cols: ColDef[] = [
   { field: 'sobran', headerName: 'Sobran (u.)', type: 'numericColumn', headerTooltip: 'Unidades por encima del tope verde ajustado (TOG aj.) en las tiendas en sobrestock.', cellStyle: { color: '#1565c0', fontWeight: 600 }, valueFormatter: (p: any) => p.value ? Number(p.value).toLocaleString('es-CO', { maximumFractionDigits: 0 }) : '' },
   { field: 'faltan', headerName: 'Faltan (u.)', type: 'numericColumn', headerTooltip: 'Unidades que separan el flujo neto del tope verde ajustado (TOG aj.) cuando NO hay sobrestock. Es la distancia al tope, no el sugerido del motor (que además aplica mínimos, redondeo y el inventario del CEDI).', cellStyle: { color: '#c62828', fontWeight: 600 }, valueFormatter: (p: any) => p.value ? Number(p.value).toLocaleString('es-CO', { maximumFractionDigits: 0 }) : '' },
   { field: 'rotacion', headerName: 'Rotación (uds/mes)', type: 'numericColumn', headerTooltip: 'Venta mensual promedio que usa el motor (ADU), en unidades por mes.', valueFormatter: num },
+  { field: 'sobran_costo', headerName: 'Sobra a costo $', type: 'numericColumn', width: 130, headerTooltip: 'Unidades que sobran × costo promedio actual del item: la plata que está de más sobre el tope verde.', cellStyle: { color: '#1565c0', fontWeight: 600 }, valueFormatter: p => p.value ? COP(p) : '' },
+  { field: 'faltan_costo', headerName: 'Falta a costo $', type: 'numericColumn', width: 130, headerTooltip: 'Unidades que faltan para llegar al tope verde × costo promedio actual: lo que costaría llenar el buffer (no es el sugerido del motor).', cellStyle: { color: '#c62828', fontWeight: 600 }, valueFormatter: p => p.value ? COP(p) : '' },
   ...colsCobertura(),
   { field: 'pct_buffer', headerName: '% buffer', type: 'numericColumn', sort: 'asc', valueFormatter: num },
   { field: 'cantidad_sugerida', headerName: 'Sugerido', type: 'numericColumn', valueFormatter: num },
@@ -35,8 +39,8 @@ const AYUDA_ZONA: Record<string, string> = {
   EXCESO: 'Por encima del tope del buffer: hay de más (capital inmovilizado).' }
 
 export default function Dashboard() {
-  const [res, setRes] = useState<{ zona: string; n: number }[]>([])
-  const [d, setD] = useState<{ total: number; filas: any[] }>({ total: 0, filas: [] })
+  const [res, setRes] = useState<{ zona: string; n: number; sobran_costo: number; faltan_costo: number; sin_costo: number }[]>([])
+  const [d, setD] = useState<{ total: number; filas: any[]; totales?: any }>({ total: 0, filas: [] })
   const [cargando, setCargando] = useState(true)
   const [zona, setZona] = useState('ROJA')   // zona cuya lista se ve abajo (clic en una tarjeta)
   const [opc, setOpc] = useState<any>({ tiendas: [], laboratorios: [], empresas: [], criterios: [] })
@@ -58,6 +62,7 @@ export default function Dashboard() {
     return () => { vivo = false }
   }, [qs, zona])
   const hayFiltro = !!qs
+  const pie = useMemo(() => d.totales ? [{ descripcion: `TOTAL · ${d.total.toLocaleString('es-CO')} combinaciones${d.total > d.filas.length ? ' (toda la lista, no solo las filas visibles)' : ''}`, ...d.totales }] : [], [d])
   const total = res.reduce((a, r) => a + r.n, 0) || 1
   const nl = (c: string) => opc.laboratorios.find((l: any) => l.codigo === c)?.nombre
   const nt = (id: string) => opc.tiendas.find((t: any) => t.bodega_id === id)?.nombre
@@ -92,7 +97,12 @@ export default function Dashboard() {
             <CardActionArea sx={{ p: 1.5 }} onClick={() => setZona(r.zona)} title={AYUDA_ZONA[r.zona]}>
               <Typography variant="caption" color="text.secondary">Zona {r.zona.toLowerCase()}</Typography>
               <Typography variant="h5" sx={{ fontWeight: 700 }}>{r.n.toLocaleString()}</Typography>
-              <Typography variant="caption" color="text.secondary">{((r.n / total) * 100).toFixed(1)}% de las combinaciones</Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>{((r.n / total) * 100).toFixed(1)}% de las combinaciones</Typography>
+              {r.zona === 'EXCESO'
+                ? <Typography variant="body2" sx={{ fontWeight: 600, color: color.EXCESO }} title="Unidades por encima del tope verde ajustado × costo promedio (sin items condenados).">Sobra a costo {MM(r.sobran_costo)}</Typography>
+                : r.zona !== 'VERDE' || r.faltan_costo > 0
+                  ? <Typography variant="body2" sx={{ fontWeight: 600, color: color.ROJA }} title="Lo que separa el flujo neto del tope verde ajustado × costo promedio: lo que costaría llenar los buffers (no es el sugerido del motor; sin items condenados).">Falta a costo {MM(r.faltan_costo)}</Typography> : null}
+              {r.sin_costo > 0 && <Typography variant="caption" color="warning.main" sx={{ display: 'block' }} title="Combinaciones con unidades por sobrar o faltar cuyo item no tiene costo en Siesa: no suman a este valor.">{r.sin_costo.toLocaleString('es-CO')} sin costo</Typography>}
             </CardActionArea>
           </Card>))}
       </Box>
@@ -102,7 +112,7 @@ export default function Dashboard() {
           label={d.total > d.filas.length ? `Mostrando ${d.filas.length.toLocaleString('es-CO')} de ${d.total.toLocaleString('es-CO')}: filtra para ver el resto` : `${d.total.toLocaleString('es-CO')} combinaciones`} />
       </Box>
       <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 300 }}>
-        <Tabla cargando={cargando} vacio={`Sin productos en zona ${zona.toLowerCase()} con estos filtros`} rowData={d.filas} columnDefs={ayudar(cols)} rowBuffer={20} animateRows={false} tooltipShowDelay={300} defaultColDef={{ resizable: true, sortable: true }} />
+        <Tabla cargando={cargando} vacio={`Sin productos en zona ${zona.toLowerCase()} con estos filtros`} rowData={d.filas} pinnedBottomRowData={pie} getRowStyle={p => p.node.rowPinned ? { fontWeight: 700, background: '#eef3e2' } : undefined} columnDefs={ayudar(cols)} rowBuffer={20} animateRows={false} tooltipShowDelay={300} defaultColDef={{ resizable: true, sortable: true }} />
       </Box>
     </Box>)
 }
