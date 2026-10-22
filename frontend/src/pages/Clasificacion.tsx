@@ -37,6 +37,7 @@ export default function Clasificacion() {
   const [fc, setFc] = useState<{ plan: string; vals: string[] }[]>([{ plan: '', vals: [] }])   // filtros por criterio de items: planes distintos se combinan (Y), valores del mismo plan (O)
   const [agrupar, setAgrupar] = useState(''); const [dentro, setDentro] = useState(false); const [soloCon, setSoloCon] = useState(false)   // soloCon: excluir items sin valor en los criterios elegidos
      // vista por dentro de un criterio; dentro = ABC recalculado en cada grupo
+  const [indInv, setIndInv] = useState(false)   // indicadores de inventario (estado hoy, sobran/faltan, GMROI, rotación, días…): apagado por defecto para no saturar
   const [q, setQ] = useState(''); const [qd, setQd] = useState('')
   const [abc, setAbc] = useState<string[]>([]); const [xyz, setXyz] = useState<string[]>([])
   const [opc, setOpc] = useState<any>({ tiendas: [], laboratorios: [], empresas: [], criterios: [] })
@@ -58,15 +59,15 @@ export default function Clasificacion() {
   const claveV = (v: Vista) => `${v.mia ? 'm' : 'o'}|${v.dueno ?? ''}|${v.nombre}`
   const cargarVistas = () => api('/vistas/clasificacion').then(setVistas).catch(() => {})
   useEffect(() => { cargarVistas() }, [])
-  const instantanea = () => ({ nivel, criterio, meses, corteA, corteB, metodo, pI, pA, pB, empresa, bodegas, labs, fc, agrupar, dentro, soloCon, abc, xyz, q: qd })
+  const instantanea = () => ({ nivel, criterio, meses, corteA, corteB, metodo, pI, pA, pB, empresa, bodegas, labs, fc, agrupar, dentro, soloCon, indInv, abc, xyz, q: qd })
   const aplicar = (c: any) => {
     setNivel(c.nivel ?? 'item'); setCriterio(c.criterio ?? 'margen'); setMeses(c.meses ?? 12); setCorteA(c.corteA ?? 80); setCorteB(c.corteB ?? 95); setMetodo(c.metodo ?? 'pareto'); setPI(c.pI ?? 93); setPA(c.pA ?? 75); setPB(c.pB ?? 50)
     setEmpresa(c.empresa ?? []); setBodegas(c.bodegas ?? []); setLabs(c.labs ?? [])
-    setFc(c.fc?.length ? c.fc : [{ plan: '', vals: [] }]); setAgrupar(c.agrupar ?? ''); setDentro(!!c.dentro); setSoloCon(!!c.soloCon)
+    setFc(c.fc?.length ? c.fc : [{ plan: '', vals: [] }]); setAgrupar(c.agrupar ?? ''); setDentro(!!c.dentro); setSoloCon(!!c.soloCon); setIndInv(!!c.indInv)
     setAbc(c.abc ?? []); setXyz(c.xyz ?? []); setQd(c.q ?? ''); setQ(c.q ?? '')
   }
   const vistaSel = vistas.find(v => claveV(v) === sel)
-  const modificada = !!vistaSel && JSON.stringify(instantanea()) !== JSON.stringify({ ...instantanea(), metodo: 'pareto', pI: 93, pA: 75, pB: 50, soloCon: false, ...vistaSel.config, empresa, fc: vistaSel.config.fc?.length ? vistaSel.config.fc : [{ plan: '', vals: [] }] })
+  const modificada = !!vistaSel && JSON.stringify(instantanea()) !== JSON.stringify({ ...instantanea(), metodo: 'pareto', pI: 93, pA: 75, pB: 50, soloCon: false, indInv: false, ...vistaSel.config, empresa, fc: vistaSel.config.fc?.length ? vistaSel.config.fc : [{ plan: '', vals: [] }] })
   const abrir = (k: string) => { setSel(k); const v = vistas.find(x => claveV(x) === k); if (v) aplicar(v.config) }
   const guardarVista = async () => {
     if (!dlg?.nombre.trim()) return
@@ -119,7 +120,8 @@ export default function Clasificacion() {
   const alternar = (arr: string[], set: (v: string[]) => void, v: string) => set(arr.includes(v) ? arr.filter(x => x !== v) : [...arr, v])
 
   const [cx, cy] = d?.meta.cortes_iv ?? [0.5, 0.8]
-  const cols: ColDef[] = useMemo(() => [
+  const INV_CAMPOS = ['zona', 'zonas_txt', 'sobran', 'faltan', 'dias_hist', 'gmroi', 'rotacion', 'dias_inv', 'pct_sin_stock', 'cob_x_margen']
+  const cols: ColDef[] = useMemo(() => ([
     { field: 'puesto', headerName: '#', width: 75, pinned: 'left', type: 'numericColumn', headerTooltip: 'Puesto en el ranking ABC según el criterio elegido (1 = el que más aporta). Los apartes D, N y S no tienen puesto.' },
     { field: 'clase', headerName: 'Clase', width: 90, pinned: 'left', cellRenderer: pill, filter: true, headerTooltip: 'ABC (cuánto aporta, según el criterio elegido) + XYZ (qué tan predecible es su venta). Ej.: AX = importante y estable. Sin letra XYZ = aún sin IV. Apartes: N nuevo, D sin venta en tiendas (no cuenta lo que vende el CEDI a wholesale/digital), S sin costo.' },
     { field: 'clase_global', headerName: 'Clase global', width: 115, cellRenderer: pill, filter: true, headerTooltip: 'La clase que tendría con todo lo que puedes ver, sin los filtros de pantalla (tienda, laboratorio, criterio…). “Clase” es el ABC dentro de lo filtrado; esta es la importancia real del item.' },
@@ -149,7 +151,7 @@ export default function Clasificacion() {
     { field: 'cob_x_margen', headerName: 'Cobertura×margen % (anterior)', type: 'numericColumn', width: 215, valueFormatter: p => p.value == null ? '' : Number(p.value).toLocaleString('es-CO', { maximumFractionDigits: 1 }) + '%', headerTooltip: 'Indicador anterior: (inventario promedio en unidades ÷ venta mensual en unidades) × margen %. Son meses de stock ponderados por margen: NO es un retorno y no se compara con el GMROI.' },
     { field: 'iv', headerName: 'IV', type: 'numericColumn', width: 80, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(2), headerTooltip: `Índice de variabilidad del motor (desviación ÷ promedio de la venta mensual). Define XYZ: X si es menor que ${cx}, Y hasta ${cy}, Z si es mayor. A nivel item pondera por la venta diaria de cada tienda.` },
     { field: 'costo', headerName: 'Costo unit.', type: 'numericColumn', width: 115, valueFormatter: p => COP(p.value), headerTooltip: 'Costo promedio actual por unidad (Siesa, por instalación). Si falta, el item queda como S (sin costo).' },
-  ], [nivel, cx, cy])
+  ] as ColDef[]).filter(c => indInv || !INV_CAMPOS.includes(c.field as string)), [nivel, cx, cy, indInv])
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 1.5, minHeight: 600 }}>
@@ -208,6 +210,7 @@ export default function Clasificacion() {
           {agrupar && <Tooltip placement="top" title="Apagado: cada item conserva su clase de la lista. Encendido: el ABC se recalcula dentro de cada grupo (cada item contra los de su mismo valor)."><FormControlLabel sx={{ mr: 0 }} control={<Checkbox size="small" checked={dentro} onChange={e => setDentro(e.target.checked)} />} label="ABC dentro de cada grupo" /></Tooltip>}
         </>}
         {planes.length > 0 && <Tooltip placement="top" title="Deja fuera los items que no tienen valor en los criterios elegidos (los que salen como (sin valor)). El Excel también trae una columna por cada criterio elegido."><FormControlLabel sx={{ mr: 0 }} control={<Checkbox size="small" checked={soloCon} onChange={e => setSoloCon(e.target.checked)} />} label="Excluir items sin esa clasificación" /></Tooltip>}
+        <Tooltip placement="top" title="Agrega las columnas de inventario: Estado hoy (zona del buffer), Tiendas por zona, Sobran/Faltan, GMROI, rotación, días de inventario, % sin stock y días de historia. Apagado para no saturar la tabla; el Excel siempre las trae."><FormControlLabel sx={{ mr: 0 }} control={<Checkbox size="small" checked={indInv} onChange={e => setIndInv(e.target.checked)} />} label="Incluir indicadores de inventario" /></Tooltip>
         <TextField size="small" label="Item (código o nombre)" value={qd} onChange={e => setQd(e.target.value)} sx={{ minWidth: 190, flex: '1 1 190px' }} />
       </Paper></Collapse>
       {!valido && <Typography color="error" variant="body2">Los cortes deben cumplir 0 &lt; A &lt; B ≤ 100.</Typography>}

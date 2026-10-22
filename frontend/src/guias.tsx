@@ -76,11 +76,12 @@ export function GuiaClasificacion({ abierta, cerrar, meta }: { abierta: boolean;
       </Table>
 
       <H>4 · Cómo leer la clase (ABC × XYZ)</H>
-      <P>Lectura habitual de la matriz; úsala como guía, no como regla fija:</P>
+      <P>Lectura habitual de la matriz; úsala como guía, no como regla fija{meta?.metodo === 'percentil' ? ': con el método por percentil aparece además la fila I (Infaltables), que absorbe la cima que en Pareto sería A, y A queda como el escalón siguiente' : ''}:</P>
       <Table size="small" sx={{ mb: 1, '& td, & th': { verticalAlign: 'top' } }}>
         <TableHead><TableRow><TableCell></TableCell><TableCell>X · estable</TableCell><TableCell>Y · media</TableCell><TableCell>Z · variable</TableCell></TableRow></TableHead>
         <TableBody>
-          <TableRow><TableCell><Clase c="A" color={COLOR.A} /></TableCell><TableCell>Nunca debe faltar. Buffer ajustado y reposición frecuente.</TableCell><TableCell>Vigilar de cerca: pesa mucho y se mueve algo.</TableCell><TableCell>Alto riesgo: aporta mucho pero es errático. Revisar pronóstico, promociones y colchón.</TableCell></TableRow>
+          {meta?.metodo === 'percentil' && <TableRow><TableCell><Clase c="I" color={COLOR.I} /></TableCell><TableCell>La cima del catálogo y parejo: servicio casi garantizado, buffer protegido y revisión de cada quiebre.</TableCell><TableCell>Muy importante y con algo de vaivén: seguimiento frecuente del buffer y de la demanda.</TableCell><TableCell>Crítico y errático: máxima atención al pronóstico, promociones y colchón; es donde más duele un quiebre.</TableCell></TableRow>}
+          <TableRow><TableCell><Clase c="A" color={COLOR.A} /></TableCell><TableCell>{meta?.metodo === 'percentil' ? 'Muy importante y parejo: buffer ajustado y reposición frecuente.' : 'Nunca debe faltar. Buffer ajustado y reposición frecuente.'}</TableCell><TableCell>Vigilar de cerca: pesa mucho y se mueve algo.</TableCell><TableCell>Alto riesgo: aporta mucho pero es errático. Revisar pronóstico, promociones y colchón.</TableCell></TableRow>
           <TableRow><TableCell><Clase c="B" color={COLOR.B} /></TableCell><TableCell>Gestión normal.</TableCell><TableCell>Gestión normal, revisar de vez en cuando.</TableCell><TableCell>Revisar si el buffer sigue sirviendo.</TableCell></TableRow>
           <TableRow><TableCell><Clase c="C" color={COLOR.C} /></TableCell><TableCell>Poco valor y parejo: automatizar con inventario mínimo.</TableCell><TableCell>Poco valor: no sobrestockear.</TableCell><TableCell>Poco valor y errático: candidato a bajar inventario, pedir bajo demanda o descontinuar.</TableCell></TableRow>
         </TableBody>
