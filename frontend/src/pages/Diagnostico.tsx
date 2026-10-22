@@ -44,7 +44,7 @@ function Consultas({ setMsg }: { setMsg: (s: string) => void }) {
         <TextField size="small" label="Buscar en filtros / error" value={f.q} onChange={e => setF({ ...f, q: e.target.value })} sx={{ minWidth: 180, flex: '1 1 180px' }} />
         <Tooltip title="Actualizar"><IconButton onClick={cargar}><Refresh /></IconButton></Tooltip>
       </Paper>
-      <Typography variant="caption" color="text.secondary">{d.filas.length} consultas{d.filas.length >= 300 ? ' (las 300 más recientes: acota con los filtros)' : ''} · se guardan 30 días · no incluye login, salud ni esta pantalla</Typography>
+      <Typography variant="caption" color="text.secondary">{d.filas.length} consultas{d.filas.length >= 300 ? ' (las 300 más recientes: acota con los filtros)' : ''} · se guardan 30 días · no incluye login, los sondeos automáticos (salud, progreso) ni esta pantalla</Typography>
       <Paper variant="outlined" sx={contenedor}>
         <Table size="small">
           <TableHead><TableRow sx={{ bgcolor: '#eef2e3' }}>

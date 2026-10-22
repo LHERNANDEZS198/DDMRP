@@ -9,7 +9,7 @@ from .db import pg
 
 log = logging.getLogger("ddmrp.consultas")
 RETENCION_DIAS = 30
-OMITIR = ("/api/health", "/api/auth", "/api/diagnostico")     # ruido o la propia pantalla de diagnostico
+OMITIR = ("/api/health", "/api/auth", "/api/diagnostico", "/api/admin/salud", "/api/admin/progreso")     # sondeos automaticos de la interfaz (cada pocos segundos) y la propia pantalla de diagnostico
 _actual: ContextVar[dict | None] = ContextVar("consulta_actual", default=None)
 _cola: "queue.Queue[dict]" = queue.Queue(maxsize=5000)
 _n = 0
