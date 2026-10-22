@@ -96,18 +96,18 @@ def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, l
       GROUP BY 1, 2, 3),
     s AS (
       SELECT empresa, bodega_id, producto_id, inventario::float8 AS inventario, iv::float8 AS iv, adu::float8 AS adu,
-             zona::text AS zona, pct_buffer::float8 AS pct_buffer, flujo_neto::float8 AS flujo_neto, cantidad_sugerida::float8 AS sugerido
+             zona::text AS zona, pct_buffer::float8 AS pct_buffer, flujo_neto::float8 AS flujo_neto, tog_aj::float8 AS tog_aj, cantidad_sugerida::float8 AS sugerido
       FROM ddmrp.sugerencias_envio WHERE ejecucion_id = {ULTIMA}{pre_s}),
     k AS (
       SELECT COALESCE(v.empresa, s.empresa) AS empresa, COALESCE(v.bodega_id, s.bodega_id) AS bodega_id,
              COALESCE(v.producto_id, s.producto_id) AS producto_id,
-             v.cant, v.valor, v.primer_mes, s.inventario, s.iv, s.adu, s.zona, s.pct_buffer, s.flujo_neto, s.sugerido,
+             v.cant, v.valor, v.primer_mes, s.inventario, s.iv, s.adu, s.zona, s.pct_buffer, s.flujo_neto, s.tog_aj, s.sugerido,
              h.inv_suma, h.dias_hist, h.dias_cero
       FROM v FULL JOIN s ON s.empresa = v.empresa AND s.bodega_id = v.bodega_id AND s.producto_id = v.producto_id
       LEFT JOIN h ON h.empresa = COALESCE(v.empresa, s.empresa) AND h.bodega_id = COALESCE(v.bodega_id, s.bodega_id) AND h.producto_id = COALESCE(v.producto_id, s.producto_id))
     SELECT k.empresa, k.bodega_id, mb.descripcion AS bodega_nombre, k.producto_id, mi.descripcion, COALESCE(mi.categoria, '(sin laboratorio)') AS laboratorio,
            COALESCE(k.cant, 0) AS cant, COALESCE(k.valor, 0) AS valor, k.primer_mes, COALESCE(k.inventario, 0) AS inventario, k.iv, COALESCE(k.adu, 0) AS adu,
-           k.zona, k.pct_buffer, k.flujo_neto, k.sugerido, k.inv_suma, k.dias_hist, k.dias_cero,
+           k.zona, k.pct_buffer, k.flujo_neto, k.tog_aj, k.sugerido, k.inv_suma, k.dias_hist, k.dias_cero,
            (SELECT ci.costo::float8 FROM ddmrp.costo_item ci WHERE ci.producto_id = k.producto_id) AS costo
     FROM k LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = k.producto_id LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = k.bodega_id AND mb.empresa = k.empresa
     WHERE {' AND '.join(cond)}
@@ -248,7 +248,9 @@ COLS = [{"t": "Puesto", "k": "puesto", "f": "int", "w": 8}, {"t": "Clase", "k": 
         {"t": "GMROI (anual)", "k": "gmroi", "f": "dec2"}, {"t": "Rotacion (uds/mes)", "k": "rotacion", "f": "dec2"},
         {"t": "Dias de inventario", "k": "dias_inv", "f": "int"}, {"t": "% dias sin stock", "k": "pct_sin_stock", "f": "dec1"},
         {"t": "Cobertura x margen % (indicador anterior, no comparable)", "k": "cob_x_margen", "f": "pct1"},
-        {"t": "IV", "k": "iv", "f": "dec2"}, {"t": "ADU", "k": "adu", "f": "dec1"}, {"t": "Tiendas", "k": "tiendas", "f": "int"}]
+        {"t": "IV", "k": "iv", "f": "dec2"}, {"t": "ADU", "k": "adu", "f": "dec1"}, {"t": "Tiendas", "k": "tiendas", "f": "int"},
+        {"t": "Estado hoy (zona del buffer)", "k": "zona", "w": 14, "zona": True}, {"t": "Tiendas por zona", "k": "zonas_txt", "w": 30},
+        {"t": "Sobran (u.)", "k": "sobran", "f": "int"}, {"t": "Faltan (u.)", "k": "faltan", "f": "int"}]
 
 METODOLOGIA = [
     ("Que es", "Clasificacion ABC (importancia economica) x XYZ (variabilidad de la demanda) de los items sobre la venta de una ventana de meses."),
@@ -266,6 +268,8 @@ METODOLOGIA = [
     ("GMROI", "Margen anualizado / inventario PROMEDIO a costo. El promedio sale de la foto diaria de inventario de las tiendas dentro de la ventana (resumida por mes); donde no hay historia se usa el inventario de hoy (ver 'Dias con historia'). Cuantos pesos de margen deja cada peso invertido en inventario al año. En grupos y totales se calcula con las sumas en pesos, no promediando los de cada item."),
     ("Rotacion", "Unidades vendidas por mes en promedio en la ventana (unidades vendidas / meses de la ventana). Es la rotacion que usa el indicador anterior. En los resumenes por clase y grupo se muestra en su lugar Meses de inventario (inventario promedio a costo / costo de venta mensual), porque las unidades de items distintos no se suman. (GMROI = margen anual / inventario promedio a costo)."),
     ("Dias de inventario", "Inventario promedio / venta diaria promedio de la ventana."),
+    ("Estado hoy", "Zona del buffer DDMRP de la ultima corrida del motor: Rojo, Amarillo, Verde o Sobrestock (flujo neto por encima del tope verde ajustado). Por tienda x item es la de esa tienda; por item es la que mas se repite entre las tiendas filtradas (a igualdad, la peor) y 'Tiendas por zona' da el reparto."),
+    ("Sobran / Faltan (u.)", "Sobran: unidades por encima del tope verde ajustado (TOG aj) en las tiendas en sobrestock. Faltan: unidades que separan el flujo neto del tope verde ajustado en las demas zonas (es la distancia al tope, no el sugerido del motor, que ademas aplica minimos, redondeo y el inventario del CEDI). Por item suman las tiendas."),
     ("% dias sin stock", "Dias-tienda de la ventana con inventario 0 / dias-tienda con historia. Un GMROI alto con muchos dias sin stock suele ser un quiebre, no eficiencia."),
     ("Cobertura x margen %", "Indicador anterior: (inventario promedio en unidades / venta mensual en unidades) x margen %. Mide meses de stock ponderados por margen, no un retorno: no es comparable con el GMROI."),
     ("Clase global", "La clase que tendria el item con todo lo que el usuario puede ver, sin los filtros de pantalla (la 'Clase' se recalcula solo con lo filtrado)."),

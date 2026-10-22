@@ -42,7 +42,9 @@ def zona_roja(bodegas: str | None = None, labs: str | None = None, q: str | None
         total = c.execute(text(f"SELECT count(*) {BASE} WHERE {w}"), p).scalar()
         filas = [dict(r) for r in c.execute(text(f"""
             SELECT s.empresa, s.producto_id, mi.descripcion, s.bodega_id, s.inventario, s.en_transito, s.flujo_neto, s.tor, s.tog_aj, s.pct_buffer, s.cantidad_sugerida,
-                   s.stock_cedi::float8 AS stock_cedi
+                   s.stock_cedi::float8 AS stock_cedi, s.adu::float8 AS rotacion,
+                   CASE WHEN s.zona::text = 'EXCESO' THEN GREATEST(s.flujo_neto - GREATEST(s.tog_aj, 0), 0)::float8 ELSE 0 END AS sobran,
+                   CASE WHEN s.zona::text <> 'EXCESO' THEN GREATEST(s.tog_aj - s.flujo_neto, 0)::float8 ELSE 0 END AS faltan
             {BASE} WHERE {w} ORDER BY s.pct_buffer LIMIT :lim"""), {**p, "lim": limit}).mappings()]
         if filas:   # lo que se reparte de cada item entre TODAS las tiendas de la empresa (no solo las filtradas), calculado aparte
             tot = {(e, pr): v for e, pr, v in c.execute(text(

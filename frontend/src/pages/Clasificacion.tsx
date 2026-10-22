@@ -22,6 +22,8 @@ const NOMBRE_ABC: Record<string, string> = {
 }
 const COP = (v: any) => v == null ? '' : '$' + Math.round(v).toLocaleString('es-CO')
 const NUM = (v: any) => v == null ? '' : Math.round(v).toLocaleString('es-CO')
+const ZONA_ETQ: Record<string, string> = { ROJA: 'Rojo', AMARILLA: 'Amarillo', VERDE: 'Verde', EXCESO: 'Sobrestock' }
+const ZONA_COLOR: Record<string, string> = { ROJA: '#c62828', AMARILLA: '#f9a825', VERDE: '#2e7d32', EXCESO: '#1565c0' }
 const M = (v: number) => Math.abs(v) >= 1e6 ? (v / 1e6).toLocaleString('es-CO', { maximumFractionDigits: 1 }) + ' M' : NUM(v)
 const pill = (p: ICellRendererParams) => p.value == null ? '' :
   <Chip size="small" label={p.value} sx={{ height: 20, fontSize: 11, color: '#fff', bgcolor: COLOR_ABC[String(p.value)[0]] ?? '#999' }} />
@@ -125,6 +127,12 @@ export default function Clasificacion() {
     { field: 'producto_id', headerName: 'Item', width: 100, filter: true, headerTooltip: 'Referencia del producto. Un item REC se suma a su original.' },
     { field: 'descripcion', headerName: 'Descripción', width: 280, filter: true, headerTooltip: 'Nombre del producto en Siesa.' },
     { field: 'laboratorio', headerName: 'Lab.', width: 90, filter: true, headerTooltip: 'Código del laboratorio (plan 006 de Siesa).' },
+    { field: 'zona', headerName: 'Estado hoy', width: 120, filter: true, valueGetter: p => ZONA_ETQ[p.data?.zona] ?? '', cellRenderer: (p: ICellRendererParams) => !p.value ? '' :
+      <Chip size="small" label={p.value} sx={{ bgcolor: ZONA_COLOR[p.data.zona] ?? '#999', color: '#fff', height: 20, fontSize: 11 }} />,
+      headerTooltip: 'Zona del buffer DDMRP en la última corrida del motor: Rojo (crítico), Amarillo (toca reponer), Verde (sano) o Sobrestock (por encima del tope verde). Por item es la zona que más se repite entre las tiendas filtradas; el reparto está en «Tiendas por zona».' },
+    ...(nivel === 'item' ? [{ field: 'zonas_txt', headerName: 'Tiendas por zona', width: 210, headerTooltip: 'Cuántas tiendas del filtro están en cada zona hoy.' } as ColDef] : []),
+    { field: 'sobran', headerName: 'Sobran (u.)', type: 'numericColumn', width: 105, valueFormatter: p => p.value ? NUM(p.value) : '', cellStyle: { color: '#1565c0', fontWeight: 600 }, headerTooltip: 'Unidades por encima del tope verde ajustado (TOG aj.) en las tiendas en sobrestock. Por item suma las tiendas.' },
+    { field: 'faltan', headerName: 'Faltan (u.)', type: 'numericColumn', width: 105, valueFormatter: p => p.value ? NUM(p.value) : '', cellStyle: { color: '#c62828', fontWeight: 600 }, headerTooltip: 'Unidades que separan el flujo neto del tope verde ajustado (TOG aj.) cuando NO hay sobrestock. Es la distancia al tope, no el sugerido del motor (que además aplica mínimos, redondeo y el inventario del CEDI). Por item suma las tiendas.' },
     { field: 'valor', headerName: 'Venta neta $', type: 'numericColumn', width: 130, valueFormatter: p => COP(p.value), headerTooltip: 'Venta de la ventana sin IVA: valor bruto − descuentos de línea − descuentos globales. Las devoluciones restan.' },
     { field: 'margen', headerName: 'Margen $', type: 'numericColumn', width: 125, valueFormatter: p => COP(p.value), cellStyle: p => (p.value ?? 0) < 0 ? { color: '#c62828' } : null, headerTooltip: 'Venta neta − (unidades × costo promedio actual). Es el criterio ABC por defecto. En rojo: se vendió por debajo del costo.' },
     { field: 'margen_pct', headerName: 'Margen %', type: 'numericColumn', width: 105, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(1) + '%', headerTooltip: 'Margen $ ÷ venta neta × 100.' },

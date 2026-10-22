@@ -10,6 +10,8 @@ Margen = venta neta sin IVA - unidades x costo promedio actual (Siesa, por insta
 from datetime import date
 
 CRITERIOS = {"margen": "Margen bruto $", "venta": "Venta neta $ (sin IVA)", "costo": "Consumo a costo $"}
+ZONAS_ORDEN = ("ROJA", "AMARILLA", "VERDE", "EXCESO")
+ZONAS_ETQ = {"ROJA": "Rojo", "AMARILLA": "Amarillo", "VERDE": "Verde", "EXCESO": "Sobrestock"}
 NIVELES = {"item": "Item (suma de las tiendas filtradas)", "tienda_item": "Tienda × item"}
 APARTE = ("D", "N", "S")
 ORDEN_ABC = ("I", "A", "B", "C", "N", "D", "S")   # I = Infaltables (solo con el metodo por percentil)
@@ -33,7 +35,7 @@ def agregar(filas: list[dict], nivel: str) -> list[dict]:
                              "bodega_nombre": r.get("bodega_nombre") if nivel == "tienda_item" else None,
                              "descripcion": r.get("descripcion"), "laboratorio": r.get("laboratorio"), "costo": r.get("costo"),
                              "cant": 0.0, "valor": 0.0, "inventario": 0.0, "inv_prom": 0.0, "dias_hist": 0, "_dias_tot": 0, "_dias_cero": 0, "adu": 0.0, "primer_mes": None, "tiendas": 0,
-                             "_iv_pond": 0.0, "_iv_sum": 0.0, "_iv_n": 0}
+                             "_iv_pond": 0.0, "_iv_sum": 0.0, "_iv_n": 0, "sobran": 0.0, "faltan": 0.0, "_zonas": {}}
             if nivel == "tienda_item":      # estado del buffer: solo tiene sentido por tienda
                 for c in ("zona", "pct_buffer", "flujo_neto", "sugerido"):
                     g[c] = r.get(c)
@@ -42,6 +44,14 @@ def agregar(filas: list[dict], nivel: str) -> list[dict]:
         g["inv_prom"] += (_f(r.get("inv_suma")) / dh) if dh > 0 else max(_f(r.get("inventario")), 0.0)
         g["dias_hist"] = max(g["dias_hist"], dh); g["_dias_tot"] += dh; g["_dias_cero"] += int(r.get("dias_cero") or 0)
         g["adu"] += _f(r.get("adu")); g["tiendas"] += 1
+        z = r.get("zona")
+        if z and r.get("flujo_neto") is not None:      # estado del buffer de hoy: EXCESO = flujo neto por encima del tope verde ajustado (TOG aj); el resto, lo que falta para llegar a el
+            tg, fn = max(_f(r.get("tog_aj")), 0.0), _f(r.get("flujo_neto"))
+            if z == "EXCESO":
+                g["sobran"] += max(fn - tg, 0.0)
+            else:
+                g["faltan"] += max(tg - fn, 0.0)
+            g["_zonas"][z] = g["_zonas"].get(z, 0) + 1
         pm = r.get("primer_mes")
         if pm and (g["primer_mes"] is None or pm < g["primer_mes"]):
             g["primer_mes"] = pm
@@ -53,6 +63,10 @@ def agregar(filas: list[dict], nivel: str) -> list[dict]:
     for g in grupos.values():
         n = g.pop("_iv_n"); pond = g.pop("_iv_pond"); suma = g.pop("_iv_sum")
         dt = g.pop("_dias_tot"); dc = g.pop("_dias_cero")
+        zs = g.pop("_zonas")
+        if nivel == "item":      # varias tiendas: la zona que mas se repite (a igualdad, la peor) y el reparto completo
+            g["zona"] = max(zs, key=lambda k: (zs[k], -ZONAS_ORDEN.index(k))) if zs else None
+            g["zonas_txt"] = " · ".join(f"{ZONAS_ETQ[k]} {zs[k]}" for k in ZONAS_ORDEN if k in zs) or None
         g["pct_sin_stock"] = None if dt == 0 else 100.0 * dc / dt     # % de los dias-tienda de la ventana con inventario 0 (solo donde hay historia)
         g["iv"] = None if n == 0 else (pond / g["adu"] if g["adu"] > 0 else suma / n)
         out.append(g)

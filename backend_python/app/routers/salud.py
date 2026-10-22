@@ -38,7 +38,8 @@ COLS = [{"t": "Atender", "k": "etq", "w": 24}, {"t": "Tienda", "k": "bodega_id",
         {"t": "Item", "k": "producto_id", "w": 11}, {"t": "Descripcion", "k": "descripcion", "w": 44}, {"t": "Laboratorio", "k": "laboratorio", "w": 14},
         {"t": "Zona hoy", "k": "zona", "w": 11, "zona": True}, {"t": "% buffer", "k": "pct_buffer", "f": "dec1"}, {"t": "Clase", "k": "clase", "w": 8},
         {"t": "Ranking", "k": "puesto", "f": "int"}, {"t": "Inventario (u.)", "k": "inventario", "f": "int"}, {"t": "Flujo neto", "k": "flujo_neto", "f": "int"},
-        {"t": "Sugerido (u.)", "k": "sugerido", "f": "int"}, {"t": "Dias de inventario", "k": "dias_inv", "f": "int"},
+        {"t": "Sugerido (u.)", "k": "sugerido", "f": "int"}, {"t": "Dias de inventario", "k": "dias_inv", "f": "int"}, {"t": "Rotacion (uds/mes)", "k": "rotacion", "f": "dec2"},
+        {"t": "Sobran (u.)", "k": "sobran", "f": "int"}, {"t": "Faltan (u.)", "k": "faltan", "f": "int"},
         {"t": "Inventario a costo $", "k": "inv_costo", "f": "cop"}, {"t": "Venta neta $", "k": "valor", "f": "cop"}, {"t": "Margen $", "k": "margen", "f": "cop"},
         {"t": "Margen %", "k": "margen_pct", "f": "dec1"}, {"t": "GMROI (anual)", "k": "gmroi", "f": "dec2"}, {"t": "IV", "k": "iv", "f": "dec2"}]
 
