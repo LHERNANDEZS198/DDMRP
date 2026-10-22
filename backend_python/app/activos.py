@@ -9,11 +9,16 @@ ESTADOS = {1: "Activo", 0: "Inactivo", 2: "Bloqueado"}
 
 
 def en_maestro(a: str = "s") -> str:
-    """Fragmento WHERE: solo items del maestro (ddmrp.maestro_item = los que pasan el filtro de criterios de Siesa). Lo que no esta ahi
-    (materia prima, etc.) no sale ni se usa. Con el maestro vacio (antes del primer ETL) no filtra. Un item REC vale si su original esta."""
-    return (f"(NOT EXISTS (SELECT 1 FROM ddmrp.maestro_item) OR EXISTS (SELECT 1 FROM ddmrp.maestro_item mi_m WHERE mi_m.producto_id = {a}.producto_id) "
+    """Fragmento WHERE: solo items del maestro (ddmrp.maestro_item = los que pasan el filtro de criterios de Siesa) Y que existan en la base de SU empresa
+    (ddmrp.item_empresa: un item de Funat no se muestra en Stores ni al reves). Lo que no esta ahi (materia prima, etc.) no sale ni se usa.
+    Con el maestro vacio (antes del primer ETL) no filtra, y una empresa sin items registrados tampoco. Un item REC vale si su original esta."""
+    return (f"((NOT EXISTS (SELECT 1 FROM ddmrp.maestro_item) OR EXISTS (SELECT 1 FROM ddmrp.maestro_item mi_m WHERE mi_m.producto_id = {a}.producto_id) "
             f"OR EXISTS (SELECT 1 FROM ddmrp.item_rec ir_m JOIN ddmrp.maestro_item mo_m ON mo_m.producto_id = ir_m.original_id "
-            f"WHERE ir_m.empresa = {a}.empresa AND ir_m.rec_id = {a}.producto_id))")
+            f"WHERE ir_m.empresa = {a}.empresa AND ir_m.rec_id = {a}.producto_id)) "
+            f"AND (NOT EXISTS (SELECT 1 FROM ddmrp.item_empresa ie_e WHERE ie_e.empresa = {a}.empresa) "
+            f"OR EXISTS (SELECT 1 FROM ddmrp.item_empresa ie_e WHERE ie_e.empresa = {a}.empresa AND ie_e.producto_id = {a}.producto_id) "
+            f"OR EXISTS (SELECT 1 FROM ddmrp.item_rec ir_e JOIN ddmrp.item_empresa io_e ON io_e.empresa = ir_e.empresa AND io_e.producto_id = ir_e.original_id "
+            f"WHERE ir_e.empresa = {a}.empresa AND ir_e.rec_id = {a}.producto_id)))")
 
 
 def solo_activos(a: str = "s") -> str:

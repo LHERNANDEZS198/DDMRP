@@ -86,6 +86,8 @@ LEFT JOIN ddmrp.reposicion_item oi ON oi.producto_id = k.producto_id
 LEFT JOIN ddmrp.reposicion_laboratorio ol ON ol.laboratorio = mi.categoria
 WHERE NOT EXISTS (SELECT 1 FROM rec r2 WHERE r2.empresa = b.empresa AND r2.rec_id = k.producto_id)
   AND (mi.producto_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM ddmrp.maestro_item))
+  AND (NOT EXISTS (SELECT 1 FROM ddmrp.item_empresa ie0 WHERE ie0.empresa = b.empresa)   -- el item debe existir en la base de SU empresa (Funat no se calcula en Stores ni al reves)
+       OR EXISTS (SELECT 1 FROM ddmrp.item_empresa ie WHERE ie.empresa = b.empresa AND ie.producto_id = k.producto_id))
   AND (b.leadtime IS NOT NULL OR b.frecuencia IS NOT NULL)   -- bodega en la bitacora sin lead time ni frecuencia = no configurada: no se calcula
   AND ((SELECT COALESCE(max(valor), 1) FROM ddmrp.parametro WHERE clave = 'solo_items_activos') = 0
        OR NOT EXISTS (SELECT 1 FROM ddmrp.item_estado ie WHERE ie.empresa = b.empresa AND ie.producto_id = k.producto_id AND ie.estado <> 1))
