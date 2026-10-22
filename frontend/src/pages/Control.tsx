@@ -5,7 +5,7 @@ import { Autocomplete, Box, Button, Card, CardActionArea, Chip, MenuItem, Paper,
 import { useLocation, useSearchParams } from 'react-router-dom'
 import { BufferTrend, ZonaShare, Punto } from '../TrendCharts'
 import { api, bajar } from '../api'
-import { bodegasDeEmpresa, tiendasDeEmpresa } from '../filtros'
+import { bodegasDeEmpresa, colsCobertura, tiendasDeEmpresa } from '../filtros'
 import { AYUDA, ayudar } from '../ayuda'
 import { useEmpresa } from '../Empresa'
 
@@ -226,6 +226,7 @@ export default function Control() {
     { field: 'en_transito', headerName: 'Tránsito', type: 'numericColumn', width: 95 },
     { field: 'flujo_neto', headerName: 'Flujo neto', type: 'numericColumn', width: 105 },
     { field: 'adu', headerName: 'ADU', type: 'numericColumn', width: 90 },
+    ...colsCobertura(),
     { field: 'cantidad_sugerida', headerName: 'Sugerido', type: 'numericColumn', width: 100 },
     { field: 'costo', headerName: 'Costo prom.', type: 'numericColumn', width: 115, headerTooltip: 'Costo promedio por instalación (Siesa)', valueFormatter: p => p.value == null ? '' : '$' + Math.round(p.value).toLocaleString('es-CO') },
     { field: 'condenado', headerName: 'Condenado', width: 110, cellRenderer: (p: ICellRendererParams) => p.value ? <Chip size="small" label="NxP" sx={{ height: 20, fontSize: 11, bgcolor: '#424242', color: '#fff' }} /> : '' },

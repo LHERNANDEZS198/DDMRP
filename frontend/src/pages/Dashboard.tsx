@@ -3,7 +3,7 @@ import Tabla from '../Tabla'
 import { ColDef } from 'ag-grid-community'
 import { Autocomplete, Box, Card, CardActionArea, Chip, MenuItem, Paper, TextField, Typography } from '@mui/material'
 import { api } from '../api'
-import { bodegasDeEmpresa, tiendasDeEmpresa } from '../filtros'
+import { bodegasDeEmpresa, colsCobertura, tiendasDeEmpresa } from '../filtros'
 import { ayudar } from '../ayuda'
 import { useEmpresa } from '../Empresa'
 
@@ -20,6 +20,7 @@ const cols: ColDef[] = [
   { field: 'sobran', headerName: 'Sobran (u.)', type: 'numericColumn', headerTooltip: 'Unidades por encima del tope verde ajustado (TOG aj.) en las tiendas en sobrestock.', cellStyle: { color: '#1565c0', fontWeight: 600 }, valueFormatter: (p: any) => p.value ? Number(p.value).toLocaleString('es-CO', { maximumFractionDigits: 0 }) : '' },
   { field: 'faltan', headerName: 'Faltan (u.)', type: 'numericColumn', headerTooltip: 'Unidades que separan el flujo neto del tope verde ajustado (TOG aj.) cuando NO hay sobrestock. Es la distancia al tope, no el sugerido del motor (que además aplica mínimos, redondeo y el inventario del CEDI).', cellStyle: { color: '#c62828', fontWeight: 600 }, valueFormatter: (p: any) => p.value ? Number(p.value).toLocaleString('es-CO', { maximumFractionDigits: 0 }) : '' },
   { field: 'rotacion', headerName: 'Rotación (uds/mes)', type: 'numericColumn', headerTooltip: 'Venta mensual promedio que usa el motor (ADU), en unidades por mes.', valueFormatter: num },
+  ...colsCobertura(),
   { field: 'pct_buffer', headerName: '% buffer', type: 'numericColumn', sort: 'asc', valueFormatter: num },
   { field: 'cantidad_sugerida', headerName: 'Sugerido', type: 'numericColumn', valueFormatter: num },
   { field: 'stock_cedi', headerName: 'CEDI antes', type: 'numericColumn', headerTooltip: 'Stock del CEDI de la empresa para este ítem (menos la reserva), antes de repartir a las tiendas', valueFormatter: num },

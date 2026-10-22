@@ -3,7 +3,7 @@ import { ColDef, ICellRendererParams } from 'ag-grid-community'
 import { Alert, Autocomplete, Box, Button, Card, CardActionArea, Chip, MenuItem, Paper, TextField, Tooltip, Typography } from '@mui/material'
 import Tabla from '../Tabla'
 import { api, bajar } from '../api'
-import { bodegasDeEmpresa, tiendasDeEmpresa } from '../filtros'
+import { bodegasDeEmpresa, colsCobertura, tiendasDeEmpresa } from '../filtros'
 import { useEmpresa } from '../Empresa'
 
 const ZCOLOR: Record<string, string> = { ROJA: '#c62828', AMARILLA: '#f9a825', VERDE: '#2e7d32', EXCESO: '#1565c0' }
@@ -56,6 +56,7 @@ export default function Salud() {
     { field: 'sobran', headerName: 'Sobran (u.)', type: 'numericColumn', width: 105, valueFormatter: p => p.value ? NUM(p.value) : '', cellStyle: { color: '#1565c0', fontWeight: 600 }, headerTooltip: 'Unidades por encima del tope verde ajustado (TOG aj.) en las tiendas en sobrestock.' },
     { field: 'faltan', headerName: 'Faltan (u.)', type: 'numericColumn', width: 105, valueFormatter: p => p.value ? NUM(p.value) : '', cellStyle: { color: '#c62828', fontWeight: 600 }, headerTooltip: 'Unidades que separan el flujo neto del tope verde ajustado (TOG aj.) cuando NO hay sobrestock. Es la distancia al tope, no el sugerido del motor (que además aplica mínimos, redondeo y el inventario del CEDI).' },
     { field: 'rotacion', headerName: 'Rotación (uds/mes)', type: 'numericColumn', width: 150, valueFormatter: p => p.value == null ? '' : Number(p.value).toLocaleString('es-CO', { maximumFractionDigits: 1 }), headerTooltip: 'Unidades vendidas por mes en promedio en la ventana.' },
+    ...colsCobertura(),
     { field: 'sugerido', headerName: 'Sugerido', type: 'numericColumn', width: 100, valueFormatter: p => NUM(p.value) },
     { field: 'dias_inv', headerName: 'Días inv.', type: 'numericColumn', width: 100, valueFormatter: p => NUM(p.value) },
     { field: 'inv_costo', headerName: 'Inv. a costo $', type: 'numericColumn', width: 135, valueFormatter: p => COP(p.value) },

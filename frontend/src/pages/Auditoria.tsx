@@ -4,7 +4,7 @@ import { ColDef } from 'ag-grid-community'
 import { Alert, Autocomplete, Box, Button, Chip, FormControlLabel, MenuItem, Paper, Stack, Switch, TextField, Typography } from '@mui/material'
 import Download from '@mui/icons-material/Download'
 import { api, bajar } from '../api'
-import { bodegasDeEmpresa, tiendasDeEmpresa } from '../filtros'
+import { bodegasDeEmpresa, colsCobertura, tiendasDeEmpresa } from '../filtros'
 import Aviso from '../Aviso'
 import { ayudar } from '../ayuda'
 import { useEmpresa } from '../Empresa'
@@ -24,6 +24,7 @@ const cols: ColDef[] = [
   { field: 'inventario', headerName: 'Inventario', type: 'numericColumn', width: 105, valueFormatter: num },
   { field: 'en_transito', headerName: 'Transito', type: 'numericColumn', width: 95, valueFormatter: num },
   { field: 'flujo_neto', headerName: 'Flujo neto', type: 'numericColumn', width: 105, valueFormatter: num },
+  ...colsCobertura(),
   { field: 'zona', headerName: 'Zona', width: 105, cellStyle: p => ({ color: COLOR[p.value] ?? undefined, fontWeight: 700 }) },
   { field: 'necesidad', headerName: 'Necesario', type: 'numericColumn', width: 105, valueFormatter: num },
   { field: 'stock_cedi', headerName: 'Stock CEDI', type: 'numericColumn', width: 105, valueFormatter: num },

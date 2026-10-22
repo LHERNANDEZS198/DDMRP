@@ -16,6 +16,9 @@ def _datos(user, criterio, meses, empresa, bodegas, labs, crit, q, zonas, diag):
     items, meta = _calcular(user, "tienda_item", criterio, meses, 80, 95, empresa, bodegas, labs, crit, q)
     for i in items:
         i["diag"] = cl.diagnostico(i)
+        a = (i.get("adu") or 0) / 30      # ADU es mensual: cobertura en dias de venta del flujo neto y del tope verde
+        i["cob_dias"] = i["flujo_neto"] / a if a > 0 and i.get("flujo_neto") is not None else None
+        i["tog_dias"] = i["tog_aj"] / a if a > 0 and i.get("tog_aj") is not None else None
     resumen = {k: {"diag": k, "etiqueta": cl.DIAGNOSTICOS[k][0], "color": cl.DIAGNOSTICOS[k][1], "ayuda": cl.DIAGNOSTICOS[k][2], "n": 0, "inv_costo": 0.0, "margen": 0.0}
                for k in ORDEN_DIAG}
     for i in items:
@@ -38,6 +41,7 @@ COLS = [{"t": "Atender", "k": "etq", "w": 24}, {"t": "Tienda", "k": "bodega_id",
         {"t": "Item", "k": "producto_id", "w": 11}, {"t": "Descripcion", "k": "descripcion", "w": 44}, {"t": "Laboratorio", "k": "laboratorio", "w": 14},
         {"t": "Zona hoy", "k": "zona", "w": 11, "zona": True}, {"t": "% buffer", "k": "pct_buffer", "f": "dec1"}, {"t": "Clase", "k": "clase", "w": 8},
         {"t": "Ranking", "k": "puesto", "f": "int"}, {"t": "Inventario (u.)", "k": "inventario", "f": "int"}, {"t": "Flujo neto", "k": "flujo_neto", "f": "int"},
+        {"t": "Cobertura (dias)", "k": "cob_dias", "f": "dec1"}, {"t": "TOG (dias)", "k": "tog_dias", "f": "dec1"},
         {"t": "Sugerido (u.)", "k": "sugerido", "f": "int"}, {"t": "Dias de inventario", "k": "dias_inv", "f": "int"}, {"t": "Rotacion (uds/mes)", "k": "rotacion", "f": "dec2"},
         {"t": "Sobran (u.)", "k": "sobran", "f": "int"}, {"t": "Faltan (u.)", "k": "faltan", "f": "int"},
         {"t": "Inventario a costo $", "k": "inv_costo", "f": "cop"}, {"t": "Venta neta $", "k": "valor", "f": "cop"}, {"t": "Margen $", "k": "margen", "f": "cop"},

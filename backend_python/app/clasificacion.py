@@ -37,7 +37,7 @@ def agregar(filas: list[dict], nivel: str) -> list[dict]:
                              "cant": 0.0, "valor": 0.0, "inventario": 0.0, "inv_prom": 0.0, "dias_hist": 0, "_dias_tot": 0, "_dias_cero": 0, "adu": 0.0, "primer_mes": None, "tiendas": 0,
                              "_iv_pond": 0.0, "_iv_sum": 0.0, "_iv_n": 0, "sobran": 0.0, "faltan": 0.0, "_zonas": {}}
             if nivel == "tienda_item":      # estado del buffer: solo tiene sentido por tienda
-                for c in ("zona", "pct_buffer", "flujo_neto", "sugerido"):
+                for c in ("zona", "pct_buffer", "flujo_neto", "tog_aj", "sugerido"):
                     g[c] = r.get(c)
         g["cant"] += _f(r.get("cant")); g["valor"] += _f(r.get("valor")); g["inventario"] += max(_f(r.get("inventario")), 0.0)
         dh = int(r.get("dias_hist") or 0)       # inventario promedio de la ventana (suma de las tiendas); sin historia de esa tienda, su inventario de hoy

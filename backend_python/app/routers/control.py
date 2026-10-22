@@ -374,13 +374,24 @@ COLS_GRUPO = [{"t": "Clave", "k": "clave", "w": 16}, {"t": "Nombre", "k": "nombr
               {"t": "A pedir", "k": "a_pedir", "f": "int"}, {"t": "Unidades sugeridas", "k": "unidades", "f": "int"},
               {"t": "Inventario", "k": "inventario", "f": "int"}, {"t": "En transito", "k": "en_transito", "f": "int"},
               {"t": "Flujo neto", "k": "flujo_neto", "f": "int"}, {"t": "TOG ajustado", "k": "tog_aj", "f": "int"}]
+def _con_cobertura(filas):
+    """Agrega dias de cobertura (flujo neto y TOG sobre la venta diaria = ADU mensual / 30)."""
+    for r0 in filas:
+        r = dict(r0)
+        a = float(r.get("adu") or 0) / 30
+        r["cob_dias"] = float(r["flujo_neto"]) / a if a > 0 and r.get("flujo_neto") is not None else None
+        r["tog_dias"] = float(r["tog_aj"]) / a if a > 0 and r.get("tog_aj") is not None else None
+        yield r
+
+
 COLS_DETALLE = [{"t": "Tienda", "k": "bodega_id", "w": 10}, {"t": "Nombre tienda", "k": "bodega_nombre", "w": 26},
                 {"t": "Item", "k": "producto_id", "w": 12}, {"t": "Descripcion", "k": "descripcion", "w": 44},
                 {"t": "Laboratorio", "k": "laboratorio", "w": 16}, {"t": "Zona", "k": "zona", "w": 11, "zona": True},
                 {"t": "% buffer", "k": "pct_buffer", "f": "dec1"}, {"t": "Inventario", "k": "inventario", "f": "int"},
                 {"t": "En transito", "k": "en_transito", "f": "int"}, {"t": "Flujo neto", "k": "flujo_neto", "f": "int"},
                 {"t": "TOR", "k": "tor", "f": "dec1"}, {"t": "TOY ajustado", "k": "toy_aj", "f": "dec1"}, {"t": "TOG ajustado", "k": "tog_aj", "f": "dec1"},
-                {"t": "ADU", "k": "adu", "f": "dec2"}, {"t": "Sugerido", "k": "cantidad_sugerida", "f": "int"},
+                {"t": "ADU", "k": "adu", "f": "dec2"}, {"t": "Cobertura (dias)", "k": "cob_dias", "f": "dec1"}, {"t": "TOG (dias)", "k": "tog_dias", "f": "dec1"},
+                {"t": "Sugerido", "k": "cantidad_sugerida", "f": "int"},
                 {"t": "Condenado", "k": "condenado", "w": 10}, {"t": "Costo", "k": "costo", "f": "cop"}]
 COLS_CAMBIOS_G = [{"t": "Clave", "k": "clave", "w": 16}, {"t": "Nombre", "k": "nombre", "w": 32},
                   {"t": "Combin. inicio", "k": "n_ini", "f": "int"}, {"t": "Combin. fin", "k": "n_fin", "f": "int"},
@@ -427,7 +438,7 @@ def exportar(vista: str = "foto", agrupar: str = "bodega", desde: date | None = 
         w, p = _donde(user, bodegas, labs, q, zonas, dia, empresa, crit)
         with pg.connect() as c:
             ej = c.execute(text(f"SELECT id, fecha_calculo FROM ddmrp.ejecucion_motor WHERE id = {ULTIMA}")).first()
-            excel.hoja(wb, "Detalle", COLS_DETALLE, _stream(c, _sql_detalle(w), p), fijar=4)
+            excel.hoja(wb, "Detalle", COLS_DETALLE, _con_cobertura(_stream(c, _sql_detalle(w), p)), fijar=4)
         _hoja_filtros(wb, user, "Control DDMRP - foto actual", [("Agrupado por", agrupar), ("Corte del motor", f"{ej[1]} (ejecucion {ej[0]})" if ej else ""), *f])
     elif vista == "cambios":
         r = cambios(agrupar, desde, hasta, bodegas, labs, q, zonas, dia, empresa, crit, plan, 100000, user)
