@@ -5,8 +5,23 @@ import Tabla from '../Tabla'
 import { api, bajar } from '../api'
 import { bodegasDeEmpresa, colsCobertura, tiendasDeEmpresa } from '../filtros'
 import { useEmpresa } from '../Empresa'
+import { ayudar } from '../ayuda'
 
-const ZCOLOR: Record<string, string> = { ROJA: '#c62828', AMARILLA: '#f9a825', VERDE: '#2e7d32', EXCESO: '#1565c0' }
+const COLOR_ABC: Record<string, string> = { I: '#1565c0', A: '#2e7d32', B: '#f9a825', C: '#9e9e9e', N: '#00acc1', D: '#6d4c41', S: '#8e24aa' }
+const TIPS: Record<string, string> = {
+  diag: 'Qué hacer primero con esta tienda × item: cruza la zona del buffer de hoy (rojo, amarillo, verde, sobrestock) con la importancia del item (clase ABC × XYZ). Ya incluye la zona.',
+  bodega_id: 'Código de la tienda.', producto_id: 'Referencia del producto.', descripcion: 'Nombre del producto en Siesa.',
+  pct_buffer: 'Dónde está el flujo neto dentro del buffer: 0 % = vacío, 100 % = tope verde (TOG). Por encima de 100 % hay sobrestock.',
+  clase: 'ABC (cuánto aporta según el criterio elegido) + XYZ (qué tan predecible es su venta, por el IV del motor). Ej.: AY = aporta mucho, venta media.',
+  puesto: 'Puesto en el ranking ABC del criterio elegido (1 = el que más aporta).',
+  inventario: 'Unidades disponibles hoy en la tienda.',
+  sugerido: 'Unidades que sugiere el motor enviar hoy a la tienda (con mínimos, redondeo y el inventario del CEDI).',
+  dias_inv: 'Inventario promedio ÷ venta diaria promedio de la ventana: para cuántos días alcanza el stock.',
+  inv_costo: 'Inventario de hoy × costo promedio actual: el dinero parado en stock.',
+  margen: 'Venta neta − unidades × costo en la ventana elegida.',
+  gmroi: 'Margen anualizado ÷ inventario PROMEDIO a costo: pesos de margen por cada peso invertido en stock en un año. Bajo 1 no cubre lo invertido.',
+  laboratorio: 'Código del laboratorio (plan 006 de Siesa).',
+}
 const COP = (v: any) => v == null ? '' : '$' + Math.round(v).toLocaleString('es-CO')
 const NUM = (v: any) => v == null ? '' : Math.round(v).toLocaleString('es-CO')
 const M = (v: number) => Math.abs(v) >= 1e6 ? (v / 1e6).toLocaleString('es-CO', { maximumFractionDigits: 1 }) + ' M' : NUM(v)
@@ -41,16 +56,15 @@ export default function Salud() {
   const valores = opc.criterios.find((p: any) => p.plan_id === plan)?.valores ?? []
   const etq = (k: string) => d?.resumen.find((r: any) => r.diag === k)
 
-  const cols: ColDef[] = useMemo(() => [
+  const cols: ColDef[] = useMemo(() => ([
     { field: 'diag', headerName: 'Atender', width: 190, pinned: 'left', filter: true, valueGetter: p => etq(p.data?.diag)?.etiqueta ?? p.data?.diag,
       cellRenderer: (p: ICellRendererParams) => p.value == null ? '' : <Chip size="small" label={p.value} sx={{ height: 20, fontSize: 11, color: '#fff', bgcolor: etq(p.data.diag)?.color ?? '#999' }} /> },
     { field: 'bodega_id', headerName: 'Tienda', width: 90, filter: true },
     { field: 'producto_id', headerName: 'Item', width: 100, filter: true },
     { field: 'descripcion', headerName: 'Descripción', width: 260, filter: true },
-    { field: 'zona', headerName: 'Zona hoy', width: 110, filter: true, cellRenderer: (p: ICellRendererParams) => p.value == null ? '' :
-      <Chip size="small" label={p.value} sx={{ bgcolor: ZCOLOR[p.value] ?? '#999', color: '#fff', height: 20, fontSize: 11 }} /> },
     { field: 'pct_buffer', headerName: '% buffer', type: 'numericColumn', width: 95, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(0) + '%' },
-    { field: 'clase', headerName: 'Clase', width: 80, filter: true },
+    { field: 'clase', headerName: 'Clase', width: 80, filter: true, cellRenderer: (p: ICellRendererParams) => p.value == null ? '' :
+      <Chip size="small" label={p.value} sx={{ height: 20, fontSize: 11, color: '#fff', bgcolor: COLOR_ABC[String(p.value)[0]] ?? '#999' }} /> },
     { field: 'puesto', headerName: 'Ranking', type: 'numericColumn', width: 90 },
     { field: 'inventario', headerName: 'Inventario', type: 'numericColumn', width: 105, valueFormatter: p => NUM(p.value) },
     { field: 'sobran', headerName: 'Sobran (u.)', type: 'numericColumn', width: 105, valueFormatter: p => p.value ? NUM(p.value) : '', cellStyle: { color: '#1565c0', fontWeight: 600 }, headerTooltip: 'Unidades por encima del tope verde ajustado (TOG aj.) en las tiendas en sobrestock.' },
@@ -63,7 +77,7 @@ export default function Salud() {
     { field: 'margen', headerName: 'Margen $', type: 'numericColumn', width: 120, valueFormatter: p => COP(p.value), cellStyle: p => (p.value ?? 0) < 0 ? { color: '#c62828' } : null },
     { field: 'gmroi', headerName: 'GMROI', type: 'numericColumn', width: 90, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(2) },
     { field: 'laboratorio', headerName: 'Lab.', width: 90, filter: true },
-  ], [d?.resumen])
+  ] as ColDef[]).map(c => c.headerTooltip || !TIPS[c.field as string] ? c : { ...c, headerTooltip: TIPS[c.field as string] }), [d?.resumen])
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 1.5, minHeight: 600 }}>
@@ -113,7 +127,7 @@ export default function Salud() {
       {err && <Typography color="error" variant="body2">{err}</Typography>}
       <Typography variant="caption" color="text.secondary">{d ? (d.truncado ? `Mostrando ${d.filas.length.toLocaleString()} de ${d.total.toLocaleString()} (en orden de atención); filtra o baja el Excel` : `${d.total.toLocaleString()} tienda × item`) : ''}</Typography>
       <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 320 }}>
-        <Tabla textoCargando="Calculando…" vacio="Sin resultados con estos filtros" rowData={d?.filas ?? []} columnDefs={cols} cargando={cargando} defaultColDef={{ resizable: true, sortable: true }} />
+        <Tabla textoCargando="Calculando…" vacio="Sin resultados con estos filtros" rowData={d?.filas ?? []} columnDefs={ayudar(cols)} tooltipShowDelay={300} cargando={cargando} defaultColDef={{ resizable: true, sortable: true }} />
       </Box>
     </Box>)
 }
