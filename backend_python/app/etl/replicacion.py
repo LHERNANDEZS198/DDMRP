@@ -443,9 +443,11 @@ def _items_de_siesa(cur, eng, primera: bool = True, empresa: str | None = None) 
     with cur.copy("COPY stg_items FROM STDIN") as cp:
         for x in items:
             cp.write_row(x)
-    cur.execute("""INSERT INTO ddmrp.maestro_item (producto_id, descripcion)
+    # la primera base (Funat) manda: pisa la descripcion. La segunda (Stores) solo agrega los items que falten; antes tambien la pisaba y,
+    # como se lee despues, un nombre viejo de Stores (p. ej. "*DESC ...") tapaba el nombre ya corregido en Funat
+    cur.execute(f"""INSERT INTO ddmrp.maestro_item (producto_id, descripcion)
                    SELECT producto_id, COALESCE(descripcion, producto_id) FROM stg_items
-                   ON CONFLICT (producto_id) DO UPDATE SET descripcion = EXCLUDED.descripcion, actualizado = now()""")
+                   ON CONFLICT (producto_id) DO {"UPDATE SET descripcion = EXCLUDED.descripcion, actualizado = now()" if primera else "NOTHING"}""")
     borrados = 0
     if primera and items:   # espejo de Siesa: se van los items viejos que ya no estan en la seleccion (los de Stores se agregan despues)
         cur.execute("DELETE FROM ddmrp.maestro_item m WHERE NOT EXISTS (SELECT 1 FROM stg_items s WHERE s.producto_id = m.producto_id)")
