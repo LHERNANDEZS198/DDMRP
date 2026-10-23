@@ -2,7 +2,8 @@ import logging, threading, time
 from datetime import datetime, timedelta, timezone
 from fastapi import Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer
-from jose import jwt, JWTError
+import jwt
+from jwt import PyJWTError as JWTError
 from sqlalchemy import text
 from .config import settings
 from .db import pg
@@ -13,7 +14,7 @@ NIVELES = {"lectura": 1, "edicion": 2, "aprobacion": 3}
 
 def crear_token(user: dict, minutos: int | None = None) -> str:
     exp = datetime.now(timezone.utc) + timedelta(minutes=minutos or settings.jwt_expire_minutes)
-    return jwt.encode({"sub": user["id"], "nombre": user["nombre"], "exp": exp}, settings.jwt_secret, "HS256")
+    return jwt.encode({"sub": user["id"], "nombre": user["nombre"], "exp": exp}, settings.jwt_secret, algorithm="HS256")
 
 
 log = logging.getLogger("sesion")

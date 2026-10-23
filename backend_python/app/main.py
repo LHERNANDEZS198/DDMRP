@@ -1,5 +1,5 @@
 import logging, time
-from jose import jwt
+import jwt
 from contextlib import asynccontextmanager
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, Request
@@ -44,7 +44,7 @@ async def _registrar_consulta(request: Request, call_next):
     usuario = None
     try:
         tok = request.headers.get("authorization", "").split(" ", 1)[-1]
-        usuario = jwt.get_unverified_claims(tok).get("nombre") if tok else None
+        usuario = jwt.decode(tok, options={"verify_signature": False}).get("nombre") if tok else None
     except Exception:       # noqa: BLE001
         pass
     try:

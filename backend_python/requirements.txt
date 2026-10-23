@@ -1,12 +1,13 @@
-fastapi==0.115.*
-uvicorn[standard]==0.32.*
-python-multipart==0.0.*
+# Versiones fijas (probadas juntas). Revisar con `pip-audit -r requirements.txt` antes de cada despliegue.
+fastapi==0.161.1          # trae starlette 1.x
+uvicorn[standard]==0.54.0
+python-multipart==0.0.32
 sqlalchemy==2.0.*
 psycopg[binary]==3.2.*
 pyodbc==5.2.*
 pymysql==1.1.*
 pydantic-settings==2.6.*
-python-jose[cryptography]==3.3.*
+PyJWT==2.15.1
 passlib==1.7.4
 bcrypt==4.0.1
 apscheduler==3.10.*
