@@ -16,5 +16,5 @@ def siesa_engine(db: str):
 def mysql_engine():
     global _mysql
     if _mysql is None:
-        _mysql = create_engine(settings.mysql_url, pool_pre_ping=True)
+        _mysql = create_engine(settings.mysql_url, pool_pre_ping=True, connect_args={"connect_timeout": 5, "read_timeout": 5})
     return _mysql

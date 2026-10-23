@@ -49,6 +49,10 @@ class Settings(BaseSettings):
                             "FROM USUARIOS WHERE CODIGO = :usuario")
     auth_buscar_query: str = ("SELECT CODIGO AS id, NOMBRE AS nombre FROM USUARIOS "
                               "WHERE CODIGO LIKE :q OR NOMBRE LIKE :q ORDER BY NOMBRE LIMIT 20")
+    # Consulta opcional que dice si el usuario SIGUE activo en reloj (devuelve una fila si si). Vacia = solo se verifica que su CODIGO siga existiendo en USUARIOS.
+    # Ej.: SELECT 1 FROM USUARIOS WHERE CODIGO = :usuario AND ACTIVO = 1   (usa la columna real de tu tabla)
+    auth_activo_query: str = ""
+    auth_revalidar_minutos: int = 15   # cada cuantos minutos se vuelve a preguntar a reloj por un usuario con sesion abierta (0 = nunca)
     admin_bootstrap: str = ""  # CODIGOs (coma) que entran como admin de la app en el primer arranque
 
     # --- App ---

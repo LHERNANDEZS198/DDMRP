@@ -20,6 +20,16 @@ def verify_password(plain: str, stored: str) -> bool:
     return False
 
 
+def sigue_activo(usuario: str) -> bool | None:
+    """True/False si reloj dice que el usuario sigue activo (AUTH_ACTIVO_QUERY, o que su CODIGO exista si no hay consulta). None = no se pudo preguntar."""
+    q = settings.auth_activo_query.strip() or "SELECT 1 FROM USUARIOS WHERE CODIGO = :usuario"
+    try:
+        with mysql_engine().connect() as c:
+            return c.execute(text(q), {"usuario": usuario}).first() is not None
+    except Exception:       # noqa: BLE001  reloj caido: no se saca a nadie por eso
+        return None
+
+
 def autenticar(usuario: str, clave: str) -> dict | None:
     with mysql_engine().connect() as c:
         row = c.execute(text(settings.auth_user_query), {"usuario": usuario}).mappings().first()

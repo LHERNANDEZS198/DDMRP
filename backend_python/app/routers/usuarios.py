@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from ..config import settings
 from ..db import pg, mysql_engine
-from ..security import crear_token, usuario_actual, requiere, permisos, PERMISOS, CLAVES_PERMISO, EMPRESAS, _bootstrap
+from ..security import olvidar, crear_token, usuario_actual, requiere, permisos, PERMISOS, CLAVES_PERMISO, EMPRESAS, _bootstrap
 
 router = APIRouter(prefix="/usuarios", tags=["usuarios"], dependencies=[Depends(requiere("admin_usuarios"))])
 NIVELES = ("lectura", "edicion", "aprobacion")
@@ -176,6 +176,7 @@ def ver_como(b: VerComoIn, user=Depends(usuario_actual)):
                   {"u": uid, "n": nombre, "p": b.perfil_id, "b": bodegas, "k": cats, "e": emps})
         sincronizar_rbac(c, uid)
         _audit(c, user, uid, "ver_como", None, f"{b.perfil_id} t={len(bodegas) or 'todas'} l={len(cats) or 'todos'}")
+    olvidar(uid)
     return {"access_token": crear_token({"id": uid, "nombre": nombre}, 120), "token_type": "bearer", "usuario": nombre}
 
 
@@ -204,6 +205,7 @@ def guardar_usuario(usuario_id: str, b: UsuarioIn, user=Depends(usuario_actual))
                   {"u": usuario_id, "n": b.nombre.strip() or usuario_id, "p": b.perfil_id, "a": b.activo, "b": bodegas, "k": cats, "e": emps})
         sincronizar_rbac(c, usuario_id)
         _audit(c, user, usuario_id, "usuario", ant, f"{b.perfil_id} {b.activo} t={len(bodegas) or 'todas'} l={len(cats) or 'todos'} e={','.join(emps) or 'ambas'}")
+    olvidar(usuario_id)       # la baja o el cambio de perfil vale ya, sin esperar al cache
     return {"ok": True}
 
 
@@ -216,4 +218,5 @@ def borrar_usuario(usuario_id: str, user=Depends(usuario_actual)):
         n = c.execute(text("DELETE FROM ddmrp.usuario WHERE usuario_id = :u"), {"u": usuario_id}).rowcount
         if n:
             _audit(c, user, usuario_id, "usuario", "existia", None)
+    olvidar(usuario_id)
     return {"ok": True, "eliminado": bool(n)}

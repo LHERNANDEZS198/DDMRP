@@ -1,3 +1,4 @@
+import logging, threading, time
 from datetime import datetime, timedelta, timezone
 from fastapi import Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer
@@ -15,12 +16,74 @@ def crear_token(user: dict, minutos: int | None = None) -> str:
     return jwt.encode({"sub": user["id"], "nombre": user["nombre"], "exp": exp}, settings.jwt_secret, "HS256")
 
 
+log = logging.getLogger("sesion")
+_cache_app: dict[str, tuple[float, bool]] = {}
+_cache_reloj: dict[str, tuple[float, bool, float]] = {}
+_lock = threading.Lock()
+TTL_APP = 20          # segundos que se recuerda el estado en esta app (un cambio de perfil/baja se nota en ese tiempo; `olvidar` lo corta al instante)
+TTL_RELOJ_CAIDO = 60  # si reloj no responde se reintenta cada minuto, sin sacar a nadie
+
+
+def olvidar(usuario_id: str | None = None) -> None:
+    """Descarta lo recordado de un usuario (o de todos): lo llama la pantalla de Usuarios al cambiarlo, para que la baja valga ya."""
+    with _lock:
+        for c in (_cache_app, _cache_reloj):
+            c.pop(usuario_id, None) if usuario_id else c.clear()
+
+
+def activo_en_app(usuario_id: str) -> bool:
+    """El usuario existe en esta app y esta activo. Sin fila solo pasan los de ADMIN_BOOTSTRAP (los demas no tienen acceso a nada)."""
+    ahora = time.monotonic()
+    with _lock:
+        v = _cache_app.get(usuario_id)
+    if v and ahora - v[0] < TTL_APP:
+        return v[1]
+    if _bootstrap(usuario_id):
+        ok = True
+    else:
+        with pg.connect() as c:
+            r = c.execute(text("SELECT activo FROM ddmrp.usuario WHERE usuario_id = :u"), {"u": usuario_id}).scalar()
+        ok = bool(r)
+    with _lock:
+        _cache_app[usuario_id] = (ahora, ok)
+    return ok
+
+
+def activo_en_reloj(usuario_id: str) -> bool:
+    """Revalida contra reloj cada AUTH_REVALIDAR_MINUTOS: si lo dieron de baja alla, la sesion abierta se cierra. Si reloj no responde, deja pasar."""
+    minutos = settings.auth_revalidar_minutos
+    if minutos <= 0 or not settings.auth_mysql_host or usuario_id.startswith("prueba:"):
+        return True
+    ahora = time.monotonic()
+    with _lock:
+        v = _cache_reloj.get(usuario_id)          # (cuando, resultado, segundos que vale)
+    if v and ahora - v[0] < v[2]:
+        return v[1]
+    from .auth.mysql_auth import sigue_activo
+    r = sigue_activo(usuario_id)
+    if r is None:       # reloj no responde: se conserva lo ultimo que se supo (o activo) y se reintenta en un minuto
+        log.warning("Reloj no respondio al revalidar a %s: se deja pasar", usuario_id)
+        r, vale = (v[1] if v else True), TTL_RELOJ_CAIDO
+    else:
+        vale = minutos * 60
+        if not r:
+            log.warning("Sesion cerrada: %s ya no esta activo en reloj", usuario_id)
+    with _lock:
+        _cache_reloj[usuario_id] = (ahora, r, vale)
+    return r
+
+
 def usuario_actual(token: str = Depends(oauth2)) -> dict:
     try:
         p = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
-        return {"id": p["sub"], "nombre": p["nombre"]}
-    except JWTError:
+        u = {"id": p["sub"], "nombre": p["nombre"]}
+    except (JWTError, KeyError):
         raise HTTPException(401, "Token invalido")
+    if not activo_en_app(u["id"]):
+        raise HTTPException(401, "Tu usuario esta inactivo o no tiene acceso a esta aplicacion")
+    if not activo_en_reloj(u["id"]):
+        raise HTTPException(401, "Tu usuario ya no esta activo en reloj")
+    return u
 
 
 # Funciones que se pueden dar a un perfil (clave, etiqueta, grupo). 'admin' = todo.
