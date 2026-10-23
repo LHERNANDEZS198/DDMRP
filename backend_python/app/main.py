@@ -27,7 +27,7 @@ async def lifespan(app: FastAPI):
     sch.shutdown()
 
 
-app = FastAPI(title="DDMRP API", lifespan=lifespan)
+app = FastAPI(title="DDMRP API", lifespan=lifespan, **({} if settings.habilitar_docs else {"docs_url": None, "redoc_url": None, "openapi_url": None}))
 @app.exception_handler(Ocupado)
 async def _ocupado(request: Request, exc: Ocupado):
     return JSONResponse(status_code=409, content={"detail": str(exc)})

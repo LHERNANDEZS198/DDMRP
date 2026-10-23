@@ -52,7 +52,9 @@ services:
     depends_on:
       - backend
     ports:
-      - "${FRONTEND_PORT:-8095}:80"   # puerto de la UI; cambialo con FRONTEND_PORT en .env
+      # puerto de la UI (FRONTEND_PORT). Escucha solo en este servidor (127.0.0.1): al exterior se sale por el nginx con HTTPS.
+      # Para abrirla a la red sin proxy (HTTP plano, solo pruebas) pon FRONTEND_BIND=0.0.0.0 en .env
+      - "${FRONTEND_BIND:-127.0.0.1}:${FRONTEND_PORT:-8095}:80"
 
 volumes:
   pgdata:

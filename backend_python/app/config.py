@@ -50,14 +50,18 @@ class Settings(BaseSettings):
     auth_buscar_query: str = ("SELECT CODIGO AS id, NOMBRE AS nombre FROM USUARIOS "
                               "WHERE CODIGO LIKE :q OR NOMBRE LIKE :q ORDER BY NOMBRE LIMIT 20")
     # Consulta opcional que dice si el usuario SIGUE activo en reloj (devuelve una fila si si). Vacia = solo se verifica que su CODIGO siga existiendo en USUARIOS.
-    # Ej.: SELECT 1 FROM USUARIOS WHERE CODIGO = :usuario AND ACTIVO = 1   (usa la columna real de tu tabla)
-    auth_activo_query: str = ""
+    auth_activo_query: str = "SELECT 1 FROM USUARIOS WHERE CODIGO = :usuario AND COALESCE(activo, 1) = 1"
     auth_revalidar_minutos: int = 15   # cada cuantos minutos se vuelve a preguntar a reloj por un usuario con sesion abierta (0 = nunca)
     admin_bootstrap: str = ""  # CODIGOs (coma) que entran como admin de la app en el primer arranque
 
     # --- App ---
     jwt_secret: str = "dev"
-    jwt_expire_minutes: int = 10080   # 7 dias (JWT_EXPIRE_MINUTES en el .env)
+    jwt_expire_minutes: int = 480     # 8 horas (JWT_EXPIRE_MINUTES en el .env)
+    # Freno a la fuerza bruta del login (por usuario): tras N fallos en la ventana, ese usuario espera X minutos
+    login_max_fallos: int = 5
+    login_ventana_min: int = 15
+    login_bloqueo_min: int = 15
+    habilitar_docs: bool = False      # /docs y /openapi.json del backend (solo para desarrollo: HABILITAR_DOCS=true)
     core_bin: str = "/usr/local/bin/ddmrp_core"
     etl_cron_hour: int = 2
 

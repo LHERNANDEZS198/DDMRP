@@ -6,18 +6,23 @@ from ..security import crear_token, usuario_actual, asignaciones, permisos, empr
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 from ..config import settings
+from .. import limite
 log = logging.getLogger("auth")
 
 
 @router.post("/login")
 def login(form: OAuth2PasswordRequestForm = Depends()):
+    limite.revisar(form.username)          # bloqueado por intentos fallidos: ni se consulta reloj
     try:
         u = autenticar(form.username, form.password)
     except Exception as e:  # reloj inalcanzable, columna inexistente, etc.: no es una clave mala
         log.exception("Fallo consultando el MySQL de reloj")
         raise HTTPException(503, f"No se pudo consultar reloj ({type(e).__name__}). Revisa AUTH_MYSQL_* y los logs del backend.")
     if not u or str(u["id"]).startswith("prueba:"):
+        limite.fallo(form.username)
+        log.warning("Login fallido de %r", form.username[:64])
         raise HTTPException(401, "Credenciales invalidas")
+    limite.acierto(form.username)
     olvidar(u["id"])       # al entrar se pregunta de nuevo (no se confia en lo recordado)
     if not activo_en_app(u["id"]):
         raise HTTPException(403, "Tu usuario esta inactivo o no tiene acceso a esta aplicacion: pide que te habiliten en Usuarios")

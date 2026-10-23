@@ -1,7 +1,7 @@
 """Autenticacion contra MySQL de reloj (solo usuario y clave; perfiles/permisos viven en esta app).
 Misma logica que admin/Log.php: USUARIOS.CODIGO + USUARIOS.CLAVE, donde CLAVE es md5 (32 hex) o hash PHP password_hash
 (bcrypt $2y$). Solo lectura: no se migra ni se reescribe la clave desde aqui."""
-import hashlib, hmac
+import hashlib, hmac, logging
 from sqlalchemy import text
 from passlib.hash import bcrypt
 from ..config import settings
@@ -26,7 +26,8 @@ def sigue_activo(usuario: str) -> bool | None:
     try:
         with mysql_engine().connect() as c:
             return c.execute(text(q), {"usuario": usuario}).first() is not None
-    except Exception:       # noqa: BLE001  reloj caido: no se saca a nadie por eso
+    except Exception as e:       # noqa: BLE001  reloj caido (o la consulta de AUTH_ACTIVO_QUERY esta mal): no se saca a nadie por eso
+        logging.getLogger("auth").warning("No se pudo preguntar a reloj si %s sigue activo: %s: %s", usuario, type(e).__name__, str(e)[:200])
         return None
 
 
