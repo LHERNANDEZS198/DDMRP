@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Tabla from '../Tabla'
 import { ColDef, ICellRendererParams } from 'ag-grid-community'
-import { Autocomplete, Box, Button, Card, CardActionArea, Chip, MenuItem, Paper, Tab, Tabs, TextField, Tooltip, Typography } from '@mui/material'
+import { Autocomplete, Box, Button, Card, CardActionArea, Checkbox, Chip, FormControlLabel, MenuItem, Paper, Tab, Tabs, TextField, Tooltip, Typography } from '@mui/material'
 import { useLocation, useSearchParams } from 'react-router-dom'
 import { BufferTrend, ZonaShare, Punto } from '../TrendCharts'
 import { api, bajar } from '../api'
@@ -102,6 +102,7 @@ export default function Control() {
   const mapaModo = ruta.startsWith('/control/mapa')
   const [mapa, setMapa] = useState<{ fechas: string[]; filas: any[]; total: number; truncado: boolean }>({ fechas: [], filas: [], total: 0, truncado: false })
   const [paso, setPaso] = useState(1); const [metrica, setMetrica] = useState('inventario'); const [orden, setOrden] = useState('critico')
+  const [ignorarVacios, setIgnorarVacios] = useState(true)   // mapa: esconde lo que no tiene ADU ni inventario (mucho ruido)
   const [bajando, setBajando] = useState(false)
   const [serie, setSerie] = useState<Punto[]>([])
   const [desde, setDesde] = useState(hace(ruta.startsWith('/control/tendencia') ? 90 : ruta.startsWith('/control/mapa') ? 30 : 7)); const [hasta, setHasta] = useState(hoy())
@@ -140,7 +141,7 @@ export default function Control() {
       return () => { vivo = false }
     }
     if (mapaModo) {
-      api(`/control/mapa?limit=3000&paso=${paso}&metrica=${metrica}&orden=${orden}&${qs(f)}&${per}`).then(r => vivo && setMapa(r)).catch(e => vivo && setErr(e.message)).finally(() => vivo && setCargando(false))
+      api(`/control/mapa?limit=3000&paso=${paso}&metrica=${metrica}&orden=${orden}&ignorar_vacios=${ignorarVacios}&${qs(f)}&${per}`).then(r => vivo && setMapa(r)).catch(e => vivo && setErr(e.message)).finally(() => vivo && setCargando(false))
       api(`/control/resumen?agrupar=empresa&${qs(f, true)}`).then(r => vivo && setKpi({ m: false, v: r.total })).catch(() => {})
       return () => { vivo = false }
     }
@@ -153,7 +154,7 @@ export default function Control() {
       : api(`${base}?agrupar=${nivel}&${qs(f)}${extra}`).then(r => vivo && setGrupos({ m: cambiosModo, v: r.grupos }))
     p.catch(e => vivo && setErr(e.message)).finally(() => vivo && setCargando(false))
     return () => { vivo = false }
-  }, [clave, f.plan, opc.criterios, nivel, cambiosModo, tendModo, mapaModo, desde, hasta, mov, paso, metrica, orden])
+  }, [clave, f.plan, opc.criterios, nivel, cambiosModo, tendModo, mapaModo, desde, hasta, mov, paso, metrica, orden, ignorarVacios])
 
   const total = (cambiosModo ? kpi?.n_fin : kpi?.n) || 1
   const planNombre = (p: string) => opc.criterios?.find((x: any) => x.plan_id === p)?.nombre ?? p
@@ -253,7 +254,7 @@ export default function Control() {
     setBajando(true); setErr('')
     try {
       const vista = tendModo ? 'tendencia' : cambiosModo ? 'cambios' : 'foto'
-      if (mapaModo) await bajar(`/control/mapa/excel?paso=${paso}&metrica=${metrica}&orden=${orden}&${qs(f)}&${per}`, 'mapa_calor.xlsx')
+      if (mapaModo) await bajar(`/control/mapa/excel?paso=${paso}&metrica=${metrica}&orden=${orden}&ignorar_vacios=${ignorarVacios}&${qs(f)}&${per}`, 'mapa_calor.xlsx')
       else await bajar(`/control/excel?vista=${vista}&agrupar=${nivel === 'detalle' ? 'bodega' : nivel}&${qs(f, tendModo)}${vista !== 'foto' ? '&' + per : ''}${cambiosModo && mov ? '&mov=' + mov : ''}${nivel === 'criterio' ? '&plan=' + encodeURIComponent(f.plan || opc.criterios?.[0]?.plan_id || '') : ''}`, `control_${vista}.xlsx`)
     } catch (e: any) { setErr(e.message) } finally { setBajando(false) }
   }
@@ -329,6 +330,9 @@ export default function Control() {
               {METRICAS_MAPA.map(m => <MenuItem key={m.k} value={m.k}>{m.label}</MenuItem>)}</TextField>
             <TextField select size="small" label="Orden" value={orden} onChange={e => setOrden(e.target.value)} sx={{ width: 150 }}>
               <MenuItem value="critico">Más críticos</MenuItem><MenuItem value="item">Por item</MenuItem><MenuItem value="tienda">Por tienda</MenuItem></TextField>
+            <Tooltip title="Esconde las combinaciones sin inventario en la última fecha del mapa y con ADU en 0 en la última corrida del motor">
+              <FormControlLabel sx={{ m: 0 }} control={<Checkbox size="small" checked={ignorarVacios} onChange={e => setIgnorarVacios(e.target.checked)} />} label="Ignorar sin ADU ni inventario" />
+            </Tooltip>
           </>}
           <Box sx={{ flex: 1 }} />
           {cambiosModo && periodo && <Typography variant="caption" color="text.secondary">Comparando la corrida del {periodo.desde} contra la del {periodo.hasta}

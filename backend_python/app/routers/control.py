@@ -291,7 +291,7 @@ def tendencia(desde: date | None = None, hasta: date | None = None, bodegas: str
 
 
 # ===================== Vista 4: mapa de calor item x tienda x fecha =====================
-def _mapa_datos(c, user, bodegas, labs, q, zonas, dia, empresa, crit, desde, hasta, paso, metrica, orden, limit):
+def _mapa_datos(c, user, bodegas, labs, q, zonas, dia, empresa, crit, desde, hasta, paso, metrica, orden, limit, ignorar_vacios: bool = True):
     """Una fila por tienda/item (las combinaciones que existen en la ultima foto del periodo) y una columna por fecha con foto.
     `zonas` filtra por la zona de la ultima foto. Devuelve (fechas, filas, total, periodo)."""
     if metrica not in mapa_calor.METRICAS:
@@ -306,6 +306,9 @@ def _mapa_datos(c, user, bodegas, labs, q, zonas, dia, empresa, crit, desde, has
     f_fin = fechas_[-1]
     cond, p = _filtros(user, bodegas, labs, q, zonas, dia, empresa, a="h", zona_expr="h.zona::text", crit=crit)
     cond.append("h.fecha = :f_fin"); p["f_fin"] = f_fin
+    if ignorar_vacios:   # mucho ruido: combinaciones sin inventario en la ultima fecha del mapa Y con venta diaria (ADU) en 0 en la ultima corrida
+        cond.append(f"""(COALESCE(h.inventario, 0) <> 0 OR EXISTS (SELECT 1 FROM ddmrp.v_sugerencias_informe sv WHERE sv.ejecucion_id = {ULTIMA}
+                          AND sv.empresa = h.empresa AND sv.bodega_id = h.bodega_id AND sv.producto_id = h.producto_id AND sv.adu > 0))""")
     w = " AND ".join(cond)
     base = """FROM ddmrp.buffer_historia h
               LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = h.producto_id
@@ -350,9 +353,9 @@ def _mapa_datos(c, user, bodegas, labs, q, zonas, dia, empresa, crit, desde, has
 def mapa(bodegas: str | None = None, labs: str | None = None, q: str | None = None, zonas: str | None = None,
          dia: int | None = None, empresa: str | None = None, crit: str | None = None, desde: date | None = None,
          hasta: date | None = None, paso: int = Query(1, ge=1, le=60), metrica: str = "inventario", orden: str = "critico",
-         limit: int = Query(2000, le=20000), user=Depends(usuario_actual)):
+         ignorar_vacios: bool = True, limit: int = Query(2000, le=20000), user=Depends(usuario_actual)):
     with pg.connect() as c:
-        fechas_, filas, total, per = _mapa_datos(c, user, bodegas, labs, q, zonas, dia, empresa, crit, desde, hasta, paso, metrica, orden, limit)
+        fechas_, filas, total, per = _mapa_datos(c, user, bodegas, labs, q, zonas, dia, empresa, crit, desde, hasta, paso, metrica, orden, limit, ignorar_vacios)
     return {"periodo": per, "fechas": fechas_, "filas": filas, "total": total, "truncado": total > len(filas),
             "metrica": metrica, "metricas": mapa_calor.METRICAS}
 
@@ -461,14 +464,14 @@ def exportar(vista: str = "foto", agrupar: str = "bodega", desde: date | None = 
 def mapa_excel(bodegas: str | None = None, labs: str | None = None, q: str | None = None, zonas: str | None = None,
                dia: int | None = None, empresa: str | None = None, crit: str | None = None, desde: date | None = None,
                hasta: date | None = None, paso: int = Query(1, ge=1, le=60), metrica: str = "inventario", orden: str = "critico",
-               user=Depends(usuario_actual)):
+               ignorar_vacios: bool = True, user=Depends(usuario_actual)):
     """Mapa de calor en Excel: numero + color de la zona por celda (rojo, amarillo, verde, exceso), igual al Excel de control."""
     with pg.connect() as c:
         n_fechas = len(mapa_calor.elegir_fechas([r[0] for r in c.execute(text(
             "SELECT DISTINCT fecha FROM ddmrp.buffer_historia WHERE fecha BETWEEN :d AND :h"),
             {"d": desde or ((hasta or date.today()) - timedelta(days=30)), "h": hasta or date.today()})] or [date.today()], paso)) or 1
         tope = max(1, 2_000_000 // (n_fechas + 8))          # filas x columnas <= ~2M celdas: Excel y la memoria lo aguantan
-        fechas_, filas, total, per = _mapa_datos(c, user, bodegas, labs, q, zonas, dia, empresa, crit, desde, hasta, paso, metrica, orden, min(tope, 200000))
+        fechas_, filas, total, per = _mapa_datos(c, user, bodegas, labs, q, zonas, dia, empresa, crit, desde, hasta, paso, metrica, orden, min(tope, 200000), ignorar_vacios)
     cols = [{"t": "Tienda", "k": "bodega_id", "w": 9}, {"t": "Nombre tienda", "k": "bodega_nombre", "w": 24}, {"t": "Item", "k": "producto_id", "w": 11},
             {"t": "Descripcion", "k": "descripcion", "w": 40}, {"t": "Laboratorio", "k": "laboratorio", "w": 14},
             {"t": "ADU", "k": "adu", "f": "dec2", "w": 8}, {"t": "Costo", "k": "costo", "f": "cop", "w": 10},
@@ -481,5 +484,6 @@ def mapa_excel(bodegas: str | None = None, labs: str | None = None, q: str | Non
                                      ("Clase / Ranking", "ABC x XYZ por margen de los ultimos 12 meses (o consumo a costo si las ventas aun no traen valor), recalculado con los filtros del mapa; ranking = puesto dentro de ese filtro"),
                                      ("Prom. mes venta / unidades", "venta neta sin IVA y unidades vendidas por mes en la ventana de 12 meses")])
     _hoja_filtros(wb, user, "Control DDMRP - mapa de calor", [("Periodo", f"{per['desde']} a {per['hasta']}"), ("Paso (dias)", paso), ("Orden", orden),
+                  ("Ignorar sin ADU ni inventario", "Si" if ignorar_vacios else "No"),
                   ("Filas", f"{len(filas)} de {total}" + (" (recortado: filtra mas)" if total > len(filas) else "")), *_dic_filtros(bodegas, labs, q, zonas, dia, empresa, crit)])
     return _respuesta(wb, "mapa_calor")
