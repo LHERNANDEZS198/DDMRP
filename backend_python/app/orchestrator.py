@@ -108,7 +108,14 @@ def calcular_cedi(eid: int, fecha: date) -> dict:
         out = subprocess.run(
             [settings.core_bin, "--ejecucion-id", str(eid), "--fecha", fecha.isoformat(), "--modo", "cedi"],
             env={**os.environ, "DATABASE_URL": settings.pg_dsn}, capture_output=True, text=True, timeout=300, check=True)
-        return json.loads(out.stdout.strip().splitlines()[-1])
+        res = json.loads(out.stdout.strip().splitlines()[-1])
+        try:   # cuantas tiendas alimentan la demanda de cada CEDI: 0 seria un CEDI sin rotacion (y un buffer engañoso)
+            with pg.connect() as c:
+                res["tiendas_por_cedi"] = {f"{e}/{b}": n for e, b, n in c.execute(text(
+                    "SELECT empresa, cedi, count(*) FILTER (WHERE origen <> cedi) FROM ddmrp.v_origen_cedi GROUP BY 1, 2")).all()}
+        except Exception:
+            log.exception("No se pudo contar las tiendas por CEDI")
+        return res
     except Exception as e:
         log.exception("No se pudo calcular el buffer del CEDI")
         return {"ok": False, "error": ((getattr(e, "stderr", None) or str(e))[-300:])}

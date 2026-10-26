@@ -491,7 +491,8 @@ def _preparar(d: dict, filas: list[dict], omitir: bool = False, malas_out: list 
                     if cod and (not por_cod or _valor_llave("empresa", f.get("empresa"))):
                         hit = (cod, None)   # maestro vacio o empresa indicada en el archivo: se acepta el codigo tal cual
                     else:
-                        raise ValueError(f"tienda no reconocida: {cod or f.get(nom_h)!r}")
+                        raise ValueError(f"tienda no reconocida: {cod or f.get(nom_h)!r}" + (
+                            ". Si es una tienda NUEVA (no esta en el catalogo de Siesa) escribe tambien la empresa: 05 Funat o 21 Stores" if cod else ""))
                 llave[d["bodega"]] = hit[0]
                 if "empresa" in d["llave"]:
                     emp_arch = _valor_llave("empresa", f.get("empresa"))

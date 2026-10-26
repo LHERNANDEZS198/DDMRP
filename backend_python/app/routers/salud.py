@@ -38,7 +38,7 @@ def salud(criterio: str = "margen", meses: int = 12, empresa: str | None = None,
     return {"meta": meta, "resumen": resumen, "filas": vis[:limit], "total": len(vis), "truncado": len(vis) > limit}
 
 
-COLS = [{"t": "Atender", "k": "etq", "w": 24}, {"t": "Tienda", "k": "bodega_id", "w": 9}, {"t": "Nombre tienda", "k": "bodega_nombre", "w": 24},
+COLS = [{"t": "Atender", "k": "etq", "w": 24}, {"t": "Empresa", "k": "empresa", "w": 9}, {"t": "Tienda", "k": "bodega_id", "w": 9}, {"t": "Nombre tienda", "k": "bodega_nombre", "w": 24},
         {"t": "Item", "k": "producto_id", "w": 11}, {"t": "Descripcion", "k": "descripcion", "w": 44}, {"t": "Laboratorio", "k": "laboratorio", "w": 14},
         {"t": "Zona hoy", "k": "zona", "w": 11, "zona": True}, {"t": "% buffer", "k": "pct_buffer", "f": "dec1"}, {"t": "Clase", "k": "clase", "w": 8},
         {"t": "Ranking", "k": "puesto", "f": "int"}, {"t": "Inventario (u.)", "k": "inventario", "f": "int"}, {"t": "Flujo neto", "k": "flujo_neto", "f": "int"},

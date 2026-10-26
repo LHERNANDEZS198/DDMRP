@@ -59,6 +59,7 @@ export default function Salud() {
   const cols: ColDef[] = useMemo(() => ([
     { field: 'diag', headerName: 'Atender', width: 190, pinned: 'left', filter: true, valueGetter: p => etq(p.data?.diag)?.etiqueta ?? p.data?.diag,
       cellRenderer: (p: ICellRendererParams) => p.value == null ? '' : <Chip size="small" label={p.value} sx={{ height: 20, fontSize: 11, color: '#fff', bgcolor: etq(p.data.diag)?.color ?? '#999' }} /> },
+    { field: 'empresa', headerName: 'Emp.', width: 70, filter: true, headerTooltip: 'Empresa (05 Funat, 21 Stores): el CEDI PT001 existe en las dos, y cada una tiene su propia fila.' },
     { field: 'bodega_id', headerName: 'Tienda', width: 90, filter: true },
     { field: 'producto_id', headerName: 'Item', width: 100, filter: true },
     { field: 'descripcion', headerName: 'Descripción', width: 260, filter: true },

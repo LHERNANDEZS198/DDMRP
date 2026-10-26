@@ -264,11 +264,12 @@ SENTENCIAS_CEDI = [
     "leadtime NUMERIC(8,2) NOT NULL CHECK (leadtime >= 0), PRIMARY KEY (empresa, producto_id))",
     "INSERT INTO ddmrp.abast_leadtime_cedi (empresa, producto_id, leadtime) SELECT e, '*', 30 FROM (VALUES ('05'), ('21')) v(e) ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('oc_dias_historia', 365, 'Antiguedad maxima (dias) de las ordenes de compra abiertas que cuentan como transito: una OC vieja sin cerrar en Siesa no debe inflar el flujo neto') ON CONFLICT DO NOTHING",
-    # de donde sale la demanda de cada CEDI: las tiendas que abastece (su venta) y el propio CEDI (venta directa mayorista / digital).
-    # Un CEDI por empresa (el primero del maestro), igual que el reparto.
+    # de donde sale la demanda de cada CEDI: TODAS las tiendas de la bitacora de su empresa (su venta) y el propio CEDI (venta directa mayorista / digital).
+    # Un CEDI por empresa (el primero del maestro), igual que el reparto y la matriz de despacho, que tampoco miran la columna cedi de la bitacora:
+    # asi una tienda con la columna cedi vacia o distinta no deja al CEDI sin su demanda (le pasaba al CEDI de Stores: salia «sin venta»).
     """CREATE OR REPLACE VIEW ddmrp.v_origen_cedi AS
        WITH cedis AS (SELECT empresa, min(bodega_id) AS bodega_id FROM ddmrp.maestro_cedi GROUP BY empresa)
-       SELECT b.empresa, b.cedi AS cedi, b.bodega_id AS origen FROM ddmrp.abast_bitacora b JOIN cedis c ON c.empresa = b.empresa AND c.bodega_id = b.cedi
+       SELECT b.empresa, c.bodega_id AS cedi, b.bodega_id AS origen FROM ddmrp.abast_bitacora b JOIN cedis c ON c.empresa = b.empresa
        UNION
        SELECT empresa, bodega_id AS cedi, bodega_id AS origen FROM cedis""",
     # lo que leen los Informes: tiendas + CEDI. Cual de los dos se ve lo decide app/modo.py (por defecto solo tiendas)

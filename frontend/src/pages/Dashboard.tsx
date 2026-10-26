@@ -11,7 +11,8 @@ const num = (p: any) => p.value == null ? '' : Number(p.value).toLocaleString('e
 const COP = (p: any) => p.value == null ? '' : '$' + Math.round(p.value).toLocaleString('es-CO')
 const MM = (v: number) => '$' + (Math.abs(v) >= 1e6 ? (v / 1e6).toLocaleString('es-CO', { maximumFractionDigits: 1 }) + ' M' : Math.round(v).toLocaleString('es-CO'))
 const cols: ColDef[] = [
-  { field: 'bodega_id', headerName: 'Bodega', filter: true, width: 110 },
+  { field: 'empresa', headerName: 'Emp.', filter: true, width: 70, pinned: 'left', headerTooltip: 'Empresa (05 Funat, 21 Stores): el CEDI PT001 existe en las dos.' },
+  { field: 'bodega_id', headerName: 'Bodega', filter: true, width: 110, pinned: 'left' },
   { field: 'producto_id', headerName: 'Producto', filter: true, width: 110 },
   { field: 'descripcion', headerName: 'Descripción', filter: true, flex: 1, minWidth: 200 },
   { field: 'inventario', headerName: 'Inventario', type: 'numericColumn', valueFormatter: num },
