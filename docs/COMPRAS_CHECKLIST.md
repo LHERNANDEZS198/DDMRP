@@ -44,7 +44,7 @@ Estados: ✅ listo · 🟡 hecho, sin validar en producción · ⬜ pendiente ·
   - 🟡 Excel: hoja «Cálculo CEDI» con todo el cálculo en fórmulas (ventas de los últimos meses → ADU → zonas → necesidad → a pedir → valor e IVA) + hoja «Parametros», como la Auditoría
   - 🟡 Cantidad a pedir editable (permiso `gestionar_compras`): se guarda aparte del cálculo (`compras_cantidad`) y SOBREVIVE a las corridas del motor hasta que se monte la OC; alertas si no es múltiplo o supera el doble del buffer
   - 🟡 Botón «Recalcular necesidades» (sin correr el motor completo ni dar acceso a él): inventario fresco del CEDI + OC abiertas + buffer del CEDI; las cantidades editadas se conservan
-  - 🟡 Elegir las OC a montar: casilla por proveedor (NIT) y/o por ítem (SKU); «Revisar y enviar OC» muestra una orden por proveedor-empresa (el envío queda desactivado hasta conectar el BPM). La elección NO se guarda al recargar
+  - 🟡 Elegir las OC a montar: casilla por proveedor (NIT) y/o por ítem (SKU); «Revisar y enviar OC» muestra una orden por proveedor-empresa y la crea directo en Siesa (aprobada; ver conector de OC). La elección NO se guarda al recargar
   - 🟡 Lead time del proveedor en la vista por proveedor; NIT → maestro de proveedores; SKU → maestro de ítems de compras
   - 🟡 Frecuencia de compra por proveedor (defecto 15 d en «Configuración de compras») = tamaño de la zona verde del CEDI; lead time general 8 d; MOQ por ítem (defecto 1) que sube el pedido al mínimo; la vista de columnas (orden/ancho/fijas) se recuerda por navegador y hay «Restablecer columnas»
   - ⏸ Cotas máxima/mínima del CEDI: explicadas, sin implementar (decisión pendiente)
@@ -59,11 +59,13 @@ Estados: ✅ listo · 🟡 hecho, sin validar en producción · ⬜ pendiente ·
 - ⬜ 8 creador ≠ aprobador al tomar la tarea · 9 recordatorio y escalada · 10 callback de estado a DDMRP
 - ⬜ 11 edición de cantidades/costos con revalidación y auditoría · 12 cola con límite de concurrencia · 13 tarea async con reintentos y reconsulta
 
+- 🟡 Condición de pago (`f420_id_cond_pago`): columna en el maestro de proveedores, pre-llenada con la de la última OC del proveedor en Siesa (no pisa lo que escriba compras); sin ella no se creará la OC. ⏸ Decidir si es fija por proveedor o se negocia por OC (`docs/sql/oc_conector.sql`)
+
 ## Datos que faltan por pasar
 - ✅ 1 ventas del CEDI (query de rotación PT001) · ✅ 3 OC abiertas
 - ✅ 2 cotización / costo + tarifa de IVA por ítem (SP `sp_cotizacion_consulta_compra`; se replica su lógica sin llamarlo)
 - ✅ 4 proveedor por ítem (columnas confirmadas con `proveedor_item.sql`)
-- ⏸ 5 XML/conector de OC de Siesa (campos, largo de la referencia, tipo de documento por empresa)
+- 🟡 5 Conector de OC: **directo al web service de Siesa** (WSUNOEE `ImportarXML`, plano de ancho fijo 0420 v5 / 0421 v5, como ChaTest con terceros), NO Generic Transfer. Construido: `siesa_oc.py` + `routers/oc.py` + botón en Necesidades (vista previa del plano, crear OC, historial). ⏸ Falta probar en Siesa real (sin ambiente de pruebas; las de prueba se anulan a mano) y llenar `.env` (`SIESA_WS_*`, Stores aparte). Pareja de versiones documento v5 / movimiento v5 por confirmar con el primer envío; si Siesa la rechaza, plan B = Generic Transfer (`docs/OC_CONECTOR.md`)
 - ⏸ 6 plantilla del PDF · ⏸ 7 umbral de aprobación y grupos aprobadores
 
 ## Validaciones pendientes antes de confiar
@@ -79,3 +81,12 @@ Estados: ✅ listo · 🟡 hecho, sin validar en producción · ⬜ pendiente ·
 - Duplicados por timeout al crear la OC (probar en pruebas de Siesa, no en producción)
 - LibreOffice saturando el Node del BPM
 - El diseño sale de lo leído en ChaTest, no de una OC real: el XML de ejemplo puede cambiar el plan
+
+## Envío de OC a Siesa (26-oct-2026)
+- ✅ Decidido: referencia `DDMRP` + id con 8 dígitos (13 car.; el campo mide 15); entra aprobada (`f420_ind_estado=1`); comprador = id del usuario (el mismo del reloj); Siesa asigna el consecutivo; Siesa liquida el IVA; contacto del proveedor lo lee Siesa
+- 🟡 Anti-duplicados: antes de enviar se consulta t420 por la referencia; un timeout deja la OC `incierta` (no se reenvía a ciegas; hay Reconsultar / Reenviar con espera de 3 min)
+- ⬜ Llenar `.env` con `SIESA_WS_URL/USER/PASSWORD/CONEXION/CIA` (y `_S` para Stores) y reconstruir el backend; Stores sin `SIESA_WS_CONEXION_S` no envía
+- ⬜ Primer envío de prueba con 1 proveedor y 1–2 ítems; revisar en Siesa (cond. pago, IVA, fecha de entrega, bodega PT001, un. negocio 12) y anular
+- ⬜ Si una cotización trae decimales distintos de 2 en COP, ajustar `OC_DECIMALES_PRECIO`
+- ⬜ Estado de la OC en Siesa (aprobada/anulada/cumplida) en el historial: hoy solo se lee el consecutivo al crear
+- ⏸ BPM (aprobación, PDF, correo): ahora la OC entra aprobada directo; el flujo de aprobación queda para después

@@ -133,6 +133,17 @@ LEFT JOIN t200_mm_terceros t ON t.f200_rowid = u.tercero
 WHERE u.rn = 1 AND i.f120_id_cia = :cia AND i.f120_referencia IS NOT NULL AND RTRIM(i.f120_referencia) <> '' /*ACTIVO:x,i*/"""
 
 
+# Condicion de pago de la ULTIMA orden de compra (no anulada) de cada proveedor: valor inicial de la condicion de pago de DDMRP (f420_id_cond_pago, ej. C30).
+SQL_COND_PAGO = """
+WITH u AS (
+  SELECT d.f420_rowid_tercero_prov AS tercero, RTRIM(d.f420_id_cond_pago) AS cond,
+         ROW_NUMBER() OVER (PARTITION BY d.f420_rowid_tercero_prov ORDER BY d.f420_fecha DESC, d.f420_rowid DESC) AS rn
+  FROM t420_cm_oc_docto d
+  WHERE d.f420_id_cia = :cia AND d.f420_ind_estado <> 9 AND d.f420_id_cond_pago IS NOT NULL AND RTRIM(d.f420_id_cond_pago) <> ''
+)
+SELECT RTRIM(t.f200_id), u.cond FROM u JOIN t200_mm_terceros t ON t.f200_rowid = u.tercero WHERE u.rn = 1"""
+
+
 def _sql_items(con_estado: bool) -> str:
     """Referencia, descripcion y, si la columna de estado existe, cuantas extensiones (t121) de esa referencia estan activas y cuantas
     bloqueadas (una referencia puede tener varias extensiones: es activa si alguna lo es)."""
@@ -664,6 +675,31 @@ def _ultimo_costo_de_siesa(cur, eng, empresa: str) -> dict:
     return out
 
 
+def _cond_pago_de_siesa(cur, eng, empresa: str) -> dict:
+    """Pre-llena la condicion de pago de los proveedores que aun no la tienen con la de su ultima OC en Siesa. Lo que compras escribio NO se pisa. Un fallo del origen no
+    tumba la sincronizacion. Devuelve cuantos proveedores con items quedan SIN condicion de pago (no se podra crear su OC)."""
+    try:
+        filas = list(_stream(eng, SQL_COND_PAGO, {"cia": settings.siesa_cia}))
+    except Exception as e:
+        if isinstance(e, psycopg.Error):
+            raise
+        log.warning("Condicion de pago de la ultima OC no leida: %s", e)
+        return {"aviso_cond_pago": ("No se pudo leer la condicion de pago de las OC: " + str(e).splitlines()[0])[:300]}
+    cur.execute("CREATE TEMP TABLE IF NOT EXISTS stg_cp (nit text, cond text)")
+    cur.execute("TRUNCATE stg_cp")
+    with cur.copy("COPY stg_cp FROM STDIN") as cp:
+        for nit, cond in filas:
+            if nit and cond:
+                cp.write_row((nit.strip(), cond.strip().upper()))
+    cur.execute("""UPDATE ddmrp.proveedor p SET cond_pago = s.cond FROM stg_cp s
+                   WHERE p.empresa = %s AND p.proveedor_id = s.nit AND (p.cond_pago IS NULL OR btrim(p.cond_pago) = '')""", (empresa,))
+    llenadas = cur.rowcount or 0
+    cur.execute("DROP TABLE stg_cp")
+    cur.execute("""SELECT count(*) FROM ddmrp.proveedor p WHERE p.empresa = %s AND (p.cond_pago IS NULL OR btrim(p.cond_pago) = '')
+                   AND EXISTS (SELECT 1 FROM ddmrp.item_compra ic WHERE ic.empresa = p.empresa AND ic.proveedor_id = p.proveedor_id AND ic.sucursal = p.sucursal)""", (empresa,))
+    return {"cond_pago_llenadas": llenadas, "proveedores_sin_cond_pago": cur.fetchone()[0]}
+
+
 def _items_de_siesa(cur, eng, primera: bool = True, empresa: str | None = None) -> dict:
     """Descripcion, laboratorio (plan 006) y TODOS los criterios de items de una base de Siesa.
     Primero se lee todo del origen y solo despues se escribe, para que un fallo de Siesa no deje la tabla a medias.
@@ -744,6 +780,7 @@ def _items_de_siesa(cur, eng, primera: bool = True, empresa: str | None = None) 
         extra.update(r_prov)
         extra.update(_cotizaciones_de_siesa(cur, eng, empresa))
         extra.update(_ultimo_costo_de_siesa(cur, eng, empresa))
+        extra.update(_cond_pago_de_siesa(cur, eng, empresa))
     return {"items": len(items), "eliminados": borrados, "con_laboratorio": len(labs), "criterios": len(crit), "planes": len({c[1] for c in crit}), **extra}
 
 

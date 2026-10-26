@@ -84,6 +84,9 @@ export default function Necesidades() {
   const [bajando, setBajando] = useState(false); const [recalculando, setRecalculando] = useState(false)
   const [sel, setSel] = useState<Set<string>>(new Set())      // ítems elegidos para la OC (por proveedor o uno a uno)
   const [recarga, setRecarga] = useState(0); const silenciosa = useRef(false)
+  const [ocEnviando, setOcEnviando] = useState(false); const [ocEntiendo, setOcEntiendo] = useState(false)
+  const [ocRes, setOcRes] = useState<{ ordenes: any[]; avisos: string[] } | null>(null); const [ocErr, setOcErr] = useState('')
+  const [histAbierta, setHistAbierta] = useState(false); const [hist, setHist] = useState<any[]>([]); const [histCarga, setHistCarga] = useState(false)
   const apiDet = useRef<GridApi | null>(null); const apiProv = useRef<GridApi | null>(null)
   useEffect(() => { api('/control/filtros').then(x => setOpcLabs((x.laboratorios ?? x.labs ?? []).filter((l: any) => l.codigo))).catch(() => {}) }, [])
   useEffect(() => { const t = setTimeout(() => setQ(qd), 400); return () => clearTimeout(t) }, [qd])
@@ -122,7 +125,7 @@ export default function Necesidades() {
     const g = new Map<string, any>()
     for (const f of elegidas) {
       const k = kProv(f)
-      const r = g.get(k) ?? { empresa: f.empresa, proveedor_id: f.proveedor_id, sucursal: f.sucursal, proveedor_nombre: f.proveedor_nombre, activo: !!f.prov_activo, pedido_minimo: f.pedido_minimo, items: 0, unidades: 0, valor: 0, iva: 0, total: 0, sin_costo: 0, editadas: 0, no_multiplo: 0 }
+      const r = g.get(k) ?? { empresa: f.empresa, proveedor_id: f.proveedor_id, sucursal: f.sucursal, proveedor_nombre: f.proveedor_nombre, cond_pago: f.cond_pago, activo: !!f.prov_activo, pedido_minimo: f.pedido_minimo, items: 0, unidades: 0, valor: 0, iva: 0, total: 0, sin_costo: 0, editadas: 0, no_multiplo: 0 }
       r.items++; r.unidades += f.qty_pedir
       if (f.valor == null) r.sin_costo++; else { r.valor += f.valor; r.iva += f.iva ?? 0; r.total += f.total ?? 0 }
       if (f.editada) { r.editadas++; if (f.unidad_pedido > 1 && Math.abs(f.qty_manual / f.unidad_pedido - Math.round(f.qty_manual / f.unidad_pedido)) > 1e-9) r.no_multiplo++ }
@@ -130,6 +133,26 @@ export default function Necesidades() {
     }
     return [...g.values()].map(r => ({ ...r, bajo_minimo: !!(r.pedido_minimo && r.pedido_minimo > 0 && r.items > r.sin_costo && r.valor < r.pedido_minimo) }))
   }, [elegidas])
+
+  // ---- órdenes de compra a Siesa
+  const cuerpoOC = (soloPlano: boolean) => JSON.stringify({ items: elegidas.map(f => ({ empresa: f.empresa, producto_id: f.producto_id })), solo_plano: soloPlano })
+  const enviarOC = async (soloPlano: boolean) => {
+    setOcEnviando(true); setOcErr(''); setOcRes(null)
+    try {
+      const r = await api('/compras/oc/enviar', { method: 'POST', body: cuerpoOC(soloPlano) })
+      setOcRes(r)
+      if (!soloPlano) { setSel(new Set()); setOcEntiendo(false); recargar() }
+    } catch (e: any) { setOcErr(e.message || String(e)) } finally { setOcEnviando(false) }
+  }
+  const bajarPlano = (o: any) => {
+    const b = new Blob([o.plano], { type: 'text/plain;charset=utf-8' }); const u = URL.createObjectURL(b); const a = document.createElement('a')
+    a.href = u; a.download = `plano_oc_${o.empresa}_${o.proveedor_id}.txt`; a.click(); URL.revokeObjectURL(u)
+  }
+  const cargarHist = async () => { setHistCarga(true); try { setHist((await api('/compras/oc')).datos) } catch (e: any) { setOcErr(e.message || String(e)) } finally { setHistCarga(false) } }
+  const accionOC = async (id: number, que: 'reconsultar' | 'reenviar') => {
+    try { const r = await api(`/compras/oc/${id}/${que}`, { method: 'POST' }); setMsg(`OC ${id}: ${r.estado}${r.consecutivo ? ' · ' + r.consecutivo : ''} — ${r.mensaje}`) } catch (e: any) { setMsg(e.message || String(e)) }
+    cargarHist()
+  }
 
   // ---- acciones
   const alProveedor = (e: CellClickedEvent) => {
@@ -169,6 +192,8 @@ export default function Necesidades() {
       headerTooltip: 'La casilla elige TODOS los ítems de este proveedor para la OC. Clic en el NIT: abre el proveedor en el maestro (lead time, correos, redondeo…)' },
     { field: 'proveedor_nombre', headerName: 'Proveedor', width: 280, pinned: 'left', filter: true, cellStyle: ENLACE, headerTooltip: 'Haz clic en un proveedor para ver sus ítems' },
     { field: 'empresa', headerName: 'Emp.', width: 70, filter: true, headerTooltip: 'Empresa (05 Funat, 21 Stores): cada una tiene su CEDI' },
+    { field: 'cond_pago', headerName: 'Cond. pago', width: 110, valueFormatter: (p: any) => p.value || 'Falta', cellStyle: (p: any) => p.value ? undefined : { color: '#c62828', fontWeight: 600 },
+      headerTooltip: 'Condición de pago de la OC (código de Siesa, ej. C30), del maestro de proveedores. Se pre-llena con la de la última OC; sin ella no se podrá crear la OC' },
     { field: 'leadtime', headerName: 'Lead time (d)', type: 'numericColumn', width: 120, valueFormatter: ent, headerTooltip: 'Lead time del proveedor en el maestro de proveedores (vacío = se usa el del ítem o el general de 8 días)' },
     { field: 'frecuencia', headerName: 'Frecuencia (d)', type: 'numericColumn', width: 120, valueFormatter: ent, headerTooltip: 'Cada cuántos días se le compra a este proveedor (maestro de proveedores; vacío = el general de Configuración de compras, 15). Define el tamaño de la zona verde: más frecuencia, pedidos más grandes' },
     { field: 'items', headerName: 'Ítems', type: 'numericColumn', width: 90, valueFormatter: ent, cellStyle: ENLACE, headerTooltip: 'Ítems con necesidad de este proveedor. Clic para verlos' },
@@ -183,7 +208,7 @@ export default function Necesidades() {
     { field: 'poca_historia', headerName: 'Poca historia', type: 'numericColumn', width: 120, valueFormatter: ent, headerTooltip: 'Ítems con pocos meses de venta: el ADU puede no ser confiable' },
     { field: 'editadas', headerName: 'Editadas', type: 'numericColumn', width: 100, valueFormatter: ent, headerTooltip: 'Ítems cuya cantidad a pedir editó compras' },
     { field: 'redondeo', headerName: 'Redondeo', width: 100, headerTooltip: 'Cómo se lleva la cantidad al múltiplo de pedido de este proveedor (maestro de proveedores)' },
-    { field: 'estado', headerName: 'Estado', width: 230, headerTooltip: 'OK · Bajo el pedido mínimo · Incompleto (ítems sin cotización) · Proveedor inactivo',
+    { field: 'estado', headerName: 'Estado', width: 230, headerTooltip: 'OK · Bajo el pedido mínimo · Sin condición de pago · Incompleto (ítems sin cotización) · Proveedor inactivo',
       cellStyle: (p: any): Record<string, string | number> => p.value === 'OK' ? { color: '#2e7d32' } : { color: '#b45309', fontWeight: 600 } },
   ], [])
   const colsDet: ColDef[] = useMemo(() => [
@@ -293,6 +318,7 @@ export default function Necesidades() {
         <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>La casilla del NIT elige todo el proveedor; la del SKU, un ítem. Puedes combinar ambas.</Typography>
         <Tooltip title={gestiona ? 'Revisa por proveedor lo que vas a montar: cantidades, valores y alertas' : 'Tu perfil no tiene permiso para enviar órdenes de compra'} placement="top" disableInteractive>
           <span><Button variant="contained" size="small" startIcon={<SendIcon />} disabled={!elegidas.length || !gestiona} onClick={() => setOcAbierta(true)}>Revisar y enviar OC</Button></span></Tooltip>
+        <Button size="small" onClick={() => { setHistAbierta(true); cargarHist() }}>OC enviadas</Button>
       </Paper>
       <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ minHeight: 36, '& .MuiTab-root': { minHeight: 36, textTransform: 'none' } }}>
         <Tab label={<Tooltip title="Total a pedir por proveedor: valor, IVA, lead time, pedido mínimo y estado" placement="top" disableInteractive><span>Por proveedor ({d.proveedores.length})</span></Tooltip>} />
@@ -319,13 +345,13 @@ export default function Necesidades() {
         <DialogContent dividers>
           <Typography variant="body2" sx={{ mb: 1 }}>Una orden por proveedor y empresa, con los {elegidas.length.toLocaleString('es-CO')} ítems elegidos. Revisa las alertas antes de enviar.</Typography>
           <Table size="small">
-            <TableHead><TableRow>{['Emp.', 'NIT', 'Proveedor', 'Ítems', 'Unidades', 'Valor sin IVA', 'IVA estimado', 'Total', 'Alertas'].map(h => <TableCell key={h} sx={{ fontWeight: 700 }} align={['Ítems', 'Unidades', 'Valor sin IVA', 'IVA estimado', 'Total'].includes(h) ? 'right' : 'left'}>{h}</TableCell>)}</TableRow></TableHead>
+            <TableHead><TableRow>{['Emp.', 'NIT', 'Proveedor', 'Cond. pago', 'Ítems', 'Unidades', 'Valor sin IVA', 'IVA estimado', 'Total', 'Alertas'].map(h => <TableCell key={h} sx={{ fontWeight: 700 }} align={['Ítems', 'Unidades', 'Valor sin IVA', 'IVA estimado', 'Total'].includes(h) ? 'right' : 'left'}>{h}</TableCell>)}</TableRow></TableHead>
             <TableBody>
               {resumenSel.map(r => {
-                const al = [r.sin_costo ? `${r.sin_costo} sin cotización` : '', r.editadas ? `${r.editadas} editadas` : '', r.no_multiplo ? `${r.no_multiplo} no múltiplo` : '', r.bajo_minimo ? 'Bajo el pedido mínimo' : '', !r.activo ? 'Proveedor inactivo' : ''].filter(Boolean)
+                const al = [r.sin_costo ? `${r.sin_costo} sin cotización` : '', r.editadas ? `${r.editadas} editadas` : '', r.no_multiplo ? `${r.no_multiplo} no múltiplo` : '', r.bajo_minimo ? 'Bajo el pedido mínimo' : '', !r.cond_pago ? 'Sin condición de pago: no se podrá crear la OC' : '', !r.activo ? 'Proveedor inactivo' : ''].filter(Boolean)
                 return (
                   <TableRow key={kProv(r)}>
-                    <TableCell>{r.empresa}</TableCell><TableCell>{r.proveedor_id}</TableCell><TableCell>{r.proveedor_nombre}</TableCell>
+                    <TableCell>{r.empresa}</TableCell><TableCell>{r.proveedor_id}</TableCell><TableCell>{r.proveedor_nombre}</TableCell><TableCell sx={{ fontWeight: 600, color: r.cond_pago ? 'inherit' : '#c62828' }}>{r.cond_pago || 'Falta'}</TableCell>
                     <TableCell align="right">{r.items}</TableCell><TableCell align="right">{Math.round(r.unidades).toLocaleString('es-CO')}</TableCell>
                     <TableCell align="right">{COP({ value: r.valor })}</TableCell><TableCell align="right">{COP({ value: r.iva })}</TableCell><TableCell align="right" sx={{ fontWeight: 700 }}>{COP({ value: r.total })}</TableCell>
                     <TableCell sx={{ color: al.length ? '#b45309' : '#2e7d32' }}>{al.length ? al.join(' · ') : 'OK'}</TableCell>
@@ -333,12 +359,52 @@ export default function Necesidades() {
               })}
             </TableBody>
           </Table>
-          <Alert severity="info" sx={{ mt: 1.5 }}>El envío a aprobación y la creación de la OC en Siesa se conectan en el siguiente paso. Mientras tanto tus cantidades editadas se conservan.</Alert>
+          <Alert severity="warning" sx={{ mt: 1.5 }}>Al enviar, la OC se crea <b>en Siesa real</b> (queda aprobada). Si algo sale mal se anula en Siesa. La cantidad y el costo se recalculan en el servidor al enviar. «Vista previa» arma el plano sin enviar nada.</Alert>
+          {ocErr && <Alert severity="error" sx={{ mt: 1 }}>{ocErr}</Alert>}
+          {ocRes && (
+            <Box sx={{ mt: 1 }}>
+              {ocRes.avisos.length > 0 && <Alert severity="info" sx={{ mb: 1 }}>{ocRes.avisos.join(' · ')}</Alert>}
+              <Table size="small">
+                <TableHead><TableRow>{['Emp.', 'Proveedor', 'Ítems', 'Valor', 'Resultado', 'OC Siesa', 'Detalle', ''].map(h => <TableCell key={h} sx={{ fontWeight: 700 }}>{h}</TableCell>)}</TableRow></TableHead>
+                <TableBody>{ocRes.ordenes.map((o, k) => (
+                  <TableRow key={k}>
+                    <TableCell>{o.empresa}</TableCell><TableCell>{o.proveedor_nombre}</TableCell><TableCell>{o.items}</TableCell><TableCell>{COP({ value: o.valor })}</TableCell>
+                    <TableCell sx={{ fontWeight: 700, color: o.estado === 'creada' ? '#2e7d32' : o.estado === 'plano' ? '#1565c0' : '#c62828' }}>{o.estado}</TableCell>
+                    <TableCell>{o.consecutivo ?? o.referencia ?? ''}</TableCell><TableCell sx={{ maxWidth: 420, wordBreak: 'break-word' }}>{o.mensaje}</TableCell>
+                    <TableCell>{o.plano && <Button size="small" onClick={() => bajarPlano(o)}>Bajar plano</Button>}</TableCell>
+                  </TableRow>))}</TableBody>
+              </Table>
+            </Box>)}
         </DialogContent>
         <DialogActions>
+          <Box sx={{ flex: 1, pl: 1 }}><label style={{ fontSize: 13 }}><Checkbox size="small" checked={ocEntiendo} onChange={e => setOcEntiendo(e.target.checked)} />Entiendo que se crea en Siesa real</label></Box>
           <Button onClick={() => setOcAbierta(false)}>Cerrar</Button>
-          <Tooltip title="Se activa cuando se conecte la aprobación y la creación de la OC en Siesa" placement="top"><span><Button variant="contained" disabled startIcon={<SendIcon />}>Enviar a aprobación</Button></span></Tooltip>
+          <Button disabled={ocEnviando || !elegidas.length} onClick={() => enviarOC(true)}>Vista previa del plano</Button>
+          <Button variant="contained" disabled={ocEnviando || !ocEntiendo || !elegidas.length} startIcon={<SendIcon />} onClick={() => enviarOC(false)}>{ocEnviando ? 'Enviando…' : 'Crear OC en Siesa'}</Button>
         </DialogActions>
+      </Dialog>
+      <Dialog open={histAbierta} onClose={() => setHistAbierta(false)} maxWidth="xl" fullWidth>
+        <DialogTitle sx={{ fontWeight: 700 }}>OC enviadas a Siesa</DialogTitle>
+        <DialogContent dividers>
+          {histCarga && <Typography variant="body2">Cargando…</Typography>}
+          <Table size="small">
+            <TableHead><TableRow>{['#', 'Fecha', 'Emp.', 'Proveedor', 'Ítems', 'Total', 'Estado', 'OC Siesa', 'Referencia', 'Creó', 'Mensaje', ''].map(h => <TableCell key={h} sx={{ fontWeight: 700 }}>{h}</TableCell>)}</TableRow></TableHead>
+            <TableBody>{hist.map(o => (
+              <TableRow key={o.id}>
+                <TableCell>{o.id}</TableCell><TableCell>{String(o.creado).slice(0, 16).replace('T', ' ')}</TableCell><TableCell>{o.empresa}</TableCell><TableCell>{o.proveedor_nombre}</TableCell><TableCell>{o.items}</TableCell>
+                <TableCell>{COP({ value: Number(o.total) })}</TableCell>
+                <TableCell sx={{ fontWeight: 700, color: o.estado === 'creada' ? '#2e7d32' : o.estado === 'incierta' ? '#b45309' : '#c62828' }}>{o.estado}</TableCell>
+                <TableCell>{o.siesa_consecutivo ?? ''}</TableCell><TableCell>{o.referencia}</TableCell><TableCell>{o.creado_por}</TableCell>
+                <TableCell sx={{ maxWidth: 360, wordBreak: 'break-word' }}>{o.mensaje}</TableCell>
+                <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                  {gestiona && ['incierta', 'error'].includes(o.estado) && <Button size="small" onClick={() => accionOC(o.id, 'reconsultar')}>Reconsultar</Button>}
+                  {gestiona && ['incierta', 'error'].includes(o.estado) && <Button size="small" onClick={() => accionOC(o.id, 'reenviar')}>Reenviar</Button>}
+                </TableCell>
+              </TableRow>))}</TableBody>
+          </Table>
+          {!hist.length && !histCarga && <Typography variant="body2" sx={{ mt: 1 }}>Aún no se ha enviado ninguna OC desde DDMRP.</Typography>}
+        </DialogContent>
+        <DialogActions><Button onClick={cargarHist}>Actualizar</Button><Button onClick={() => setHistAbierta(false)}>Cerrar</Button></DialogActions>
       </Dialog>
       <GuiaNecesidades abierta={guia} cerrar={() => setGuia(false)} cfg={d.config} />
     </Box>)

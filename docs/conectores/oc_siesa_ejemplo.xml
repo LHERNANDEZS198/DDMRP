@@ -1,0 +1,46 @@
+<MyDataSet>
+  <Inicial><F_CIA>1</F_CIA></Inicial>
+  <Documentos>
+    <F_CIA>1</F_CIA>
+    <f420_id_co>000</f420_id_co>
+    <f420_id_tipo_docto>OCM</f420_id_tipo_docto>
+    <f420_consec_docto>0</f420_consec_docto>
+    <f420_fecha>20261026</f420_fecha>
+    <f420_ind_estado>1</f420_ind_estado>
+    <f420_id_tercero_sol_comp>1234991943</f420_id_tercero_sol_comp>
+    <f420_id_tercero_prov>901473228</f420_id_tercero_prov>
+    <f420_id_cond_pago>C30</f420_id_cond_pago>
+    <f420_ind_tasa>1</f420_ind_tasa>
+    <f420_id_moneda_docto>COP</f420_id_moneda_docto>
+    <f420_tasa_conv>1</f420_tasa_conv>
+    <f420_tasa_local>1</f420_tasa_local>
+    <f420_notas>Orden de Compra generada desde AuraPortal BPMS</f420_notas>
+    <f420_num_docto_referencia>662743</f420_num_docto_referencia>
+    <f420_id_tercero_solicit>1234991943</f420_id_tercero_solicit>
+  </Documentos>
+  <!-- Una etiqueta Movimientos por línea. Ejemplo (el original trae 7 líneas, todas con f421_nro_registro = 1): -->
+  <Movimientos>
+    <F_CIA>1</F_CIA>
+    <f421_id_co>000</f421_id_co>
+    <f421_id_tipo_docto>OCM</f421_id_tipo_docto>
+    <f421_consec_docto>0</f421_consec_docto>
+    <f421_nro_registro>1</f421_nro_registro>
+    <f421_id_bodega>PT001</f421_id_bodega>
+    <f421_id_motivo>01</f421_id_motivo>
+    <f421_ind_obsequio>0</f421_ind_obsequio>
+    <f421_id_co_movt>000</f421_id_co_movt>
+    <f421_id_ccosto_movto/>
+    <f421_id_unidad_medida>UND</f421_id_unidad_medida>
+    <f421_cant_pedida_base>12.0000000000</f421_cant_pedida_base>
+    <f421_fecha_entrega>20261103</f421_fecha_entrega>
+    <f421_cod_item_prov/>
+    <f421_precio_unitario>12232.0000000000</f421_precio_unitario>
+    <f421_notas>SANTOMILLO 120ML</f421_notas>
+    <f421_detalle/>
+    <f421_referencia_item>413001</f421_referencia_item>
+    <f421_id_ext1_detalle/>
+    <f421_id_ext2_detalle/>
+    <f421_id_un_movto>12</f421_id_un_movto>
+  </Movimientos>
+  <Final><F_CIA>1</F_CIA></Final>
+</MyDataSet>

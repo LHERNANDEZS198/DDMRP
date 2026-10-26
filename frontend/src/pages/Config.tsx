@@ -136,6 +136,7 @@ export default function Config({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras
       const nom: ColDef = { ...g('nombre'), headerName: 'Proveedor', width: 280, pinned: 'left' }
       const resto: ColDef[] = todas.filter(c => c.field !== 'proveedor_id' && c.field !== 'nombre').map(c => ({ ...c, pinned: undefined, checkboxSelection: undefined, headerCheckboxSelection: undefined,
         ...(c.field === 'frecuencia' ? { headerName: 'Frecuencia de compra (d)', width: 170, headerTooltip: 'Cada cuántos días se le compra a este proveedor: define el tamaño de la zona verde del CEDI (vacío = el general de Configuración de compras, 15 días)' } : {}),
+        ...(c.field === 'cond_pago' ? { headerName: 'Condición de pago', width: 150, headerTooltip: 'Código de Siesa que lleva la OC (ej. C30). Se pre-llena con la de la última OC del proveedor y lo que escribas no se pisa; sin ella no se crea la OC' } : {}),
         ...(c.field === 'leadtime' ? { headerName: 'Lead time (d)', width: 120, headerTooltip: 'Días que tarda en llegar lo que se le pide (vacío = el del ítem o el general, 8 días)' } : {}) }))
       return [nit, nom, ...resto]
     }

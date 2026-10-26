@@ -90,7 +90,7 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
              COALESCE(ic.cotizacion, ic.cotizacion_siesa, ic.ultimo_costo)::float8 AS costo,
              CASE WHEN ic.cotizacion IS NOT NULL THEN 'Manual' WHEN ic.cotizacion_siesa IS NOT NULL THEN 'Cotización' WHEN ic.ultimo_costo IS NOT NULL THEN 'Última compra' END AS origen_costo,
              CASE WHEN ic.cotizacion IS NOT NULL THEN NULL WHEN ic.cotizacion_siesa IS NOT NULL THEN ic.cotizacion_fecha ELSE ic.ultimo_costo_fecha END AS costo_fecha,
-             ic.iva_tasa::float8 AS iva_tasa, COALESCE(h.meses, 0) AS meses_venta, pv.leadtime::float8 AS leadtime_proveedor,
+             ic.iva_tasa::float8 AS iva_tasa, COALESCE(h.meses, 0) AS meses_venta, pv.leadtime::float8 AS leadtime_proveedor, pv.cond_pago AS cond_pago,
              cm.cantidad::float8 AS qty_manual, cm.nota AS qty_nota, cm.usuario AS qty_usuario, cm.actualizado AS qty_fecha
       FROM ddmrp.sugerencias_cedi s
       JOIN ddmrp.item_compra ic ON ic.empresa = s.empresa AND ic.producto_id = s.producto_id
@@ -146,7 +146,7 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
         k = (f["empresa"], f["proveedor_id"], f["sucursal"])
         g = grupos.setdefault(k, {"empresa": f["empresa"], "proveedor_id": f["proveedor_id"], "sucursal": f["sucursal"], "proveedor_nombre": f["proveedor_nombre"],
                                   "activo": bool(f["prov_activo"]), "redondeo": f["redondeo"], "pedido_minimo": f["pedido_minimo"],
-                                  "leadtime": f["leadtime_proveedor"], "frecuencia": f["frecuencia_proveedor"] if f["frecuencia_proveedor"] is not None else cfg.get("frecuencia_defecto", 15.0), "items": 0, "unidades": 0.0, "valor": 0.0, "iva": 0.0, "total": 0.0, "sin_costo": 0, "poca_historia": 0, "editadas": 0})
+                                  "cond_pago": f["cond_pago"], "leadtime": f["leadtime_proveedor"], "frecuencia": f["frecuencia_proveedor"] if f["frecuencia_proveedor"] is not None else cfg.get("frecuencia_defecto", 15.0), "items": 0, "unidades": 0.0, "valor": 0.0, "iva": 0.0, "total": 0.0, "sin_costo": 0, "poca_historia": 0, "editadas": 0})
         g["items"] += 1; g["unidades"] += f["qty_pedir"]
         if f["editada"]: g["editadas"] += 1
         if f["valor"] is None: g["sin_costo"] += 1
@@ -156,7 +156,9 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
     for g in grupos.values():
         pm = g["pedido_minimo"]
         g["bajo_minimo"] = bool(pm and pm > 0 and g["items"] > g["sin_costo"] and g["valor"] < pm)
-        g["estado"] = ("Bajo el pedido mínimo" if g["bajo_minimo"] else "Incompleto (ítems sin cotización)" if g["sin_costo"] else "Proveedor inactivo" if not g["activo"] else "OK")
+        g["sin_cond_pago"] = not (g["cond_pago"] or "").strip()
+        g["estado"] = ("Bajo el pedido mínimo" if g["bajo_minimo"] else "Sin condición de pago" if g["sin_cond_pago"] else "Incompleto (ítems sin cotización)" if g["sin_costo"]
+                       else "Proveedor inactivo" if not g["activo"] else "OK")
         provs.append(g)
     bloquea = cfg.get("pedido_minimo_bloquea", 0) >= 1
     bloqueados = [g for g in provs if g["bajo_minimo"]] if bloquea else []
@@ -228,7 +230,7 @@ def necesidades_excel(empresa: str | None = None, proveedores: str | None = None
     excel.hoja(wb, "Por proveedor", [
         {"t": "NIT", "k": "proveedor_id", "w": 13}, {"t": "Proveedor", "k": "proveedor_nombre", "w": 36}, {"t": "Empresa", "k": "empresa", "w": 9}, {"t": "Sucursal", "k": "sucursal", "w": 9},
         {"t": "Ítems", "k": "items", "f": "int", "w": 8}, {"t": "Unidades", "k": "unidades", "f": "int", "w": 11}, {"t": "Valor sin IVA", "k": "valor", "f": "cop", "w": 15},
-        {"t": "IVA estimado", "k": "iva", "f": "cop", "w": 14}, {"t": "Total", "k": "total", "f": "cop", "w": 15}, {"t": "Lead time (d)", "k": "leadtime", "f": "int", "w": 10}, {"t": "Frecuencia de compra (d)", "k": "frecuencia", "f": "int", "w": 11}, {"t": "Pedido mínimo", "k": "pedido_minimo", "f": "cop", "w": 14},
+        {"t": "IVA estimado", "k": "iva", "f": "cop", "w": 14}, {"t": "Total", "k": "total", "f": "cop", "w": 15}, {"t": "Cond. de pago", "k": "cond_pago", "w": 10}, {"t": "Lead time (d)", "k": "leadtime", "f": "int", "w": 10}, {"t": "Frecuencia de compra (d)", "k": "frecuencia", "f": "int", "w": 11}, {"t": "Pedido mínimo", "k": "pedido_minimo", "f": "cop", "w": 14},
         {"t": "Ítems sin cotización", "k": "sin_costo", "f": "int", "w": 12}, {"t": "Poca historia", "k": "poca_historia", "f": "int", "w": 11},
         {"t": "Redondeo", "k": "redondeo", "w": 10}, {"t": "Estado", "k": "estado", "w": 30}], r["proveedores"], fijar=2)
     excel.hoja(wb, "Detalle", [

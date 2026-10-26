@@ -199,6 +199,7 @@ export function GuiaNecesidades({ abierta, cerrar, cfg }: { abierta: boolean; ce
       <L items={[
         <><b>Sin cotización:</b> no hay ningún costo para ese ítem.</>,
         <><b>Poca historia:</b> menos de {poca} meses con venta en los últimos 12; el ADU puede no ser confiable (se cambia en “Configuración de compras”).</>,
+        <><b>Sin condición de pago:</b> el proveedor no tiene la condición de pago (código de Siesa, ej. C30) en el maestro de proveedores; se pre-llena con la de su última OC, y sin ella no se podrá crear la OC.</>,
         <><b>Proveedor inactivo</b>, <b>redondeo a 0</b> (el múltiplo con redondeo hacia abajo deja la cantidad en cero) y <b>subió al MOQ</b> (el pedido quedaba por debajo del mínimo de compra).</>,
         <><b>Pedido mínimo del proveedor:</b> {bloquea
           ? 'hoy se BLOQUEA: los proveedores cuyo valor queda bajo su mínimo no se muestran (aparecen en una pestaña aparte).'

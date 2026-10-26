@@ -45,6 +45,28 @@ class Settings(BaseSettings):
     siesa_moneda_compra: str = "COP"
     siesa_um_compra: str = "UND"   # unidad de medida de la cotizacion que sirve para el costo por unidad (otra UM, p.ej. caja, cambia el precio por un factor); vacio = cualquiera
     siesa_clase_impuesto_iva: int = 1
+    # --- Envio de ordenes de compra al web service de Siesa (WSUNOEE.ImportarXML, plano de ancho fijo). Mismos datos que usa ChaTest para crear terceros.
+    siesa_ws_url: str = ""               # https://ws.funat.com.co:9160/WSUNOEE/WSUNOEE.asmx (vacio = el envio queda deshabilitado; la vista previa del plano sigue funcionando)
+    siesa_ws_user: str = ""
+    siesa_ws_password: str = ""
+    siesa_ws_conexion: str = ""          # <NombreConexion> de la empresa 05 (Funat)
+    siesa_ws_cia: str = "1"              # <IdCia> de la empresa 05
+    siesa_ws_url_s: str = ""             # empresa 21 (Stores): vacio = misma URL / usuario / clave que la 05
+    siesa_ws_user_s: str = ""
+    siesa_ws_password_s: str = ""
+    siesa_ws_conexion_s: str = ""        # sin esto Stores no puede enviar
+    siesa_ws_cia_s: str = ""             # vacio = la misma cia de la 05
+    siesa_ws_timeout: int = 180
+    oc_referencia_prefijo: str = "DDMRP"   # f420_num_docto_referencia = prefijo + id de la OC con ceros (maximo 15 caracteres en total)
+    oc_co: str = "000"                   # centro de operacion del documento y de los movimientos
+    oc_tipo_docto: str = "OCM"
+    oc_motivo: str = "01"
+    oc_un_movto: str = "12"              # unidad de negocio del movimiento
+    oc_um: str = "UND"
+    oc_bodega: str = ""                  # vacio = la bodega del CEDI de la empresa (siesa_cedi_bodega / siesa_cedi_bodega_s)
+    oc_decimales_precio: int = 2          # decimales del precio unitario que se manda (la cantidad va entera: la unidad de pedido es UND)
+    oc_estado: int = 1                   # 1 = entra aprobada, 0 = en elaboracion
+    oc_notas: str = "Orden de compra generada por DDMRP"
     siesa_user: str = ""
     siesa_password: str = ""
 

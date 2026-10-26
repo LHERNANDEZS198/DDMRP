@@ -331,6 +331,8 @@ SENTENCIAS_COMPRAS = [
     "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS ultimo_costo NUMERIC(16,4)",
     "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS ultimo_costo_fecha DATE",
     "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS ultimo_costo_nit TEXT",
+    # condicion de pago de las OC a este proveedor (f420_id_cond_pago, ej. C30): la pone compras; el ETL solo la pre-llena con la de la ultima OC del proveedor en Siesa
+    "ALTER TABLE ddmrp.proveedor ADD COLUMN IF NOT EXISTS cond_pago TEXT",
     # cada cuantos dias se le compra a este proveedor: define el tamaño de la zona verde del CEDI (vacio = el general de compras_config, 15 dias)
     "ALTER TABLE ddmrp.proveedor ADD COLUMN IF NOT EXISTS frecuencia NUMERIC(8,2) CHECK (frecuencia IS NULL OR frecuencia > 0)",
     # cantidad minima de compra del item en unidades (MOQ): si el pedido queda por debajo se sube a este minimo (al multiplo de pedido)
@@ -382,6 +384,19 @@ SENTENCIAS_COMPRAS = [
          ('05', '001', '0001', 'Productos Funat', 0), ('05', '001', '0002', 'Productos de terceros', 1), ('05', '001', '0003', 'Maquila Funat', 1),
          ('21', '001', '0001', 'Productos Funat', 1), ('21', '001', '0002', 'Productos de terceros', 1), ('21', '001', '0003', 'Maquila Funat', 1)
        ON CONFLICT DO NOTHING""",
+
+    # Ordenes de compra que DDMRP manda a Siesa. La referencia (f420_num_docto_referencia) es la llave anti-duplicados: se arma con el id de esta tabla.
+    # estado: borrador | enviando | creada | error | incierta (timeout: no se sabe si Siesa la guardo; se reconsulta por la referencia, NUNCA se reenvia a ciegas) | anulada
+    """CREATE TABLE IF NOT EXISTS ddmrp.orden_compra (
+         id BIGSERIAL PRIMARY KEY, empresa TEXT NOT NULL, proveedor_id TEXT NOT NULL, sucursal TEXT NOT NULL DEFAULT '001', proveedor_nombre TEXT,
+         cond_pago TEXT, comprador TEXT, bodega TEXT, estado TEXT NOT NULL DEFAULT 'borrador', referencia TEXT NOT NULL,
+         valor NUMERIC(18,2), iva NUMERIC(18,2), total NUMERIC(18,2), items INT, unidades NUMERIC(16,3),
+         siesa_consecutivo TEXT, mensaje TEXT, plano TEXT, intentos INT NOT NULL DEFAULT 0,
+         creado_por TEXT, creado TIMESTAMPTZ NOT NULL DEFAULT now(), enviado TIMESTAMPTZ, confirmado TIMESTAMPTZ)""",
+    "CREATE UNIQUE INDEX IF NOT EXISTS orden_compra_ref ON ddmrp.orden_compra (referencia)",
+    """CREATE TABLE IF NOT EXISTS ddmrp.orden_compra_linea (
+         oc_id BIGINT NOT NULL REFERENCES ddmrp.orden_compra(id) ON DELETE CASCADE, nro INT NOT NULL, producto_id TEXT NOT NULL, descripcion TEXT,
+         cantidad NUMERIC(16,3) NOT NULL, costo NUMERIC(16,4) NOT NULL, iva_tasa NUMERIC(6,2), origen_costo TEXT, fecha_entrega DATE, PRIMARY KEY (oc_id, nro))""",
 ]
 
 
