@@ -39,6 +39,9 @@ Estados: ✅ listo · 🟡 hecho, sin validar en producción · ⬜ pendiente ·
 - ⬜ 2b. Maestros que faltan: empaque/MOQ por proveedor-ítem si hace falta, tiendas de compra directa, `item_compra_destino` (etapa 2), factores de zona
 - 🟡 3. Proveedor por ítem desde Siesa: ✅ columnas confirmadas (`f120_rowid_tercero_prov`, `f120_id_sucursal_prov`), sin proveedores huérfanos; falta correr el ETL y ver `items_con_proveedor` · ✅ costo de la cotización validado · ✅ IVA por ítem validado
 - 🟡 4. Informe «Necesidades de compra» (Informes > Compras): ítems comprables con necesidad, proveedor, cantidad, costo, valor e IVA estimado; Excel
+  - 🟡 Navbar: «Necesidades de compra» es un botón propio (como la matriz de despacho); menú «Config» con Motor, Reglas de pedido, Usuarios, Log y Diagnóstico
+  - 🟡 Pantalla: SKU y nombre fijos (se pueden fijar más arrastrando), clic en proveedor → sus ítems, clic en inventario/ADU → Control (ítem en todas las tiendas + CEDI), tooltips en todas las columnas/KPI/filtros, modal «¿Cómo funciona?»
+  - 🟡 Excel: hoja «Cálculo CEDI» con todo el cálculo en fórmulas (ventas de los últimos meses → ADU → zonas → necesidad → a pedir → valor e IVA) + hoja «Parametros», como la Auditoría
 - 🟡 5. Vista con filtros multi-proveedor, resumen por proveedor, lista «Sin proveedor» y pedido mínimo (alerta o bloqueo, configurable). ⬜ Generación de borradores (BPM)
 - ⬜ 6. Estado de OC (grupo asignado, días esperando) + conciliación con el BPM y Siesa
 - 🟡 7. Excel por maestro: proveedores e items de compras ya suben y bajan por Excel; ⬜ resto de maestros nuevos

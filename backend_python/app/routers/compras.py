@@ -8,6 +8,7 @@ from fastapi.responses import Response
 from sqlalchemy import text
 from .. import excel
 from ..activos import solo_activos
+from ..auditoria_xlsx import construir, PARAMS
 from ..db import pg
 from ..security import usuario_actual, filtro_sql_permisos, requiere
 
@@ -67,14 +68,17 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
         SELECT o.empresa, a.producto_id, a.mes, sum(a.cantidad) AS q
         FROM ddmrp.ventas_mensual a JOIN ddmrp.v_origen_cedi o ON o.empresa = a.empresa AND o.origen = a.bodega_id
         WHERE a.mes >= :mes12 GROUP BY 1, 2, 3) x GROUP BY 1, 2)
-      SELECT s.empresa, s.producto_id, mi.descripcion, COALESCE(mi.categoria, '') AS lab_cod, lb.nombre AS lab_nombre, {CAT_NOM} AS categoria,
+      SELECT s.empresa, s.bodega_id, s.producto_id, mi.descripcion, COALESCE(mi.categoria, '') AS lab_cod, lb.nombre AS lab_nombre, {CAT_NOM} AS categoria,
              ic.proveedor_id, ic.sucursal, pv.nombre AS proveedor_nombre, COALESCE(pv.activo, 1) AS prov_activo, COALESCE(pv.redondeo, 'arriba') AS redondeo,
              pv.pedido_minimo::float8 AS pedido_minimo,
+             s.frecuencia::float8 AS frecuencia, s.unidad_despacho::float8 AS unidad_despacho, s.demanda_calificada::float8 AS demanda_calificada,
+             COALESCE(s.regla_objetivo, 0)::int AS regla_objetivo, s.condenado::int AS condenado,
              s.adu::float8 AS adu, s.lead_time::float8 AS lead_time, s.inventario::float8 AS inventario, s.en_transito::float8 AS en_transito, s.flujo_neto::float8 AS flujo_neto,
              s.tor::float8 AS tor, s.toy_aj::float8 AS toy_aj, s.tog_aj::float8 AS tog_aj, s.pct_buffer::float8 AS pct_buffer, s.zona::text AS zona, s.cantidad_sugerida::float8 AS qty_buffer,
              COALESCE(NULLIF(ic.unidad_pedido, 0), 1)::float8 AS unidad_pedido, COALESCE(NULLIF(ic.unidad_empaque, 0), 1)::float8 AS unidad_empaque,
              COALESCE(ic.cotizacion, ic.cotizacion_siesa, ic.ultimo_costo)::float8 AS costo,
              CASE WHEN ic.cotizacion IS NOT NULL THEN 'Manual' WHEN ic.cotizacion_siesa IS NOT NULL THEN 'Cotización' WHEN ic.ultimo_costo IS NOT NULL THEN 'Última compra' END AS origen_costo,
+             CASE WHEN ic.cotizacion IS NOT NULL THEN NULL WHEN ic.cotizacion_siesa IS NOT NULL THEN ic.cotizacion_fecha ELSE ic.ultimo_costo_fecha END AS costo_fecha,
              ic.iva_tasa::float8 AS iva_tasa, COALESCE(h.meses, 0) AS meses_venta
       FROM ddmrp.sugerencias_cedi s
       JOIN ddmrp.item_compra ic ON ic.empresa = s.empresa AND ic.producto_id = s.producto_id
@@ -153,27 +157,29 @@ def necesidades(empresa: str | None = None, proveedores: str | None = None, cate
 @router.get("/necesidades/excel")
 def necesidades_excel(empresa: str | None = None, proveedores: str | None = None, categorias: str | None = None, labs: str | None = None, zonas: str | None = None,
                       q: str | None = None, user=Depends(usuario_actual)):
+    """Excel de las necesidades (lo filtrado): resumen por proveedor, detalle, ítems sin proveedor y, como en la Auditoría, la hoja «Cálculo CEDI» con TODO el cálculo
+    como fórmulas vivas de Excel (ventas de los últimos meses → ADU → zonas → necesidad del buffer → cantidad a pedir → valor e IVA) y la hoja de parámetros."""
     r = _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, 20000)
     wb = excel.libro()
     excel.hoja(wb, "Por proveedor", [
-        {"t": "Empresa", "k": "empresa", "w": 9}, {"t": "NIT", "k": "proveedor_id", "w": 13}, {"t": "Sucursal", "k": "sucursal", "w": 9}, {"t": "Proveedor", "k": "proveedor_nombre", "w": 36},
+        {"t": "NIT", "k": "proveedor_id", "w": 13}, {"t": "Proveedor", "k": "proveedor_nombre", "w": 36}, {"t": "Empresa", "k": "empresa", "w": 9}, {"t": "Sucursal", "k": "sucursal", "w": 9},
         {"t": "Ítems", "k": "items", "f": "int", "w": 8}, {"t": "Unidades", "k": "unidades", "f": "int", "w": 11}, {"t": "Valor sin IVA", "k": "valor", "f": "cop", "w": 15},
         {"t": "IVA estimado", "k": "iva", "f": "cop", "w": 14}, {"t": "Total", "k": "total", "f": "cop", "w": 15}, {"t": "Pedido mínimo", "k": "pedido_minimo", "f": "cop", "w": 14},
         {"t": "Ítems sin cotización", "k": "sin_costo", "f": "int", "w": 12}, {"t": "Poca historia", "k": "poca_historia", "f": "int", "w": 11},
-        {"t": "Redondeo", "k": "redondeo", "w": 10}, {"t": "Estado", "k": "estado", "w": 30}], r["proveedores"], fijar=4)
+        {"t": "Redondeo", "k": "redondeo", "w": 10}, {"t": "Estado", "k": "estado", "w": 30}], r["proveedores"], fijar=2)
     excel.hoja(wb, "Detalle", [
-        {"t": "Empresa", "k": "empresa", "w": 9}, {"t": "NIT", "k": "proveedor_id", "w": 13}, {"t": "Proveedor", "k": "proveedor_nombre", "w": 32}, {"t": "Producto", "k": "producto_id", "w": 11},
-        {"t": "Descripción", "k": "descripcion", "w": 40}, {"t": "Categoría", "k": "categoria", "w": 24}, {"t": "Laboratorio", "k": "lab_nombre", "w": 20},
+        {"t": "Producto (SKU)", "k": "producto_id", "w": 12}, {"t": "Descripción", "k": "descripcion", "w": 40}, {"t": "Empresa", "k": "empresa", "w": 9},
+        {"t": "NIT", "k": "proveedor_id", "w": 13}, {"t": "Proveedor", "k": "proveedor_nombre", "w": 32}, {"t": "Categoría", "k": "categoria", "w": 24}, {"t": "Laboratorio", "k": "lab_nombre", "w": 20},
         {"t": "Zona", "k": "zona", "w": 11, "zona": True}, {"t": "ADU (u/mes)", "k": "adu", "f": "dec1", "w": 11}, {"t": "Lead time (d)", "k": "lead_time", "f": "int", "w": 9},
         {"t": "Inventario", "k": "inventario", "f": "int", "w": 11}, {"t": "Tránsito", "k": "en_transito", "f": "int", "w": 10}, {"t": "Flujo neto", "k": "flujo_neto", "f": "int", "w": 11},
         {"t": "TOG aj.", "k": "tog_aj", "f": "int", "w": 10}, {"t": "Cobertura (días)", "k": "cobertura_dias", "f": "dec1", "w": 11},
         {"t": "Pide el buffer", "k": "qty_buffer", "f": "int", "w": 11}, {"t": "Unidad de pedido", "k": "unidad_pedido", "f": "dec2", "w": 10}, {"t": "A pedir", "k": "qty_pedir", "f": "int", "w": 10},
-        {"t": "Costo", "k": "costo", "f": "dec2", "w": 12}, {"t": "Origen del costo", "k": "origen_costo", "w": 14}, {"t": "Valor sin IVA", "k": "valor", "f": "cop", "w": 14},
-        {"t": "IVA % (est.)", "k": "iva_tasa", "f": "dec1", "w": 9}, {"t": "Total", "k": "total", "f": "cop", "w": 14}, {"t": "Alertas", "k": "alertas", "w": 34}], r["filas"], fijar=4)
+        {"t": "Costo", "k": "costo", "f": "dec2", "w": 12}, {"t": "Origen del costo", "k": "origen_costo", "w": 14}, {"t": "Costo vigente desde", "k": "costo_fecha", "w": 14},
+        {"t": "Valor sin IVA", "k": "valor", "f": "cop", "w": 14}, {"t": "IVA % (est.)", "k": "iva_tasa", "f": "dec1", "w": 9}, {"t": "Total", "k": "total", "f": "cop", "w": 14}, {"t": "Alertas", "k": "alertas", "w": 34}], r["filas"], fijar=2)
     excel.hoja(wb, "Sin proveedor", [
-        {"t": "Empresa", "k": "empresa", "w": 9}, {"t": "Producto", "k": "producto_id", "w": 11}, {"t": "Descripción", "k": "descripcion", "w": 40}, {"t": "Categoría", "k": "categoria", "w": 24},
+        {"t": "Producto (SKU)", "k": "producto_id", "w": 12}, {"t": "Descripción", "k": "descripcion", "w": 40}, {"t": "Empresa", "k": "empresa", "w": 9}, {"t": "Categoría", "k": "categoria", "w": 24},
         {"t": "Laboratorio", "k": "lab_nombre", "w": 20}, {"t": "Zona", "k": "zona", "w": 11, "zona": True}, {"t": "ADU (u/mes)", "k": "adu", "f": "dec1", "w": 11},
-        {"t": "Flujo neto", "k": "flujo_neto", "f": "int", "w": 11}, {"t": "Pide el buffer", "k": "qty_buffer", "f": "int", "w": 11}], r["sin_proveedor"]["filas"], fijar=3)
+        {"t": "Flujo neto", "k": "flujo_neto", "f": "int", "w": 11}, {"t": "Pide el buffer", "k": "qty_buffer", "f": "int", "w": 11}], r["sin_proveedor"]["filas"], fijar=2)
     cfg = r["config"]; t = r["totales"]
     excel.hoja_texto(wb, "Filtros", [
         ("Reporte", "Necesidades de compra del CEDI"), ("Generado", datetime.now().strftime("%Y-%m-%d %H:%M")), ("Usuario", f"{user.get('nombre', '')} ({user.get('id', '')})"),
@@ -182,6 +188,46 @@ def necesidades_excel(empresa: str | None = None, proveedores: str | None = None
         ("Pedido mínimo", "los proveedores bajo su mínimo NO se muestran" if cfg.get("pedido_minimo_bloquea", 0) >= 1 else "se muestran con alerta (no se bloquean)"),
         ("Poca historia", f"menos de {cfg.get('poca_historia_meses', 3):g} meses con venta (solo alerta)"),
         ("Ítems / unidades / valor / total", f"{t['items']} / {t['unidades']:,.0f} / ${t['valor']:,.0f} / ${t['total']:,.0f}"),
+        ("Hoja «Cálculo CEDI»", "El cálculo completo como fórmulas de Excel (hasta 10.000 ítems, los más críticos): ventas por mes → ADU → zonas → necesidad → a pedir → valor e IVA. Mira «Cómo leerlo»."),
         ("Nota", "Los ítems sin cotización quedan con valor vacío y no suman a los totales. El IVA es una tarifa estimada: Siesa lo calcula al crear la OC.")])
+    if r["ejecucion"] and r["filas"]:
+        _hoja_calculo(wb, r)
     return Response(excel.a_bytes(wb), media_type=excel.XLSX,
                     headers={"Content-Disposition": f'attachment; filename="necesidades_compra_{datetime.now():%Y%m%d_%H%M}.xlsx"'})
+
+
+def _hoja_calculo(wb, r: dict, tope: int = 10000) -> None:
+    """Agrega al libro la hoja de calculo en formulas (la misma de la Auditoria, para el CEDI) con las ventas de los ultimos meses de cada item."""
+    filas = r["filas"][:tope]
+    fc = r["ejecucion"]["fecha_calculo"]
+    with pg.connect() as c:
+        prm = {k: float(v) for k, v in c.execute(text("SELECT clave, valor FROM ddmrp.parametro"))}
+        factores = [dict(x) for x in c.execute(text("SELECT tipo, descripcion, factor::float8 factor, desde::float8 desde, hasta::float8 hasta FROM ddmrp.factor_tramo ORDER BY tipo, desde")).mappings()]
+        n = int(min(max(prm.get("meses_historia", 7), 2), 12))
+        meses, y, m = [], fc.year, fc.month
+        for _ in range(n):
+            meses.append(f"{y:04d}{m:02d}"); m -= 1
+            if m == 0: y, m = y - 1, 12
+        meses.reverse()
+        idx = {(f["empresa"], f["producto_id"]): f for f in filas}
+        for f in filas:
+            f["ventas"] = [0.0] * n; f["pronostico"] = 0.0
+        e, p = [f["empresa"] for f in filas], [f["producto_id"] for f in filas]
+        for em, pid, mes, cant in c.execute(text("""
+            SELECT o.empresa, a.producto_id, a.mes, sum(a.cantidad)::float8
+            FROM ddmrp.ventas_mensual a JOIN ddmrp.v_origen_cedi o ON o.empresa = a.empresa AND o.origen = a.bodega_id
+            JOIN unnest(CAST(:e AS text[]), CAST(:p AS text[])) k(e, p) ON k.e = o.empresa AND k.p = a.producto_id
+            WHERE a.mes = ANY(:m) GROUP BY 1, 2, 3"""), {"e": e, "p": p, "m": meses}):
+            if (em, pid) in idx:
+                idx[(em, pid)]["ventas"][meses.index(mes)] = cant
+        for em, pid, pr in c.execute(text("""
+            SELECT o.empresa, pn.producto_id, sum(pn.pronostico)::float8 FROM ddmrp.pronostico pn JOIN ddmrp.v_origen_cedi o ON o.empresa = pn.empresa AND o.origen = pn.bodega_id
+            JOIN unnest(CAST(:e AS text[]), CAST(:p AS text[])) k(e, p) ON k.e = o.empresa AND k.p = pn.producto_id GROUP BY 1, 2"""), {"e": e, "p": p}):
+            if (em, pid) in idx:
+                idx[(em, pid)]["pronostico"] = pr
+    for f in filas:   # lo que espera la hoja de calculo (las claves del motor): el CEDI no tiene cotas, promocion, vectorizacion ni reparto
+        f.update(laboratorio=f.get("lab_nombre") or f.get("lab_cod"), cota_max=0.0, cota_min=0.0, promo=0, vectorizacion=0.0,
+                 toy_aj=f["toy_aj"], necesidad=f["qty_buffer"], cantidad_sugerida=f["qty_buffer"], stock_cedi=None, estado=None, cantidad_aprobada=None)
+    ejec = {"id": r["ejecucion"]["id"], "fecha": fc.isoformat()}
+    construir(filas, meses, {k: prm.get(k, d) for k, _, d in PARAMS}, factores, ejec, truncado=len(r["filas"]) if len(r["filas"]) > len(filas) else 0,
+              wb=wb, titulo_hoja="Cálculo CEDI", es_cedi=True, compras=True)

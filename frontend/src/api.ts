@@ -29,8 +29,13 @@ const LS_CEDI = 'ddmrp_solo_cedi'
 export const soloCediOn = () => { try { return localStorage.getItem(LS_CEDI) === '1' } catch { return false } }
 export const setSoloCedi = (v: boolean) => { try { localStorage.setItem(LS_CEDI, v ? '1' : '0') } catch { /* sin almacenamiento */ } }
 const RUTAS_INFORMES = /^\/(control|alertas|salud|clasificacion)(\/|\?|$)/
-const conModo = (path: string) =>
-  soloCediOn() && RUTAS_INFORMES.test(path) && !/[?&]solo_cedi=/.test(path) ? path + (path.includes('?') ? '&' : '?') + 'solo_cedi=true' : path
+// ?modo=todos en la dirección de la pantalla (p.ej. el enlace de Necesidades de compra a Control): tiendas Y CEDI juntos
+const modoUrl = () => { try { return new URLSearchParams(location.search).get('modo') } catch { return null } }
+const conModo = (path: string) => {
+  if (!RUTAS_INFORMES.test(path) || /[?&]solo_cedi=/.test(path)) return path
+  const m = modoUrl() === 'todos' ? 'todos' : soloCediOn() ? 'true' : ''
+  return m ? path + (path.includes('?') ? '&' : '?') + 'solo_cedi=' + m : path
+}
 
 export async function api<T = any>(path: string, init: RequestInit = {}): Promise<T> {
   const r = await fetch('/api' + conModo(path), {

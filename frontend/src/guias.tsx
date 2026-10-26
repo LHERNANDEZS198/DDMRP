@@ -160,3 +160,63 @@ export function GuiaDespacho({ abierta, cerrar }: { abierta: boolean; cerrar: ()
       ]} />
     </Guia>)
 }
+
+/** Cómo se arma la propuesta de Necesidades de compra: de dónde sale cada número y cómo leer la pantalla. `cfg` trae la configuración de compras vigente. */
+export function GuiaNecesidades({ abierta, cerrar, cfg }: { abierta: boolean; cerrar: () => void; cfg?: Record<string, number> }) {
+  const poca = cfg?.poca_historia_meses ?? 3; const bloquea = (cfg?.pedido_minimo_bloquea ?? 0) >= 1
+  return (
+    <Guia abierta={abierta} cerrar={cerrar} titulo="Cómo se calculan las necesidades de compra">
+      <P>Esta pantalla es una <b>propuesta</b> para que compras la valide: parte de lo que pide el buffer DDMRP del CEDI, lo lleva a cantidades que se pueden pedir al proveedor y le pone costo.
+        <b> No crea ni envía órdenes de compra.</b></P>
+
+      <H>1 · Qué pide el buffer del CEDI</H>
+      <P>El CEDI se calcula como una “tienda más grande”, con la misma metodología DDMRP:</P>
+      <L items={[
+        <><b>ADU (rotación mensual):</b> la venta de <b>todas las tiendas que abastece</b> más la venta directa del CEDI (mayorista y digital). No se usan los despachos del CEDI a las tiendas (distorsionan la demanda real) ni los traslados.</>,
+        <><b>Lead time:</b> el del ítem en “Lead time del CEDI”; si no tiene, el de su proveedor; si no, el general (30 días). Manda el que cargues en DDMRP, no el tiempo de entrega de las cotizaciones de Siesa.</>,
+        <><b>Zonas del buffer:</b> amarilla = lead time × ADU / 30; roja = amarilla × factor de lead time (+ seguridad por variabilidad); verde = el mayor entre la frecuencia, el múltiplo y la roja base. Los topes son TOR (rojo), TOY (amarillo) y TOG (verde).</>,
+        <><b>Flujo neto</b> = inventario del CEDI + tránsito − demanda calificada. El <b>tránsito</b> es el saldo de las órdenes de compra abiertas (aprobadas o parciales) hacia el CEDI.</>,
+        <><b>Se pide</b> cuando el flujo neto cae a la zona amarilla o menos, y se pide hasta el tope verde (reglas configurables en “Reglas de pedido”). Eso es la columna <b>Pide el buffer</b>.</>,
+      ]} />
+
+      <H>2 · Qué ítems entran</H>
+      <L items={[
+        <>Ítems <b>activos</b> en Siesa, no condenados, con algo que pedir.</>,
+        <>Solo los que <b>se compran en esa empresa</b>: se define por categoría en Maestros de compras → “Criterios comprables”. En Funat se compran terceros y maquila (no Productos Funat); en Stores se compra todo.</>,
+        <>Los que se compran pero <b>no tienen proveedor</b> van a la pestaña “Sin proveedor”: hay que asignarlo para que entren a la compra.</>,
+      ]} />
+
+      <H>3 · Proveedor, cantidad y costo</H>
+      <L items={[
+        <><b>Proveedor:</b> el de la <b>cotización vigente</b> del ítem (si hay varios, el de la cotización más reciente). Solo si no hay cotización se usa el que trae el ítem en Siesa.</>,
+        <><b>A pedir:</b> lo que pide el buffer llevado al múltiplo de la <b>unidad de pedido</b> del ítem, con el <b>redondeo del proveedor</b> (arriba por defecto, cercano o abajo). Se editan en Maestros de compras.</>,
+        <><b>Costo:</b> la cotización manual; si no hay, la cotización vigente de Siesa; si tampoco, el <b>último costo de compra</b>. “Origen del costo” dice cuál. Sin ninguno aparece “Sin cotización”, sin valor, y no suma a los totales.</>,
+        <><b>IVA:</b> es una tarifa <b>estimada</b> del grupo impositivo del ítem; Siesa calcula el IVA real al crear la orden. El impuesto al consumo no entra.</>,
+      ]} />
+
+      <H>4 · Alertas (no bloquean)</H>
+      <L items={[
+        <><b>Sin cotización:</b> no hay ningún costo para ese ítem.</>,
+        <><b>Poca historia:</b> menos de {poca} meses con venta en los últimos 12; el ADU puede no ser confiable (se cambia en “Configuración de compras”).</>,
+        <><b>Proveedor inactivo</b> y <b>redondeo a 0</b> (el múltiplo con redondeo hacia abajo deja la cantidad en cero).</>,
+        <><b>Pedido mínimo del proveedor:</b> {bloquea
+          ? 'hoy se BLOQUEA: los proveedores cuyo valor queda bajo su mínimo no se muestran (aparecen en una pestaña aparte).'
+          : 'hoy solo se ALERTA: el proveedor se muestra con el estado “Bajo el pedido mínimo”.'} Si tiene ítems sin cotización su valor queda corto y se marca “Incompleto”, no “Bajo el mínimo”.</>,
+      ]} />
+
+      <H>5 · Cómo usar la pantalla</H>
+      <L items={[
+        <>Las <b>pestañas</b> son tres vistas de lo mismo: por proveedor, detalle por ítem y sin proveedor. Haz clic en el nombre de un proveedor para ver sus ítems.</>,
+        <>En el detalle, haz clic en el <b>inventario</b> o en el <b>ADU</b> de un ítem para abrir Control DDMRP con ese ítem en todas las tiendas más el CEDI: saldo, rotación y zona de cada una.</>,
+        <>Las columnas <b>SKU y nombre</b> quedan fijas; arrastra otra columna hasta la raya para fijarla también.</>,
+        <>El <b>Excel</b> trae lo filtrado y la hoja “Cálculo CEDI”: todo el cálculo en fórmulas vivas (ventas de los últimos meses → ADU → zonas → necesidad → a pedir → valor e IVA) y la hoja “Parametros” para probar escenarios.</>,
+      ]} />
+
+      <H>Lo que esta propuesta no hace</H>
+      <L items={[
+        <>No crea órdenes ni las envía al proveedor (eso viene con la aprobación y la creación en Siesa).</>,
+        <>No usa descuentos por rango de cantidad (no se usan hoy en Siesa) ni el impuesto al consumo.</>,
+        <>Las cotizaciones se toman “vigentes” tal como están en Siesa: una cotización muy vieja que nunca se cerró sigue contando. Revisa la fecha desde la que rige.</>,
+      ]} />
+    </Guia>)
+}

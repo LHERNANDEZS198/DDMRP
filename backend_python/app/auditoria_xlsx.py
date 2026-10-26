@@ -47,7 +47,11 @@ def _tramos_formula(tramos: list[dict], x: str, offset: int) -> str:
     return f
 
 
-def construir(filas: list[dict], meses: list[str], params: dict, factores: list[dict], ejecucion: dict, truncado: int = 0) -> bytes:
+def construir(filas: list[dict], meses: list[str], params: dict, factores: list[dict], ejecucion: dict, truncado: int = 0, *,
+              wb: Workbook | None = None, titulo_hoja: str = "Auditoría", es_cedi: bool = False, compras: bool = False) -> bytes | None:
+    """es_cedi: las filas son el CEDI (la «bodega» es el CEDI, sin reparto ni aprobacion). compras: agrega al final del calculo la capa de compra (unidad de pedido,
+    redondeo del proveedor, costo, valor e IVA estimado) tambien como formulas. wb: libro ya creado (con otras hojas delante): las hojas de la auditoria se agregan ahi
+    y no se devuelven bytes (quien llama guarda el libro)."""
     n = len(meses)
     k = max(1, min(int(params.get("meses_adu", 4)), n))
     lt_t = sorted([f for f in factores if f["tipo"] == "LT"], key=lambda f: f["desde"])
@@ -58,11 +62,10 @@ def construir(filas: list[dict], meses: list[str], params: dict, factores: list[
     # ---- definicion de columnas: (clave, titulo, descripcion, tipo, ancho, formato) ----
     cols: list[tuple] = []
     def col(key, titulo, desc, tipo, ancho=11, fmt=None): cols.append((key, titulo, desc, tipo, ancho, fmt))
-    col("emp", "Empresa", "05 Funat · 21 Stores", "e", 8)
-    col("bod", "Bodega", "Tienda destino", "e", 9)
-    col("ref", "Referencia", "Código del producto", "e", 11)
-    col("desc", "Descripción", "Nombre del producto", "e", 34)
-    col("lab", "Laboratorio", "Proveedor / laboratorio", "e", 22)
+    primeras = {"emp": ("Empresa", "05 Funat · 21 Stores", 8), "bod": ("CEDI" if es_cedi else "Bodega", "Bodega del CEDI que abastece a las tiendas" if es_cedi else "Tienda destino", 9),
+                "ref": ("Referencia", "Código del producto", 11), "desc": ("Descripción", "Nombre del producto", 34), "lab": ("Laboratorio", "Proveedor / laboratorio", 22)}
+    for key in (("ref", "desc", "emp", "bod", "lab") if es_cedi else ("emp", "bod", "ref", "desc", "lab")):   # en compras primero el SKU y el nombre
+        t, d_, a_ = primeras[key]; col(key, t, d_, "e", a_)
     for i, m in enumerate(meses):
         col(f"v{i}", m[:4] + "-" + m[4:] + (" (mes en curso)" if i == n - 1 else ""), "Unidades vendidas en el mes (ventas por mes cargadas)", "e", 10, "#,##0")
     col("pron", "Pronóstico", "Valor estático que cargan los analistas (unidades/mes)", "e", 11, "#,##0.##")
@@ -112,16 +115,27 @@ def construir(filas: list[dict], meses: list[str], params: dict, factores: list[
     col("basem", "Pedido tras mínimo", "Se descarta si es menor a la cantidad mínima", "f", 10)
     col("vef", "Vectorización sumada", "La vectorización se suma tal cual", "f", 10)
     col("nec", "NECESIDAD (fórmula)", "Lo que pide el buffer = pedido + vectorización (0 si es NxP)", "f", 12, "#,##0.##")
+    if compras:   # capa de compra: del pedido del buffer a lo que se le pide al proveedor
+        col("upe", "Unidad de pedido", "Múltiplo en que se pide al proveedor (maestro de ítems de compras; por defecto 1)", "e", 10, "#,##0.##")
+        col("red", "Redondeo", "arriba · cercano · abajo (maestro de proveedores; por defecto arriba)", "e", 10)
+        col("pedir", "A PEDIR (fórmula)", "NECESIDAD llevada al múltiplo de la unidad de pedido según el redondeo del proveedor", "f", 12, "#,##0")
+        col("costo", "Costo", "Cotización manual › cotización de Siesa › última compra (maestro de ítems de compras)", "e", 12, "#,##0.00")
+        col("orig", "Origen del costo", "De dónde sale el costo; vacío = sin cotización (no suma a los totales)", "e", 14)
+        col("valor", "Valor sin IVA (fórmula)", "A pedir × costo", "f", 14, "#,##0")
+        col("ivap", "IVA % (estimado)", "Tarifa del grupo impositivo del ítem (Siesa calcula el IVA real al crear la OC)", "e", 9, "0.0")
+        col("iva", "IVA estimado (fórmula)", "Valor × IVA %", "f", 13, "#,##0")
+        col("tot", "Total (fórmula)", "Valor + IVA estimado", "f", 14, "#,##0")
     # --- motor
     col("m_adu", "ADU motor", "Lo que calculó el motor", "m", 9)
     col("m_toyaj", "TOY aj motor", "Lo que calculó el motor", "m", 10)
     col("m_togaj", "TOG aj motor", "Lo que calculó el motor", "m", 10)
     col("m_zona", "Zona motor", "Lo que calculó el motor", "m", 10)
     col("m_nec", "Necesidad motor", "Antes de repartir el CEDI", "m", 11, "#,##0.##")
-    col("m_cedi", "Stock CEDI repartible", "Inventario de PT001 disponible para esta referencia al correr el motor (después de la reserva)", "m", 11, "#,##0.##")
-    col("m_asig", "ASIGNADO motor", "Lo que quedó después de repartir el CEDI (lo que ve la matriz de despacho)", "m", 12, "#,##0.##")
-    col("m_est", "Estado", "PENDIENTE · APROBADA · ENVIADA", "m", 11)
-    col("m_apr", "Cant. aprobada", "Si se editó o aprobó otra cantidad", "m", 10, "#,##0.##")
+    if not es_cedi:   # el reparto del CEDI y la aprobación solo existen para las tiendas
+        col("m_cedi", "Stock CEDI repartible", "Inventario de PT001 disponible para esta referencia al correr el motor (después de la reserva)", "m", 11, "#,##0.##")
+        col("m_asig", "ASIGNADO motor", "Lo que quedó después de repartir el CEDI (lo que ve la matriz de despacho)", "m", 12, "#,##0.##")
+        col("m_est", "Estado", "PENDIENTE · APROBADA · ENVIADA", "m", 11)
+        col("m_apr", "Cant. aprobada", "Si se editó o aprobó otra cantidad", "m", 10, "#,##0.##")
     col("rev", "REVISIÓN", "OK si la fórmula reproduce ADU, topes, zona y necesidad del motor", "f", 11)
 
     idx = {c[0]: i + 1 for i, c in enumerate(cols)}
@@ -171,12 +185,19 @@ def construir(filas: list[dict], meses: list[str], params: dict, factores: list[
         "basem": lambda r: f"=IF(AND({C('base', r)}>0,{C('base', r)}<{p['cantidad_minima']}),0,{C('base', r)})",
         "vef": lambda r: f"=IF({p['sumar_vectorizacion']}=1,{C('vect', r)},0)",
         "nec": lambda r: f"=IF({C('cond', r)}=1,0,{C('basem', r)}+{C('vef', r)})",
+        "pedir": lambda r: (f"=IF({C('nec', r)}<=0,0,MAX({C('upe', r)},1)*IF({C('red', r)}=\"abajo\",ROUNDDOWN({C('nec', r)}/MAX({C('upe', r)},1),0),"
+                            f"IF({C('red', r)}=\"cercano\",ROUND({C('nec', r)}/MAX({C('upe', r)},1),0),ROUNDUP({C('nec', r)}/MAX({C('upe', r)},1),0))))"),
+        "valor": lambda r: f"=IF({C('costo', r)}=\"\",\"\",{C('pedir', r)}*{C('costo', r)})",
+        "iva": lambda r: f"=IF({C('valor', r)}=\"\",\"\",IF({C('ivap', r)}=\"\",0,{C('valor', r)}*{C('ivap', r)}/100))",
+        "tot": lambda r: f"=IF({C('valor', r)}=\"\",\"\",{C('valor', r)}+{C('iva', r)})",
         "rev": lambda r: (f"=IF(AND(ABS({C('w', r)}-{C('m_adu', r)})<0.01,{C('toyaj', r)}={C('m_toyaj', r)},{C('togaj', r)}={C('m_togaj', r)},"
                           f"{C('zona', r)}={C('m_zona', r)},ABS({C('nec', r)}-{C('m_nec', r)})<0.01),\"OK\",\"DIFIERE\")"),
     }
 
-    wb = Workbook(write_only=True)
-    ws = wb.create_sheet("Auditoría")
+    propio = wb is None
+    if propio:
+        wb = Workbook(write_only=True)
+    ws = wb.create_sheet(titulo_hoja)
     ws.freeze_panes = f"F{R0}"
     for key, (_, _, _, _, ancho, _) in zip(idx, cols):
         ws.column_dimensions[L(idx[key])].width = ancho
@@ -204,7 +225,8 @@ def construir(filas: list[dict], meses: list[str], params: dict, factores: list[
                     "pron": "pronostico", "lt": "lead_time", "frec": "frecuencia", "ud": "unidad_despacho", "cmax": "cota_max", "cmin": "cota_min",
                     "promo": "promo", "vect": "vectorizacion", "inv": "inventario", "tr": "en_transito", "dc": "demanda_calificada", "cond": "condenado", "robj": "regla_objetivo",
                     "m_adu": "adu", "m_toyaj": "toy_aj", "m_togaj": "tog_aj", "m_zona": "zona", "m_nec": "necesidad", "m_cedi": "stock_cedi",
-                    "m_asig": "cantidad_sugerida", "m_est": "estado", "m_apr": "cantidad_aprobada"}
+                    "m_asig": "cantidad_sugerida", "m_est": "estado", "m_apr": "cantidad_aprobada",
+                    "upe": "unidad_pedido", "red": "redondeo", "costo": "costo", "orig": "origen_costo", "ivap": "iva_tasa"}
     fuentes = {kc: [] for kc in idx}
     for i, fila in enumerate(filas):
         r = R0 + i
@@ -220,7 +242,7 @@ def construir(filas: list[dict], meses: list[str], params: dict, factores: list[
             cell = WriteOnlyCell(ws, value=v)
             cell.font = tipo_font[tipo]
             if tipo != "f": cell.fill = tipo_fill[tipo]
-            if key in ("nec", "m_asig", "rev"): cell.font = Font(bold=True, color=tipo_font[tipo].color)
+            if key in ("nec", "m_asig", "rev", "pedir", "tot"): cell.font = Font(bold=True, color=tipo_font[tipo].color)
             if fmt: cell.number_format = fmt
             out.append(cell)
         ws.append(out)
@@ -271,10 +293,21 @@ def construir(filas: list[dict], meses: list[str], params: dict, factores: list[
         "Los rangos de ventas del ADU (últimos meses) y de la ventana quedaron fijos según los parámetros al descargar.",
         "Pequeñas diferencias de 1 unidad pueden venir del redondeo de decimales de Excel frente al del motor.",
     ]
+    if es_cedi:
+        txt = [t.replace("bodega × referencia", "CEDI × referencia").replace("'Auditoría'", f"'{titulo_hoja}'") for t in txt]
+        txt += ["", "EN COMPRAS (CEDI):",
+                "  · La «bodega» es el CEDI: sus ventas son la suma de las ventas de TODAS las tiendas que abastece más la venta directa del CEDI (mayorista / digital); los traslados no cuentan.",
+                "  · Lead time = el del ítem en «Lead time del CEDI», si no el del proveedor, si no el general (30 días). Frecuencia 1 día, unidad de despacho 1, sin cotas ni promoción.",
+                "  · Tránsito = saldo de las órdenes de compra abiertas hacia el CEDI. El pronóstico del CEDI es la suma del de las tiendas que abastece.",
+                "  · NECESIDAD (fórmula) es lo que pide el buffer; A PEDIR la lleva al múltiplo de la unidad de pedido con el redondeo del proveedor; el valor usa el costo (cotización) y el IVA es una tarifa estimada."]
+    else:
+        txt = [t.replace("'Auditoría'", f"'{titulo_hoja}'") for t in txt]
     for t in txt:
         c = WriteOnlyCell(wl, value=t)
         if t.isupper() or t.endswith(":"): c.font = Font(bold=True)
         c.alignment = Alignment(wrap_text=True); wl.append([c])
     wb.calculation.fullCalcOnLoad = True
+    if not propio:
+        return None
     buf = io.BytesIO(); wb.save(buf)
     return buf.getvalue()
