@@ -80,6 +80,41 @@ WHERE i.f120_id_cia = :cia AND i.{col} IS NOT NULL AND i.f120_referencia IS NOT 
 GROUP BY RTRIM(i.f120_referencia), RTRIM(t.f200_id), RTRIM(CONVERT(varchar(10), i.{suc}))"""
 
 
+# Cotizaciones VIGENTES (t212) con el mismo criterio de sp_cotizacion_consulta_compra (consulta 10047, «solo cotizaciones vigentes»): dentro de la vigencia y, por cada
+# proveedor-sucursal-item-moneda-UM-CO-instalacion, la de mayor fecha de activacion. El costo bruto es el precio menos el descuento del PRIMER rango de cantidad (la menor
+# cantidad_hasta de t214: valor si lo tiene, si no el porcentaje), igual que el SP. No se llama al SP: arma una consulta dinamica generica (depende de la configuracion de la
+# consulta y del usuario, devuelve varios resultados, usa tablas temporales y cinco UPDATE) y aqui basta UNA consulta sobre las tablas.
+SQL_COTIZACIONES = """
+WITH vig AS (
+  SELECT c.f212_rowid AS rowid, c.f212_rowid_tercero AS tercero, c.f212_id_sucursal AS sucursal, c.f212_rowid_item_ext AS item_ext, c.f212_id_moneda AS moneda,
+         c.f212_precio AS precio, c.f212_fecha_activacion AS activacion, c.f212_id_um AS um,
+         ROW_NUMBER() OVER (PARTITION BY c.f212_rowid_tercero, c.f212_id_sucursal, c.f212_rowid_item_ext, c.f212_id_moneda, c.f212_id_um,
+                                         ISNULL(c.f212_id_co, ''), ISNULL(c.f212_id_instalacion, '')
+                            ORDER BY c.f212_fecha_activacion DESC, c.f212_rowid DESC) AS rn
+  FROM t212_mm_cotizaciones c
+  WHERE c.f212_id_cia = :cia AND c.f212_fecha_activacion <= GETDATE() AND (c.f212_fecha_hasta IS NULL OR GETDATE() BETWEEN c.f212_fecha_activacion AND c.f212_fecha_hasta)
+)
+SELECT RTRIM(i.f120_referencia), RTRIM(t.f200_id), RTRIM(v.sucursal), RTRIM(v.moneda), RTRIM(v.um), v.activacion,
+       CONVERT(float, v.precio), CONVERT(float, ISNULL(d.f214_valor_dscto, 0)), CONVERT(float, ISNULL(d.f214_porcentaje_dscto, 0))
+FROM vig v
+JOIN t121_mc_items_extensiones x ON x.f121_rowid = v.item_ext
+JOIN t120_mc_items i ON i.f120_rowid = x.f121_rowid_item
+JOIN t200_mm_terceros t ON t.f200_rowid = v.tercero
+OUTER APPLY (SELECT TOP 1 d2.f214_valor_dscto, d2.f214_porcentaje_dscto FROM t214_mm_cotizacion_dscto d2
+             WHERE d2.f214_rowid_cotizacion = v.rowid ORDER BY d2.f214_cantidad_hasta ASC, d2.f214_orden ASC) d
+WHERE v.rn = 1 AND i.f120_id_cia = :cia AND i.f120_referencia IS NOT NULL AND RTRIM(i.f120_referencia) <> '' /*ACTIVO:x,i*/"""
+
+# Tarifa de IVA del item: grupo impositivo del item -> llave de impuesto de la clase IVA (t114 -> t037), como en el SP (solo si el calculo es por tasa).
+SQL_IVA_ITEM = """
+SELECT RTRIM(i.f120_referencia), MAX(CONVERT(float, l.f037_tasa))
+FROM t120_mc_items i
+JOIN t121_mc_items_extensiones x ON x.f121_rowid_item = i.f120_rowid
+JOIN t114_mc_grupos_impo_impuestos g ON g.f114_grupo_impositivo = i.f120_id_grupo_impositivo AND g.f114_id_cia = i.f120_id_cia AND g.f114_id_clase_impuesto = :clase
+JOIN t037_mm_llaves_impuesto l ON l.f037_id = g.f114_id_llave_impuesto AND l.f037_id_cia = g.f114_id_cia AND l.f037_ind_calculo = 1
+WHERE i.f120_id_cia = :cia AND i.f120_referencia IS NOT NULL AND RTRIM(i.f120_referencia) <> '' /*ACTIVO:x,i*/
+GROUP BY RTRIM(i.f120_referencia)"""
+
+
 def _sql_items(con_estado: bool) -> str:
     """Referencia, descripcion y, si la columna de estado existe, cuantas extensiones (t121) de esa referencia estan activas y cuantas
     bloqueadas (una referencia puede tener varias extensiones: es activa si alguna lo es)."""
@@ -450,7 +485,7 @@ def _sincronizar_bodegas_ahora() -> int:
         raw.close()
 
 
-def _proveedores_de_siesa(cur, eng, empresa: str) -> dict:
+def _proveedores_de_siesa(cur, eng, empresa: str) -> tuple[dict, dict]:
     """Proveedor de cada item (manda Siesa) y proveedores nuevos en ddmrp.proveedor. De los proveedores que ya existen NO se toca nada (lead time, correos,
     activo... los pone compras). Lo devuelto sirve para validar que el proveedor esta llegando: cuantos items lo traen y cuantos no."""
     try:   # lo que falle del ORIGEN (p.ej. la columna no existe) no tumba la sincronizacion de items
@@ -459,7 +494,7 @@ def _proveedores_de_siesa(cur, eng, empresa: str) -> dict:
         if isinstance(e, psycopg.Error):
             raise
         log.warning("Proveedor del item no leido (revisa SIESA_ITEM_PROVEEDOR_COL / _SUC_COL con docs/sql/proveedor_item.sql): %s", e)
-        return {"aviso_proveedor": ("No se pudo leer el proveedor del item: revisa SIESA_ITEM_PROVEEDOR_COL y SIESA_ITEM_PROVEEDOR_SUC_COL con docs/sql/proveedor_item.sql. " + str(e).splitlines()[0])[:300]}
+        return {"aviso_proveedor": ("No se pudo leer el proveedor del item: revisa SIESA_ITEM_PROVEEDOR_COL y SIESA_ITEM_PROVEEDOR_SUC_COL con docs/sql/proveedor_item.sql. " + str(e).splitlines()[0])[:300]}, {}
     por_item: dict[str, tuple] = {}
     for ref, nit, suc, nombre in filas:
         if not ref or not nit:
@@ -487,7 +522,80 @@ def _proveedores_de_siesa(cur, eng, empresa: str) -> dict:
     cur.execute("""SELECT count(*) FILTER (WHERE ic.proveedor_id IS NOT NULL), count(*) FILTER (WHERE ic.proveedor_id IS NULL)
                    FROM ddmrp.item_compra ic JOIN ddmrp.item_empresa ie ON ie.empresa = ic.empresa AND ie.producto_id = ic.producto_id WHERE ic.empresa = %s""", (empresa,))
     con, sin = cur.fetchone()
-    return {"items_con_proveedor": con, "items_sin_proveedor": sin, "proveedores_nuevos": nuevos}
+    return {"items_con_proveedor": con, "items_sin_proveedor": sin, "proveedores_nuevos": nuevos}, por_item
+
+
+def _cotizaciones_de_siesa(cur, eng, empresa: str, por_item: dict) -> dict:
+    """Costo de la cotizacion vigente del PROVEEDOR de cada item (en la moneda de compra) y tarifa de IVA del item -> ddmrp.item_compra (cotizacion_siesa, cotizacion_fecha,
+    iva_tasa). Si no se pudo leer el proveedor del item (por_item vacio) se usa la cotizacion vigente mas reciente de cualquier proveedor y se avisa. Un fallo del origen
+    solo deja esos campos como estaban."""
+    prm = {"cia": settings.siesa_cia}
+    out: dict = {}
+    moneda = settings.siesa_moneda_compra.strip().upper()
+    solo = _solo_activos(cur)
+    filtrar, _ = _filtrar_activos(solo, eng)
+    try:
+        filas = list(_stream(eng, _con_estado(SQL_COTIZACIONES, filtrar), prm))
+    except Exception as e:
+        if isinstance(e, psycopg.Error):
+            raise
+        log.warning("Cotizaciones no leidas: %s", e)
+        out["aviso_cotizacion"] = ("No se pudieron leer las cotizaciones (t212): " + str(e).splitlines()[0])[:300]
+        filas = None
+    if filas is not None:
+        mejor: dict[str, tuple] = {}     # referencia -> (activacion, -costo, costo)
+        otra_moneda = otra_um = 0
+        um_ok = settings.siesa_um_compra.strip().upper()
+        for ref, nit, suc, mon, um, act, precio, dv, dp in filas:
+            if not ref or (mon or "").strip().upper() != moneda:
+                otra_moneda += 1
+                continue
+            if um_ok and (um or "").strip().upper() != um_ok:   # otra unidad de medida (caja...): su precio no es por unidad
+                otra_um += 1
+                continue
+            ref = ref.strip()
+            if por_item:   # el proveedor del item es conocido: solo vale la cotizacion de SU proveedor y sucursal
+                p = por_item.get(ref)
+                s = (suc or "001").strip()
+                if not p or (nit or "").strip() != p[0] or (s.zfill(3) if s.isdigit() else s) != p[1]:
+                    continue
+            costo = float(precio or 0) - (float(dv) if dv else float(precio or 0) * float(dp or 0) / 100)
+            clave = (act, -costo)
+            if ref not in mejor or clave > mejor[ref][:2]:
+                mejor[ref] = (act, -costo, costo)
+        cur.execute("CREATE TEMP TABLE IF NOT EXISTS stg_cot (producto_id text, costo numeric, fecha date)")
+        cur.execute("TRUNCATE stg_cot")
+        with cur.copy("COPY stg_cot FROM STDIN") as cp:
+            for ref, (act, _, costo) in mejor.items():
+                cp.write_row((ref, round(costo, 4), act.date() if hasattr(act, "date") else act))
+        cur.execute("""UPDATE ddmrp.item_compra ic SET cotizacion_siesa = s.costo, cotizacion_fecha = s.fecha FROM stg_cot s
+                       WHERE ic.empresa = %s AND ic.producto_id = s.producto_id""", (empresa,))
+        cur.execute("""UPDATE ddmrp.item_compra ic SET cotizacion_siesa = NULL, cotizacion_fecha = NULL
+                       WHERE ic.empresa = %s AND ic.cotizacion_siesa IS NOT NULL AND NOT EXISTS (SELECT 1 FROM stg_cot s WHERE s.producto_id = ic.producto_id)""", (empresa,))
+        cur.execute("DROP TABLE stg_cot")
+        out.update(items_con_cotizacion=len(mejor), cotizaciones_en_otra_moneda=otra_moneda, cotizaciones_en_otra_um=otra_um)
+        if not por_item:
+            out["aviso_cotizacion_sin_proveedor"] = "No se conoce el proveedor de los items: se uso la cotizacion vigente mas reciente de cualquier proveedor."
+    try:
+        iva = list(_stream(eng, _con_estado(SQL_IVA_ITEM, filtrar), {**prm, "clase": settings.siesa_clase_impuesto_iva}))
+    except Exception as e:
+        if isinstance(e, psycopg.Error):
+            raise
+        log.warning("IVA de los items no leido: %s", e)
+        out["aviso_iva"] = ("No se pudo leer la tarifa de IVA: " + str(e).splitlines()[0])[:300]
+        return out
+    cur.execute("CREATE TEMP TABLE IF NOT EXISTS stg_iva (producto_id text, tasa numeric)")
+    cur.execute("TRUNCATE stg_iva")
+    with cur.copy("COPY stg_iva FROM STDIN") as cp:
+        for ref, tasa in iva:
+            if ref and tasa is not None:
+                cp.write_row((ref.strip(), tasa))
+    cur.execute("UPDATE ddmrp.item_compra ic SET iva_tasa = s.tasa FROM stg_iva s WHERE ic.empresa = %s AND ic.producto_id = s.producto_id", (empresa,))
+    cur.execute("""UPDATE ddmrp.item_compra ic SET iva_tasa = NULL WHERE ic.empresa = %s AND ic.iva_tasa IS NOT NULL
+                   AND NOT EXISTS (SELECT 1 FROM stg_iva s WHERE s.producto_id = ic.producto_id)""", (empresa,))
+    cur.execute("DROP TABLE stg_iva")
+    out["items_con_iva"] = len(iva)
+    return out
 
 
 def _items_de_siesa(cur, eng, primera: bool = True, empresa: str | None = None) -> dict:
@@ -566,7 +674,9 @@ def _items_de_siesa(cur, eng, primera: bool = True, empresa: str | None = None) 
         cur.execute("INSERT INTO ddmrp.criterio (plan_id, criterio_id, nombre) VALUES (%s, %s, %s) "
                     "ON CONFLICT (plan_id, criterio_id) DO UPDATE SET nombre = EXCLUDED.nombre", (pid, cid, nom))
     if empresa:
-        extra.update(_proveedores_de_siesa(cur, eng, empresa))
+        r_prov, por_item = _proveedores_de_siesa(cur, eng, empresa)
+        extra.update(r_prov)
+        extra.update(_cotizaciones_de_siesa(cur, eng, empresa, por_item))
     return {"items": len(items), "eliminados": borrados, "con_laboratorio": len(labs), "criterios": len(crit), "planes": len({c[1] for c in crit}), **extra}
 
 

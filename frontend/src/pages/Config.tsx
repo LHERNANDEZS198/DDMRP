@@ -110,14 +110,19 @@ export default function Config({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras
     const conocidas = new Set([...def.llave, ...def.editable, 'descripcion', 'bodega_nombre', 'costo', 'estado', ...(def.lectura ?? []).map(c => c.k)])
     const extra: ColDef[] = def.clave === 'items' && rows[0]
       ? Object.keys(rows[0]).filter(k => !conocidas.has(k)).map(k => ({ field: k, headerName: k, width: 190 })) : []
-    const ed2 = def.clave === 'bitacora' ? ed.map(c => c.field === 'descripcion' ? { ...c, headerName: 'Tienda (nombre)', width: 240 } : c) : def.clave === 'items' ? ed.map(c => c.field === 'categoria' ? { ...c, headerName: 'Laboratorio (código)', width: 150 } : c.field === 'descripcion' ? { ...c, width: 300 } : c) : ed
+    const ed2 = def.clave === 'items-compras' ? ed.map(c => c.field === 'cotizacion' ? { ...c, headerName: 'Cotización manual', headerTooltip: 'Solo si quieres pisar la cotización de Siesa. Vacía = se usa la de Siesa', width: 150 } : c.field === 'unidad_pedido' ? { ...c, headerName: 'Unidad de pedido', width: 140 } : c.field === 'unidad_empaque' ? { ...c, headerName: 'Unidad de empaque', width: 150 } : c) : def.clave === 'bitacora' ? ed.map(c => c.field === 'descripcion' ? { ...c, headerName: 'Tienda (nombre)', width: 240 } : c) : def.clave === 'items' ? ed.map(c => c.field === 'categoria' ? { ...c, headerName: 'Laboratorio (código)', width: 150 } : c.field === 'descripcion' ? { ...c, width: 300 } : c) : ed
     const costo: ColDef[] = def.clave === 'items' ? [{ field: 'costo', headerName: 'Costo promedio', type: 'numericColumn', width: 140,
       valueFormatter: p => p.value == null ? '' : '$' + Math.round(p.value).toLocaleString('es-CO'), headerTooltip: 'Costo promedio por instalación (lo trae el ETL desde Siesa). Solo lectura.' }] : []
     const est: ColDef[] = def.clave === 'items' ? [{ field: 'estado', headerName: 'Estado Siesa', width: 120, headerTooltip: 'Estado del item en Siesa (extensión del item). Solo lectura; sin dato = activo.' }] : []
     // columnas de solo lectura que declara el maestro (p.ej. items de compras: laboratorio, línea, exhibición, costo, proveedor)
-    const lect: ColDef[] = (def.lectura ?? []).map(c => c.k === 'costo'
-      ? { field: c.k, headerName: c.t, type: 'numericColumn', width: 130, valueFormatter: (p: any) => p.value == null ? '' : '$' + Math.round(p.value).toLocaleString('es-CO'), headerTooltip: 'Solo lectura (viene de Siesa)' }
-      : { field: c.k, headerName: c.t, width: c.k === 'proveedor' ? 130 : 180, headerTooltip: 'Solo lectura (viene de Siesa)' })
+    const lect: ColDef[] = (def.lectura ?? []).map((c): ColDef => {
+      const base = { field: c.k, headerName: c.t, headerTooltip: 'Solo lectura (viene de Siesa)' }
+      if (['costo', 'cotizacion_siesa', 'costo_compra'].includes(c.k))
+        return { ...base, type: 'numericColumn', width: 130, valueFormatter: (p: any) => p.value == null ? '' : '$' + Math.round(p.value).toLocaleString('es-CO') }
+      if (c.k === 'iva_tasa') return { ...base, type: 'numericColumn', width: 120, valueFormatter: (p: any) => p.value == null ? '' : Number(p.value).toLocaleString('es-CO', { maximumFractionDigits: 2 }) + '%',
+        headerTooltip: 'Tarifa estimada del grupo impositivo del item; Siesa calcula el IVA real al crear la OC' }
+      return { ...base, width: c.k === 'proveedor' || c.k === 'cotizacion_vigencia' ? 130 : 180 }
+    })
     return [...llave, ...desc, ...ed2, ...lect, ...costo, ...est, ...extra]
   }, [def, rowKeys, pCarga, orden.col, orden.desc])
 

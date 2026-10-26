@@ -64,7 +64,8 @@ MAESTROS = {
         sin_reemplazo=True, sin_eliminar=True,  # y aqui no se borra nada (ni filas sueltas, ni vaciar, ni reemplazar)
         conservar=("cotizacion", "unidad_pedido", "unidad_empaque"),   # celda vacia = no cambia
         lectura=[("laboratorio", "Laboratorio"), ("linea", "Línea"), ("exhibicion", "Exhibición"), ("costo", "Costo promedio"),
-                 ("proveedor", "Proveedor (NIT)"), ("proveedor_nombre", "Nombre del proveedor")]),
+                 ("cotizacion_siesa", "Cotización Siesa"), ("cotizacion_vigencia", "Vigente desde"), ("costo_compra", "Costo a usar"),
+                 ("iva_tasa", "IVA % (estimado)"), ("proveedor", "Proveedor (NIT)"), ("proveedor_nombre", "Nombre del proveedor")]),
     "pronostico": dict(
         label="Pronostico (unidades/mes)", tabla="ddmrp.pronostico",
         llave=["empresa", "bodega_id", "producto_id"], editable={"pronostico": "num"},
@@ -154,8 +155,9 @@ AYUDA = {
     "proveedores": "Los proveedores llegan solos del maestro de items de Siesa (cada vez que se traen los items entran los nuevos, con su NIT y nombre) y aqui compras completa lo suyo: lead time en dias "
                    "(prioridad al calcular el CEDI: el del item en «Lead time del CEDI», luego el del proveedor, luego el general), correos (varios separados por ;), activo (1/0 o si/no; vacio = activo), "
                    "pedido minimo (valor), contacto, telefono y notas. Lo que ya escribiste no se pisa al sincronizar. La llave es empresa + NIT + sucursal.",
-    "items-compras": "Los items vienen de Siesa (no se crean ni se borran aqui): referencia, nombre, laboratorio, linea, exhibicion, costo promedio y proveedor son de solo lectura. "
-                     "Compras carga la cotizacion (costo vigente), la unidad de pedido (multiplo en que se pide, por defecto 1) y la unidad de empaque (unidades por caja, por defecto 1). "
+    "items-compras": "Los items vienen de Siesa (no se crean ni se borran aqui): referencia, nombre, laboratorio, linea, exhibicion, costo promedio, proveedor, cotizacion de Siesa, IVA y el costo a usar son de solo lectura. "
+                     "La cotizacion de Siesa es la vigente del proveedor del item (costo bruto, con el descuento del primer rango de cantidad) y se actualiza al traer los items; el IVA es una tarifa ESTIMADA: Siesa lo calcula al crear la OC. "
+                     "Compras carga a mano la cotizacion (solo si quiere pisar la de Siesa: el costo a usar es la manual y, si no hay, la de Siesa), la unidad de pedido (multiplo en que se pide, por defecto 1) y la unidad de empaque (unidades por caja, por defecto 1). "
                      "Por Excel: baja el archivo, llena esas tres columnas y subelo; celda vacia = no cambia. Solo se ven los items activos de su empresa.",
     "leadtime-cedi": "Dias que tarda en llegar un item al CEDI (compra o maquila; la produccion propia no se modela). La fila con producto * es el general de la empresa (30 dias); "
                      "una fila con un item lo sobrescribe y, sin fila de item, manda el lead time del proveedor del item (maestro Proveedores). Alimenta el buffer del CEDI (Informes > Ver solo CEDI): se aplica en la siguiente corrida del motor.",
@@ -210,8 +212,9 @@ def _lectura_compras() -> tuple[str, str, list[str]]:
     join = (" LEFT JOIN ddmrp.laboratorio lb ON lb.codigo = mi.categoria LEFT JOIN ddmrp.costo_item ci ON ci.producto_id = t.producto_id"
             " LEFT JOIN ddmrp.proveedor pv ON pv.empresa = t.empresa AND pv.proveedor_id = t.proveedor_id AND pv.sucursal = t.sucursal")
     sel = (", COALESCE(lb.nombre, mi.categoria) AS laboratorio, " + _crit_plan("L_NEA%") + " AS linea, " + _crit_plan("EXHIBIC%") + " AS exhibicion, "
-           "ci.costo::float8 AS costo, t.proveedor_id AS proveedor, pv.nombre AS proveedor_nombre")
-    return join, sel, ["descripcion", "laboratorio", "linea", "exhibicion", "costo", "proveedor", "proveedor_nombre"]
+           "ci.costo::float8 AS costo, t.cotizacion_siesa::float8 AS cotizacion_siesa, t.cotizacion_fecha AS cotizacion_vigencia, "
+           "COALESCE(t.cotizacion, t.cotizacion_siesa)::float8 AS costo_compra, t.iva_tasa::float8 AS iva_tasa, t.proveedor_id AS proveedor, pv.nombre AS proveedor_nombre")
+    return join, sel, ["descripcion", "laboratorio", "linea", "exhibicion", "costo", "cotizacion_siesa", "cotizacion_vigencia", "costo_compra", "iva_tasa", "proveedor", "proveedor_nombre"]
 
 
 def _es_admin(user) -> bool:

@@ -322,6 +322,11 @@ SENTENCIAS_COMPRAS = [
          unidad_empaque NUMERIC(12,2) DEFAULT 1 CHECK (unidad_empaque IS NULL OR unidad_empaque > 0),  -- unidades por caja / empaque
          PRIMARY KEY (empresa, producto_id))""",
     "INSERT INTO ddmrp.item_compra (empresa, producto_id) SELECT empresa, producto_id FROM ddmrp.item_empresa ON CONFLICT DO NOTHING",
+    # de Siesa (el ETL los reescribe): costo de la cotizacion vigente del proveedor del item (costo bruto, con el descuento del primer rango de cantidad) y
+    # tarifa de IVA del grupo impositivo del item. La columna «cotizacion» queda para que compras fije un costo a mano (pisa el de Siesa).
+    "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS cotizacion_siesa NUMERIC(16,4)",
+    "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS cotizacion_fecha DATE",
+    "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS iva_tasa NUMERIC(8,4)",
 ]
 
 

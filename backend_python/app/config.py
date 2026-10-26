@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     # (SIESA_ITEM_PROVEEDOR_COL / SIESA_ITEM_PROVEEDOR_SUC_COL). Si no se pueden leer, el ETL avisa y sigue sin proveedores.
     siesa_item_proveedor_col: str = "f120_rowid_tercero_prov"     # rowid del tercero (t200.f200_rowid)
     siesa_item_proveedor_suc_col: str = "f120_id_sucursal_prov"   # sucursal del proveedor (ej. 001)
+    # Cotizaciones (t212) y IVA: moneda de compra y clase de impuesto del IVA (la del parametro @p_id_clase_imp de sp_cotizacion_consulta_compra)
+    siesa_moneda_compra: str = "COP"
+    siesa_um_compra: str = "UND"   # unidad de medida de la cotizacion que sirve para el costo por unidad (otra UM, p.ej. caja, cambia el precio por un factor); vacio = cualquiera
+    siesa_clase_impuesto_iva: int = 1
     siesa_user: str = ""
     siesa_password: str = ""
 
