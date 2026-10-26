@@ -48,6 +48,7 @@ def estado(oc_id: int, b: EstadoIn):
             _marcar(oc_id, "creada", b.mensaje or "Creada en Siesa por el BPM", b.consecutivo)
             with pg.begin() as c:   # se sueltan las cantidades editadas de esos items (se conservaban hasta montar la OC)
                 c.execute(text("DELETE FROM ddmrp.compras_cantidad cm USING ddmrp.orden_compra_linea l WHERE l.oc_id = :i AND cm.empresa = :e AND cm.producto_id = l.producto_id"), {"i": oc_id, "e": r["empresa"]})
+                c.execute(text("DELETE FROM ddmrp.compras_costo cm USING ddmrp.orden_compra_linea l WHERE l.oc_id = :i AND cm.empresa = :e AND cm.producto_id = l.producto_id"), {"i": oc_id, "e": r["empresa"]})
             evento("compras", b.tomada_por, f"OC {r['referencia']} creada en Siesa por el BPM ({b.consecutivo})", {"oc_id": oc_id, "consecutivo": b.consecutivo})
         else:
             _cerrar_creada(oc_id, r["empresa"], r["referencia"], b.mensaje or "Creada en Siesa por el BPM", b.tomada_por)

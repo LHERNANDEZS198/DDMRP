@@ -69,7 +69,6 @@ class Settings(BaseSettings):
     bpm_url: str = ""                    # base del BPM, p.ej. https://bpm.funat.com.co (POST {bpm_url}/api/internal/oc)
     bpm_secret: str = ""                 # secreto compartido en ambos sentidos (cabecera X-OC-Secret); vacio = los endpoints /api/bpm/* rechazan todo
     bpm_timeout: int = 20
-    oc_umbral_revision: float = 0.0      # total en pesos desde el cual la OC pasa por revision humana en el BPM; 0 = toda OC se revisa
     oc_moneda: str = "COP"               # moneda del documento
     oc_moneda_conv: str = "USD"          # «moneda base de conversion» definida en la compania de Siesa (si no coincide, Siesa rechaza la linea 2); verificar con docs/sql/oc_monedas.sql
     oc_moneda_local: str = "COP"

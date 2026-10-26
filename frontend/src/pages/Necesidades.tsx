@@ -171,7 +171,17 @@ export default function Necesidades() {
     else if (['inventario', 'adu'].includes(c)) abrir(`/control?item=${encodeURIComponent(e.data.producto_id)}&modo=todos`)    // saldo y rotación: tiendas + CEDI
   }
   const alEditar = async (e: CellValueChangedEvent) => {
-    if (e.colDef.field !== 'qty_pedir' || !e.data) return
+    if (!e.data) return
+    if (e.colDef.field === 'costo') {
+      const nc: number | null = e.newValue == null || e.newValue === '' ? null : Number(e.newValue)
+      const costo = nc != null && nc === e.data.costo_calculado ? null : nc      // igual a la cotización = no es una edición
+      try {
+        await api('/compras/costo', { method: 'PUT', body: JSON.stringify({ empresa: e.data.empresa, producto_id: e.data.producto_id, costo }) })
+        setMsg(costo == null ? `${e.data.producto_id}: vuelve al costo de la cotización` : `${e.data.producto_id}: costo $${costo.toLocaleString('es-CO')} guardado (se conserva hasta que se monte la OC)`)
+      } catch (x: any) { setErr(x.message) }
+      recargar(); return
+    }
+    if (e.colDef.field !== 'qty_pedir') return
     const nuevo: number | null = e.newValue == null || e.newValue === '' ? null : Number(e.newValue)
     const cantidad = nuevo != null && nuevo === e.data.qty_calculada ? null : nuevo     // si queda igual al cálculo no es una edición
     try {
@@ -240,8 +250,11 @@ export default function Necesidades() {
       valueParser: (p: any) => { const t = String(p.newValue ?? '').trim().replace(',', '.'); if (t === '') return null; const n = Number(t); return Number.isFinite(n) && n >= 0 ? n : p.oldValue },
       cellStyle: (p: any): Record<string, string | number> => p.data?.editada ? { fontWeight: 700, background: '#fff4ce' } : { fontWeight: 700 },
       headerTooltip: 'Cantidad que se va a pedir. Haz doble clic para editarla; vacía = vuelve al cálculo. Lo que edites se conserva aunque corra el motor, hasta que se monte la OC' },
-    { field: 'costo', headerName: 'Costo', type: 'numericColumn', width: 120, headerTooltip: 'Cotización manual › cotización de Siesa › última compra. Sin ninguno: “Sin cotización”',
-      valueFormatter: (p: any) => p.value == null ? 'Sin cotización' : '$' + Number(p.value).toLocaleString('es-CO', { maximumFractionDigits: 2 }), cellStyle: (p: any) => p.value == null ? { color: '#b45309', fontWeight: 600 } : undefined },
+    { field: 'costo', headerName: gestiona ? 'Costo (editable)' : 'Costo', type: 'numericColumn', width: 140, editable: gestiona,
+      valueParser: (p: any) => { const t = String(p.newValue ?? '').trim().replace(',', '.'); if (t === '') return null; const n = Number(t); return Number.isFinite(n) && n > 0 ? n : p.oldValue },
+      headerTooltip: 'Cotización manual › cotización de Siesa › última compra. Sin ninguno: “Sin cotización”. Doble clic para editarlo (vacío = vuelve a la cotización); si sube mucho frente a la cotización, la OC pasa a revisión',
+      valueFormatter: (p: any) => p.value == null ? 'Sin cotización' : '$' + Number(p.value).toLocaleString('es-CO', { maximumFractionDigits: 2 }),
+      cellStyle: (p: any): Record<string, string | number> | undefined => p.data?.costo_editado ? { fontWeight: 700, background: '#fff4ce' } : p.value == null ? { color: '#b45309', fontWeight: 600 } : undefined },
     { field: 'origen_costo', headerName: 'Origen del costo', width: 130, headerTooltip: 'De dónde sale el costo: Manual, Cotización o Última compra' },
     { field: 'costo_fecha', headerName: 'Costo vigente desde', width: 140, headerTooltip: 'Fecha de la cotización o de la última compra: una fecha muy vieja pide revisar el costo' },
     { field: 'valor', headerName: 'Valor sin IVA', type: 'numericColumn', width: 130, valueFormatter: COP, headerTooltip: 'A pedir × costo' },

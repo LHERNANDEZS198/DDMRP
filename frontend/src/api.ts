@@ -19,8 +19,13 @@ export async function volverDePrueba() {
 }
 
 /** Mensaje de error de una respuesta: lee el cuerpo UNA sola vez y saca `detail` si es JSON de FastAPI. */
+/** Tamano maximo de un archivo que se sube (el nginx del servidor corta en 30 MB). */
+export const MAX_SUBIDA_MB = 30
+const MSG_ARCHIVO_GRANDE = `El archivo no debe superar los ${MAX_SUBIDA_MB} MB`
+
 async function errorDe(r: Response): Promise<string> {
   const t = await r.text()
+  if (r.status === 413) return MSG_ARCHIVO_GRANDE      // el proxy responde una pagina HTML fea: se cambia por un mensaje claro
   try { const j = JSON.parse(t); return typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail ?? j) } catch { return t || `Error ${r.status}` }
 }
 
@@ -97,6 +102,7 @@ export async function bajar(path: string, nombre: string) {
 
 /** POST multipart con un archivo (Excel / CSV). */
 export async function subir<T = any>(path: string, archivo: File): Promise<T> {
+  if (archivo.size > MAX_SUBIDA_MB * 1024 * 1024) throw new Error(`${MSG_ARCHIVO_GRANDE} (el tuyo pesa ${(archivo.size / 1024 / 1024).toFixed(1)} MB)`)
   const fd = new FormData(); fd.append('archivo', archivo)
   const r = await fetch('/api' + path, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd })
   if (r.status === 401) { localStorage.removeItem('token'); location.reload() }

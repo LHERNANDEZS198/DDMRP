@@ -88,6 +88,7 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
              COALESCE(NULLIF(ic.moq, 0), 1)::float8 AS moq, pv.frecuencia::float8 AS frecuencia_proveedor,
              COALESCE(NULLIF(ic.unidad_pedido, 0), 1)::float8 AS unidad_pedido, COALESCE(NULLIF(ic.unidad_empaque, 0), 1)::float8 AS unidad_empaque,
              COALESCE(ic.cotizacion, ic.cotizacion_siesa, ic.ultimo_costo)::float8 AS costo,
+             ccs.costo::float8 AS costo_manual,
              CASE WHEN ic.cotizacion IS NOT NULL THEN 'Manual' WHEN ic.cotizacion_siesa IS NOT NULL THEN 'Cotización' WHEN ic.ultimo_costo IS NOT NULL THEN 'Última compra' END AS origen_costo,
              CASE WHEN ic.cotizacion IS NOT NULL THEN NULL WHEN ic.cotizacion_siesa IS NOT NULL THEN ic.cotizacion_fecha ELSE ic.ultimo_costo_fecha END AS costo_fecha,
              ic.iva_tasa::float8 AS iva_tasa, COALESCE(h.meses, 0) AS meses_venta, pv.leadtime::float8 AS leadtime_proveedor, pv.cond_pago AS cond_pago,
@@ -95,6 +96,7 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
       FROM ddmrp.sugerencias_cedi s
       JOIN ddmrp.item_compra ic ON ic.empresa = s.empresa AND ic.producto_id = s.producto_id
       LEFT JOIN ddmrp.compras_cantidad cm ON cm.empresa = s.empresa AND cm.producto_id = s.producto_id
+      LEFT JOIN ddmrp.compras_costo ccs ON ccs.empresa = s.empresa AND ccs.producto_id = s.producto_id
       LEFT JOIN ddmrp.proveedor pv ON pv.empresa = ic.empresa AND pv.proveedor_id = ic.proveedor_id AND pv.sucursal = ic.sucursal
       LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = s.producto_id
       LEFT JOIN ddmrp.laboratorio lb ON lb.codigo = mi.categoria
@@ -124,6 +126,10 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
         f["qty_calculada"] = moq_m if f["subio_moq"] else base
         f["editada"] = f["qty_manual"] is not None
         f["qty_pedir"] = f["qty_manual"] if f["editada"] else f["qty_calculada"]   # lo que compras edito manda sobre el calculo
+        f["costo_calculado"] = f["costo"]                  # la cotizacion: manual › Siesa › ultima compra
+        f["costo_editado"] = f["costo_manual"] is not None
+        if f["costo_editado"]:
+            f["costo"] = f["costo_manual"]; f["origen_costo"] = "Editado"
         costo = f["costo"]
         f["valor"] = f["qty_pedir"] * costo if costo is not None else None
         f["iva"] = f["valor"] * f["iva_tasa"] / 100 if f["valor"] is not None and f["iva_tasa"] is not None else None
@@ -132,6 +138,9 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
         f["cobertura_dias"] = f["inventario"] / a if a > 0 else None
         alertas = []
         if costo is None: alertas.append("Sin cotización")
+        if f["costo_editado"]:
+            ref = f["costo_calculado"]
+            alertas.append("Costo editado" + (f" ({(costo / ref - 1) * 100:+.0f}% vs cotización)" if ref else " (sin cotización de referencia)"))
         if f["meses_venta"] < poca: alertas.append(f"Poca historia ({f['meses_venta']} m)")
         if not f["prov_activo"]: alertas.append("Proveedor inactivo")
         if f["editada"]:
@@ -207,6 +216,31 @@ def guardar_cantidad(b: CantidadIn, user=Depends(requiere("gestionar_compras")))
                       {"e": b.empresa, "p": b.producto_id, "q": b.cantidad, "n": (b.nota or "").strip() or None, "u": usuario_de(user)})
     evento("compras", usuario_de(user), f"Cantidad a pedir de {b.empresa}/{b.producto_id}: " + ("restablecida al cálculo" if b.cantidad is None else f"{b.cantidad:g}"),
            {"empresa": b.empresa, "producto_id": b.producto_id, "cantidad": b.cantidad})
+    return {"ok": True}
+
+
+class CostoIn(BaseModel):
+    empresa: str
+    producto_id: str
+    costo: float | None = None       # None = quitar la edicion (vuelve a la cotizacion)
+
+
+@router.put("/costo")
+def guardar_costo(b: CostoIn, user=Depends(requiere("gestionar_compras"))):
+    """Guarda el costo que compras edito para un item (o lo quita). Se compara contra la cotizacion para decidir si la OC pasa por revision; se conserva hasta que se monte la OC."""
+    if b.costo is not None and not (0 < b.costo < 1e12):
+        raise HTTPException(400, "El costo debe ser un número mayor a 0")
+    with pg.begin() as c:
+        if not c.execute(text("SELECT 1 FROM ddmrp.item_compra WHERE empresa = :e AND producto_id = :p"), {"e": b.empresa, "p": b.producto_id}).first():
+            raise HTTPException(404, "Ese ítem no existe en los maestros de compras de esa empresa")
+        if b.costo is None:
+            c.execute(text("DELETE FROM ddmrp.compras_costo WHERE empresa = :e AND producto_id = :p"), {"e": b.empresa, "p": b.producto_id})
+        else:
+            c.execute(text("""INSERT INTO ddmrp.compras_costo (empresa, producto_id, costo, usuario, actualizado) VALUES (:e, :p, :c, :u, now())
+                              ON CONFLICT (empresa, producto_id) DO UPDATE SET costo = EXCLUDED.costo, usuario = EXCLUDED.usuario, actualizado = now()"""),
+                      {"e": b.empresa, "p": b.producto_id, "c": b.costo, "u": usuario_de(user)})
+    evento("compras", usuario_de(user), f"Costo de {b.empresa}/{b.producto_id}: " + ("restablecido a la cotización" if b.costo is None else f"{b.costo:g}"),
+           {"empresa": b.empresa, "producto_id": b.producto_id, "costo": b.costo})
     return {"ok": True}
 
 
