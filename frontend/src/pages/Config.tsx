@@ -120,11 +120,11 @@ export default function Config({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras
     // columnas de solo lectura que declara el maestro (p.ej. items de compras: laboratorio, línea, exhibición, costo, proveedor)
     const lect: ColDef[] = (def.lectura ?? []).map((c): ColDef => {
       const base = { field: c.k, headerName: c.t, headerTooltip: 'Solo lectura (viene de Siesa)' }
-      if (['costo', 'cotizacion_siesa', 'costo_compra', 'costo_otro'].includes(c.k))
+      if (['costo', 'cotizacion_siesa', 'costo_compra', 'costo_otro', 'ultimo_costo'].includes(c.k))
         return { ...base, type: 'numericColumn', width: 130, valueFormatter: (p: any) => p.value == null ? '' : '$' + Math.round(p.value).toLocaleString('es-CO') }
       if (c.k === 'iva_tasa') return { ...base, type: 'numericColumn', width: 120, valueFormatter: (p: any) => p.value == null ? '' : Number(p.value).toLocaleString('es-CO', { maximumFractionDigits: 2 }) + '%',
         headerTooltip: 'Tarifa estimada del grupo impositivo del item; Siesa calcula el IVA real al crear la OC' }
-      return { ...base, width: c.k === 'proveedor' || c.k === 'cotizacion_vigencia' ? 130 : 180 }
+      return { ...base, width: ['proveedor', 'cotizacion_vigencia', 'ultimo_costo_fecha'].includes(c.k) ? 130 : 180 }
     })
     return [...llave, ...desc, ...ed2, ...lect, ...costo, ...est, ...extra]
   }, [def, rowKeys, pCarga, orden.col, orden.desc])
@@ -302,7 +302,7 @@ export default function Config({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras
             <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 200, flex: '0 1 240px' }} value={f.cat} options={['0001', '0002', '0003']}
               getOptionLabel={(c: string) => ({ '0001': '0001 · Productos Funat', '0002': '0002 · Productos de terceros', '0003': '0003 · Maquila Funat' } as Record<string, string>)[c] ?? c}
               onChange={(_, v) => setF({ cat: v })} renderInput={p => <TextField {...p} label="Categoría" />} />
-            <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 220, flex: '0 1 280px' }} value={f.abas} options={['Compra', 'Producción propia', 'Sin proveedor', 'Revisar proveedor']}
+            <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 220, flex: '0 1 280px' }} value={f.abas} options={['Compra', 'Producción propia', 'Sin proveedor']}
               onChange={(_, v) => setF({ abas: v })} renderInput={p => <TextField {...p} label="Abastecimiento" />} />
           </>}
           {def.filtros.empresa && <TextField select size="small" label="Estado en Siesa" value={estado} onChange={e => setEstado(e.target.value)} sx={{ width: 160 }}>

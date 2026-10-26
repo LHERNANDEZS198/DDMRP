@@ -22,7 +22,12 @@ Estados: ✅ listo · 🟡 hecho, sin validar en producción · ⬜ pendiente ·
 - ⬜ Ítems sin proveedor en Siesa (todos los estados, incluye inactivos): 737 de 7.587 de terceros (0002) y 1.501 de 4.271 de Productos Funat (0001); compras debe asignarlos en Siesa para que entren a la necesidad
 - 🟡 Qué se compra: por CATEGORÍA (plan 001) y empresa, en el maestro «Criterios comprables»: Funat (05) compra Terceros (0002) y Maquila (0003), NO Productos Funat (0001); Stores (21) compra todo. (Se descartó la marca «propio» del proveedor: hay maquilas con Laboratorios Funat como proveedor en el ítem)
 - ✅ Servidor: el `.env` de producción ya incluye `001:0003` en `SIESA_CRITERIOS_ITEMS` (la maquila entra al maestro y al ETL); el valor por defecto del código y `.env.example` quedaron igual
-- ⬜ Maquila: revisar que el proveedor del ítem sea el de su cotización (`docs/sql/proveedor_vs_cotizacion.sql`); el maestro de ítems de compras marca «Revisar proveedor» y muestra el costo del otro proveedor sin usarlo
+- 🟡 Proveedor vs cotización (medición previa, incluye inactivos): Terceros 0002 → 7.587 ítems: 737 sin proveedor, 4.998 cotizan con su proveedor, 144 solo con otro, 2.445 sin cotización · Maquila 0003 → 476: 90 sin proveedor, 4 con su proveedor, 65 solo con otro, 407 sin cotización
+- ✅ Regla de proveedor (decidida con compras): lo que importa es la COTIZACIÓN. El proveedor de compra es el de la cotización vigente del ítem (varios proveedores → la de mayor fecha de activación); sin cotización se usa el que trae el ítem en Siesa. El maestro de ítems de compras muestra el origen y el proveedor del ítem
+- 🟡 Validar el proveedor de cotización con el ETL: `proveedor_de_cotizacion`, `proveedor_del_item`, `proveedor_cotizacion_distinto_del_item`, `items_con_varios_proveedores_cotizando`, `items_sin_proveedor`
+- ⬜ Opcional: secciones 4–6 de `docs/sql/proveedor_vs_cotizacion.sql` (cuántos ítems quedan sin cotización y cuántos tienen una OC previa); ya no hacen falta para decidir el proveedor
+- 🟡 Costo cuando NO hay cotización: decidido = último costo de compra (precio de la última OC no anulada, línea aprobada/parcial/cumplida). Costo a usar = manual > cotización de Siesa > última compra; el maestro muestra «Origen del costo». Falta validar con el ETL (`items_con_ultimo_costo`, `aviso_ultimo_costo`)
+- ⬜ Cotizaciones viejas: hay «vigentes» de 2020–2022 (sin fecha final); marcarlas como viejas pasado un umbral (ej. 12 meses) antes de usarlas en una OC
 - ⬜ Zonas con factores parametrizables (prioridad ítem > proveedor > ABC > general)
 
 ## DDMRP (pendientes de la lista original)

@@ -69,9 +69,10 @@ MAESTROS = {
         sin_reemplazo=True, sin_eliminar=True,  # y aqui no se borra nada (ni filas sueltas, ni vaciar, ni reemplazar)
         conservar=("cotizacion", "unidad_pedido", "unidad_empaque"),   # celda vacia = no cambia
         lectura=[("laboratorio", "Laboratorio"), ("categoria", "Categoría"), ("linea", "Línea"), ("exhibicion", "Exhibición"), ("costo", "Costo promedio"),
-                 ("cotizacion_siesa", "Cotización Siesa"), ("cotizacion_vigencia", "Vigente desde"), ("costo_compra", "Costo a usar"),
+                 ("cotizacion_siesa", "Cotización Siesa"), ("cotizacion_vigencia", "Vigente desde"), ("ultimo_costo", "Último costo de compra"),
+                 ("ultimo_costo_fecha", "Fecha última compra"), ("costo_compra", "Costo a usar"), ("origen_costo", "Origen del costo"),
                  ("iva_tasa", "IVA % (estimado)"), ("proveedor", "Proveedor (NIT)"), ("proveedor_nombre", "Nombre del proveedor"),
-                 ("cotizacion_otro", "Cotiza otro proveedor (NIT)"), ("costo_otro", "Costo de ese proveedor"), ("abastecimiento", "Abastecimiento")]),
+                 ("origen_proveedor", "Origen del proveedor"), ("proveedor_item", "Proveedor en el ítem (NIT)"), ("abastecimiento", "Abastecimiento")]),
     "pronostico": dict(
         label="Pronostico (unidades/mes)", tabla="ddmrp.pronostico",
         llave=["empresa", "bodega_id", "producto_id"], editable={"pronostico": "num"},
@@ -161,11 +162,13 @@ AYUDA = {
     "proveedores": "Los proveedores llegan solos del maestro de items de Siesa (cada vez que se traen los items entran los nuevos, con su NIT y nombre) y aqui compras completa lo suyo: lead time en dias "
                    "(prioridad al calcular el CEDI: el del item en «Lead time del CEDI», luego el del proveedor, luego el general), correos (varios separados por ;), activo (1/0 o si/no; vacio = activo), "
                    "pedido minimo (valor), contacto, telefono y notas. Lo que ya escribiste no se pisa al sincronizar. La llave es empresa + NIT + sucursal.",
-    "items-compras": "Los items vienen de Siesa (no se crean ni se borran aqui): referencia, nombre, laboratorio, linea, exhibicion, costo promedio, proveedor, cotizacion de Siesa, IVA y el costo a usar son de solo lectura. "
-                     "La cotizacion de Siesa es la vigente del proveedor del item (costo bruto, con el descuento del primer rango de cantidad) y se actualiza al traer los items; el IVA es una tarifa ESTIMADA: Siesa lo calcula al crear la OC. "
-                     "Compras carga a mano la cotizacion (solo si quiere pisar la de Siesa: el costo a usar es la manual y, si no hay, la de Siesa), la unidad de pedido (multiplo en que se pide, por defecto 1) y la unidad de empaque (unidades por caja, por defecto 1). "
-                     "Categoria = criterio del plan 001 de Siesa (0001 Productos Funat, 0002 Productos de terceros, 0003 Maquila Funat). Abastecimiento: Compra; Produccion propia (la categoria no se compra en esa empresa: maestro Criterios comprables); "
-                     "Sin proveedor; o Revisar proveedor (el proveedor del item en Siesa no tiene cotizacion vigente pero OTRO proveedor si: hay que corregir el proveedor del item o la cotizacion; el costo de ese otro proveedor se muestra aparte y NO se usa solo). "
+    "items-compras": "Los items vienen de Siesa (no se crean ni se borran aqui) y casi todas las columnas son de solo lectura. "
+                     "PROVEEDOR: es el de la COTIZACION vigente del item (si hay cotizaciones de varios proveedores, la de mayor fecha de activacion); solo si no hay cotizacion se usa el que trae el item en Siesa. "
+                     "«Origen del proveedor» dice de donde salio y «Proveedor en el item» muestra el del item (suele estar desactualizado, sobre todo en maquila). "
+                     "COSTO A USAR: la cotizacion manual; si no hay, la cotizacion de Siesa (costo bruto con el descuento del primer rango de cantidad); si tampoco, el ULTIMO COSTO DE COMPRA (precio de la ultima OC aprobada, parcial o cumplida); «Origen del costo» dice cual. "
+                     "El IVA es una tarifa ESTIMADA: Siesa lo calcula al crear la OC. "
+                     "CATEGORIA = criterio del plan 001 de Siesa (0001 Productos Funat, 0002 Productos de terceros, 0003 Maquila Funat). ABASTECIMIENTO: Compra, Produccion propia (la categoria no se compra en esa empresa: maestro Criterios comprables) o Sin proveedor. "
+                     "Compras carga a mano la cotizacion (solo si quiere pisar las demas), la unidad de pedido (multiplo en que se pide, por defecto 1) y la unidad de empaque (unidades por caja, por defecto 1). "
                      "Por Excel: baja el archivo, llena esas tres columnas y subelo; celda vacia = no cambia. Solo se ven los items activos de su empresa.",
     "criterios-comprables": "Que categorias (criterio del plan 001 de Siesa) se COMPRAN en cada empresa: 1 = se compra, 0 = produccion propia (no genera OC). Funat (05): terceros y maquila se compran y Productos Funat no; Stores (21): todo se compra. "
                             "Una categoria que no aparece aqui se trata como compra. El codigo del criterio va como texto de 4 digitos (ej. 0003).",
@@ -220,11 +223,9 @@ def _crit_plan(patron: str) -> str:
 _CATID_SQL = "(SELECT ic.criterio_id FROM ddmrp.item_criterio ic WHERE ic.producto_id = t.producto_id AND ic.plan_id = '001' LIMIT 1)"
 _CAT_SQL = ("(SELECT CASE WHEN cr.nombre IS NULL THEN ic.criterio_id ELSE ic.criterio_id || ' · ' || cr.nombre END FROM ddmrp.item_criterio ic "
             "LEFT JOIN ddmrp.criterio cr ON cr.plan_id = ic.plan_id AND cr.criterio_id = ic.criterio_id WHERE ic.producto_id = t.producto_id AND ic.plan_id = '001' LIMIT 1)")
-# Abastecimiento: Produccion propia (la categoria no se compra en esa empresa, maestro «Criterios comprables»), Sin proveedor, Revisar proveedor (el proveedor del item
-# no tiene cotizacion vigente pero otro proveedor si: item mal asignado en Siesa) o Compra.
+# Abastecimiento: Produccion propia (la categoria no se compra en esa empresa, maestro «Criterios comprables»), Sin proveedor (ni cotizacion ni proveedor en el item) o Compra.
 _ABAS_SQL = (f"CASE WHEN COALESCE((SELECT cc.se_compra FROM ddmrp.categoria_compra cc WHERE cc.empresa = t.empresa AND cc.plan_id = '001' AND cc.criterio_id = {_CATID_SQL}), 1) = 0 "
-             "THEN 'Producción propia' WHEN t.proveedor_id IS NULL THEN 'Sin proveedor' "
-             "WHEN t.cotizacion_siesa IS NULL AND t.cotizacion_otro_nit IS NOT NULL THEN 'Revisar proveedor' ELSE 'Compra' END")
+             "THEN 'Producción propia' WHEN t.proveedor_id IS NULL THEN 'Sin proveedor' ELSE 'Compra' END")
 
 
 def _filtro_lectura(categoria: str | None, abastecimiento: str | None) -> tuple[str, dict]:
@@ -245,9 +246,12 @@ def _lectura_compras() -> tuple[str, str, list[str]]:
     sel = (", CASE WHEN lb.nombre IS NULL THEN mi.categoria ELSE mi.categoria || ' · ' || lb.nombre END AS laboratorio, " + _CAT_SQL + " AS categoria, "
            + _crit_plan("L_NEA%") + " AS linea, " + _crit_plan("EXHIBIC%") + " AS exhibicion, "
            "ci.costo::float8 AS costo, t.cotizacion_siesa::float8 AS cotizacion_siesa, t.cotizacion_fecha AS cotizacion_vigencia, "
-           "COALESCE(t.cotizacion, t.cotizacion_siesa)::float8 AS costo_compra, t.iva_tasa::float8 AS iva_tasa, t.proveedor_id AS proveedor, pv.nombre AS proveedor_nombre, "
-           "t.cotizacion_otro_nit AS cotizacion_otro, t.cotizacion_otro_costo::float8 AS costo_otro, " + _ABAS_SQL + " AS abastecimiento")
-    return join, sel, ["descripcion", "laboratorio", "categoria", "linea", "exhibicion", "costo", "cotizacion_siesa", "cotizacion_vigencia", "costo_compra", "iva_tasa", "proveedor", "proveedor_nombre", "cotizacion_otro", "costo_otro", "abastecimiento"]
+           "t.ultimo_costo::float8 AS ultimo_costo, t.ultimo_costo_fecha AS ultimo_costo_fecha, "
+           "COALESCE(t.cotizacion, t.cotizacion_siesa, t.ultimo_costo)::float8 AS costo_compra, "
+           "CASE WHEN t.cotizacion IS NOT NULL THEN 'Manual' WHEN t.cotizacion_siesa IS NOT NULL THEN 'Cotización Siesa' WHEN t.ultimo_costo IS NOT NULL THEN 'Última compra' ELSE 'Sin costo' END AS origen_costo, "
+           "t.iva_tasa::float8 AS iva_tasa, t.proveedor_id AS proveedor, pv.nombre AS proveedor_nombre, "
+           "CASE t.proveedor_origen WHEN 'cotizacion' THEN 'Cotización' WHEN 'item' THEN 'Ítem' END AS origen_proveedor, t.proveedor_item AS proveedor_item, " + _ABAS_SQL + " AS abastecimiento")
+    return join, sel, ["descripcion", "laboratorio", "categoria", "linea", "exhibicion", "costo", "cotizacion_siesa", "cotizacion_vigencia", "ultimo_costo", "ultimo_costo_fecha", "costo_compra", "origen_costo", "iva_tasa", "proveedor", "proveedor_nombre", "origen_proveedor", "proveedor_item", "abastecimiento"]
 
 
 def _es_admin(user) -> bool:

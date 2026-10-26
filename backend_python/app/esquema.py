@@ -327,7 +327,16 @@ SENTENCIAS_COMPRAS = [
     "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS cotizacion_siesa NUMERIC(16,4)",
     "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS cotizacion_fecha DATE",
     "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS iva_tasa NUMERIC(8,4)",
-    # cotizacion vigente de OTRO proveedor (cuando la del proveedor del item no existe): sirve para revisar items cuyo proveedor en el item de Siesa no es el de la cotizacion
+    # ultimo costo de compra del item (precio de la ultima OC aprobada / parcial / cumplida): costo de respaldo cuando no hay cotizacion
+    "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS ultimo_costo NUMERIC(16,4)",
+    "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS ultimo_costo_fecha DATE",
+    "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS ultimo_costo_nit TEXT",
+    # proveedor de compra: el de la COTIZACION vigente del item (lo que importa a compras) y, si no hay cotizacion, el del item de Siesa (respaldo). Aqui se guarda
+    # el proveedor que trae el item en Siesa (informativo) y de donde salio el proveedor efectivo (proveedor_id/sucursal): 'cotizacion' o 'item'
+    "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS proveedor_item TEXT",
+    "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS sucursal_item TEXT",
+    "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS proveedor_origen TEXT",
+    # (en desuso) cotizacion vigente de OTRO proveedor (cuando la del proveedor del item no existe): sirve para revisar items cuyo proveedor en el item de Siesa no es el de la cotizacion
     "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS cotizacion_otro_nit TEXT",
     "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS cotizacion_otro_costo NUMERIC(16,4)",
     # que categorias (criterio del plan 001) se COMPRAN en cada empresa. Funat (05): terceros y maquila se compran, Productos Funat no (es produccion propia).
