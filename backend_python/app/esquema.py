@@ -393,10 +393,17 @@ SENTENCIAS_COMPRAS = [
          valor NUMERIC(18,2), iva NUMERIC(18,2), total NUMERIC(18,2), items INT, unidades NUMERIC(16,3),
          siesa_consecutivo TEXT, mensaje TEXT, plano TEXT, intentos INT NOT NULL DEFAULT 0,
          creado_por TEXT, creado TIMESTAMPTZ NOT NULL DEFAULT now(), enviado TIMESTAMPTZ, confirmado TIMESTAMPTZ)""",
+    "ALTER TABLE ddmrp.orden_compra ADD COLUMN IF NOT EXISTS bpm_id TEXT",
+    "ALTER TABLE ddmrp.orden_compra ADD COLUMN IF NOT EXISTS requiere_revision BOOLEAN",
+    "ALTER TABLE ddmrp.orden_compra ADD COLUMN IF NOT EXISTS grupo TEXT",
+    "ALTER TABLE ddmrp.orden_compra ADD COLUMN IF NOT EXISTS tomada_por TEXT",
+    "ALTER TABLE ddmrp.orden_compra ADD COLUMN IF NOT EXISTS estado_bpm_fecha TIMESTAMPTZ",
     "CREATE UNIQUE INDEX IF NOT EXISTS orden_compra_ref ON ddmrp.orden_compra (referencia)",
     """CREATE TABLE IF NOT EXISTS ddmrp.orden_compra_linea (
          oc_id BIGINT NOT NULL REFERENCES ddmrp.orden_compra(id) ON DELETE CASCADE, nro INT NOT NULL, producto_id TEXT NOT NULL, descripcion TEXT,
          cantidad NUMERIC(16,3) NOT NULL, costo NUMERIC(16,4) NOT NULL, iva_tasa NUMERIC(6,2), origen_costo TEXT, fecha_entrega DATE, PRIMARY KEY (oc_id, nro))""",
+    "ALTER TABLE ddmrp.orden_compra_linea ADD COLUMN IF NOT EXISTS cantidad_original NUMERIC(16,3)",
+    "ALTER TABLE ddmrp.orden_compra_linea ADD COLUMN IF NOT EXISTS costo_original NUMERIC(16,4)",
 ]
 
 

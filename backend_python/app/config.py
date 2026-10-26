@@ -64,6 +64,18 @@ class Settings(BaseSettings):
     oc_un_movto: str = "12"              # unidad de negocio del movimiento
     oc_um: str = "UND"
     oc_bodega: str = ""                  # vacio = la bodega del CEDI de la empresa (siesa_cedi_bodega / siesa_cedi_bodega_s)
+    # --- Destino de las OC: 'directo' = DDMRP las manda a Siesa (prueba / contingencia) | 'bpm' = DDMRP arma el plano y lo entrega al BPM, que aprueba, crea en Siesa, genera PDF y correo
+    oc_destino: str = "directo"
+    bpm_url: str = ""                    # base del BPM, p.ej. https://bpm.funat.com.co (POST {bpm_url}/api/internal/oc)
+    bpm_secret: str = ""                 # secreto compartido en ambos sentidos (cabecera X-OC-Secret); vacio = los endpoints /api/bpm/* rechazan todo
+    bpm_timeout: int = 20
+    oc_umbral_revision: float = 0.0      # total en pesos desde el cual la OC pasa por revision humana en el BPM; 0 = toda OC se revisa
+    oc_moneda: str = "COP"               # moneda del documento
+    oc_moneda_conv: str = "USD"          # «moneda base de conversion» definida en la compania de Siesa (si no coincide, Siesa rechaza la linea 2); verificar con docs/sql/oc_monedas.sql
+    oc_moneda_local: str = "COP"
+    oc_ind_tasa: int = 0                 # 0 = Siesa calcula las tasas (la base de conversion es USD y el documento va en COP); 1 = respeta las del plano (entonces tasa_conv = tasa COP->USD)
+    oc_tasa_conv: float = 0.0
+    oc_tasa_local: float = 0.0
     oc_decimales_precio: int = 2          # decimales del precio unitario que se manda (la cantidad va entera: la unidad de pedido es UND)
     oc_estado: int = 1                   # 1 = entra aprobada, 0 = en elaboracion
     oc_notas: str = "Orden de compra generada por DDMRP"

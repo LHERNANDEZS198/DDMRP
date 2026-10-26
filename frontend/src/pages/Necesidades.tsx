@@ -13,6 +13,7 @@ import { GuiaNecesidades } from '../guias'
 
 const num = (p: any) => p.value == null ? '' : Number(p.value).toLocaleString('es-CO', { maximumFractionDigits: 2 })
 const ent = (p: any) => p.value == null ? '' : Math.round(Number(p.value)).toLocaleString('es-CO')
+const colorOC = (e: string) => e === 'creada' ? '#2e7d32' : ['plano', 'en_bpm', 'en_revision', 'aprobada'].includes(e) ? '#1565c0' : e === 'incierta' ? '#b45309' : '#c62828'
 const COP = (p: any) => p.value == null ? '' : '$' + Math.round(p.value).toLocaleString('es-CO')
 const MM = (v: number) => '$' + (Math.abs(v) >= 1e6 ? (v / 1e6).toLocaleString('es-CO', { maximumFractionDigits: 1 }) + ' M' : Math.round(v).toLocaleString('es-CO'))
 const ZONA: Record<string, string> = { ROJA: '#c62828', AMARILLA: '#f9a825', VERDE: '#2e7d32', EXCESO: '#1565c0' }
@@ -84,6 +85,8 @@ export default function Necesidades() {
   const [bajando, setBajando] = useState(false); const [recalculando, setRecalculando] = useState(false)
   const [sel, setSel] = useState<Set<string>>(new Set())      // ítems elegidos para la OC (por proveedor o uno a uno)
   const [recarga, setRecarga] = useState(0); const silenciosa = useRef(false)
+  const [ocDestino, setOcDestino] = useState('directo')
+  useEffect(() => { api('/compras/oc/config').then(x => setOcDestino(x.destino)).catch(() => {}) }, [])
   const [ocEnviando, setOcEnviando] = useState(false); const [ocEntiendo, setOcEntiendo] = useState(false)
   const [ocRes, setOcRes] = useState<{ ordenes: any[]; avisos: string[] } | null>(null); const [ocErr, setOcErr] = useState('')
   const [histAbierta, setHistAbierta] = useState(false); const [hist, setHist] = useState<any[]>([]); const [histCarga, setHistCarga] = useState(false)
@@ -359,7 +362,9 @@ export default function Necesidades() {
               })}
             </TableBody>
           </Table>
-          <Alert severity="warning" sx={{ mt: 1.5 }}>Al enviar, la OC se crea <b>en Siesa real</b> (queda aprobada). Si algo sale mal se anula en Siesa. La cantidad y el costo se recalculan en el servidor al enviar. «Vista previa» arma el plano sin enviar nada.</Alert>
+          <Alert severity="warning" sx={{ mt: 1.5 }}>{ocDestino === 'bpm'
+            ? <>Al enviar, la OC pasa al <b>BPM</b>: allí se revisa/aprueba y se crea en Siesa (verás el estado en «OC enviadas»). La cantidad y el costo se recalculan en el servidor. «Vista previa» arma el plano sin enviar nada.</>
+            : <>Al enviar, la OC se crea <b>en Siesa real</b> (queda aprobada). Si algo sale mal se anula en Siesa. La cantidad y el costo se recalculan en el servidor al enviar. «Vista previa» arma el plano sin enviar nada.</>}</Alert>
           {ocErr && <Alert severity="error" sx={{ mt: 1 }}>{ocErr}</Alert>}
           {ocRes && (
             <Box sx={{ mt: 1 }}>
@@ -369,7 +374,7 @@ export default function Necesidades() {
                 <TableBody>{ocRes.ordenes.map((o, k) => (
                   <TableRow key={k}>
                     <TableCell>{o.empresa}</TableCell><TableCell>{o.proveedor_nombre}</TableCell><TableCell>{o.items}</TableCell><TableCell>{COP({ value: o.valor })}</TableCell>
-                    <TableCell sx={{ fontWeight: 700, color: o.estado === 'creada' ? '#2e7d32' : o.estado === 'plano' ? '#1565c0' : '#c62828' }}>{o.estado}</TableCell>
+                    <TableCell sx={{ fontWeight: 700, color: colorOC(o.estado) }}>{o.estado}</TableCell>
                     <TableCell>{o.consecutivo ?? o.referencia ?? ''}</TableCell><TableCell sx={{ maxWidth: 420, wordBreak: 'break-word' }}>{o.mensaje}</TableCell>
                     <TableCell>{o.plano && <Button size="small" onClick={() => bajarPlano(o)}>Bajar plano</Button>}</TableCell>
                   </TableRow>))}</TableBody>
@@ -377,10 +382,10 @@ export default function Necesidades() {
             </Box>)}
         </DialogContent>
         <DialogActions>
-          <Box sx={{ flex: 1, pl: 1 }}><label style={{ fontSize: 13 }}><Checkbox size="small" checked={ocEntiendo} onChange={e => setOcEntiendo(e.target.checked)} />Entiendo que se crea en Siesa real</label></Box>
+          <Box sx={{ flex: 1, pl: 1 }}><label style={{ fontSize: 13 }}><Checkbox size="small" checked={ocEntiendo} onChange={e => setOcEntiendo(e.target.checked)} />{ocDestino === 'bpm' ? 'Entiendo que se envía al BPM' : 'Entiendo que se crea en Siesa real'}</label></Box>
           <Button onClick={() => setOcAbierta(false)}>Cerrar</Button>
           <Button disabled={ocEnviando || !elegidas.length} onClick={() => enviarOC(true)}>Vista previa del plano</Button>
-          <Button variant="contained" disabled={ocEnviando || !ocEntiendo || !elegidas.length} startIcon={<SendIcon />} onClick={() => enviarOC(false)}>{ocEnviando ? 'Enviando…' : 'Crear OC en Siesa'}</Button>
+          <Button variant="contained" disabled={ocEnviando || !ocEntiendo || !elegidas.length} startIcon={<SendIcon />} onClick={() => enviarOC(false)}>{ocEnviando ? 'Enviando…' : ocDestino === 'bpm' ? 'Enviar al BPM' : 'Crear OC en Siesa'}</Button>
         </DialogActions>
       </Dialog>
       <Dialog open={histAbierta} onClose={() => setHistAbierta(false)} maxWidth="xl" fullWidth>
@@ -388,13 +393,13 @@ export default function Necesidades() {
         <DialogContent dividers>
           {histCarga && <Typography variant="body2">Cargando…</Typography>}
           <Table size="small">
-            <TableHead><TableRow>{['#', 'Fecha', 'Emp.', 'Proveedor', 'Ítems', 'Total', 'Estado', 'OC Siesa', 'Referencia', 'Creó', 'Mensaje', ''].map(h => <TableCell key={h} sx={{ fontWeight: 700 }}>{h}</TableCell>)}</TableRow></TableHead>
+            <TableHead><TableRow>{['#', 'Fecha', 'Emp.', 'Proveedor', 'Ítems', 'Total', 'Estado', 'OC Siesa', 'Referencia', 'Creó', 'Grupo / tomó', 'Mensaje', ''].map(h => <TableCell key={h} sx={{ fontWeight: 700 }}>{h}</TableCell>)}</TableRow></TableHead>
             <TableBody>{hist.map(o => (
               <TableRow key={o.id}>
                 <TableCell>{o.id}</TableCell><TableCell>{String(o.creado).slice(0, 16).replace('T', ' ')}</TableCell><TableCell>{o.empresa}</TableCell><TableCell>{o.proveedor_nombre}</TableCell><TableCell>{o.items}</TableCell>
                 <TableCell>{COP({ value: Number(o.total) })}</TableCell>
-                <TableCell sx={{ fontWeight: 700, color: o.estado === 'creada' ? '#2e7d32' : o.estado === 'incierta' ? '#b45309' : '#c62828' }}>{o.estado}</TableCell>
-                <TableCell>{o.siesa_consecutivo ?? ''}</TableCell><TableCell>{o.referencia}</TableCell><TableCell>{o.creado_por}</TableCell>
+                <TableCell sx={{ fontWeight: 700, color: colorOC(o.estado) }}>{o.estado}</TableCell>
+                <TableCell>{o.siesa_consecutivo ?? ''}</TableCell><TableCell>{o.referencia}</TableCell><TableCell>{o.creado_por}</TableCell><TableCell>{[o.grupo, o.tomada_por].filter(Boolean).join(' · ')}</TableCell>
                 <TableCell sx={{ maxWidth: 360, wordBreak: 'break-word' }}>{o.mensaje}</TableCell>
                 <TableCell sx={{ whiteSpace: 'nowrap' }}>
                   {gestiona && ['incierta', 'error'].includes(o.estado) && <Button size="small" onClick={() => accionOC(o.id, 'reconsultar')}>Reconsultar</Button>}

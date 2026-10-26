@@ -106,7 +106,8 @@ def armar_plano(oc: dict, lineas: list[dict]) -> str:
         "f420_id_co": settings.oc_co, "f420_id_tipo_docto": settings.oc_tipo_docto, "f420_consec_docto": 0, "f420_fecha": ymd(oc["fecha"]),
         "f420_id_concepto": 401, "f420_id_grupo_clase_docto": 402, "f420_id_clase_docto": 404, "f420_ind_estado": settings.oc_estado, "f420_ind_impresion": 0,
         "f420_id_tercero_sol_comp": comprador, "f420_id_tercero_prov": oc["proveedor_id"], "f420_id_sucursal_prov": oc["sucursal"], "f420_id_cond_pago": oc["cond_pago"],
-        "f420_ind_tasa": 1, "f420_id_moneda_docto": "COP", "f420_id_moneda_conv": "COP", "f420_tasa_conv": 1, "f420_id_moneda_local": "COP", "f420_tasa_local": 1,
+        "f420_ind_tasa": settings.oc_ind_tasa, "f420_id_moneda_docto": settings.oc_moneda, "f420_id_moneda_conv": settings.oc_moneda_conv, "f420_tasa_conv": settings.oc_tasa_conv,
+        "f420_id_moneda_local": settings.oc_moneda_local, "f420_tasa_local": settings.oc_tasa_local,
         "f420_notas": f"{settings.oc_notas} (OC {oc['id']})", "F_IND_CONTACTO": 1, "f420_num_docto_referencia": referencia(oc["id"]), "f420_ind_consignacion": 0,
         "f420_id_tercero_solicit": comprador,
     }

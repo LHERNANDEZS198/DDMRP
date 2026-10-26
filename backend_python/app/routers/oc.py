@@ -1,7 +1,10 @@
 """Ordenes de compra: crea la OC en Siesa por el web service (plano 0420/0421) desde lo elegido en «Necesidades de compra».
 Una OC por proveedor y empresa. La referencia (DDMRP + id con ceros, 15 car. max) es la llave anti-duplicados: antes de enviar se consulta a Siesa si ya existe.
 Un timeout deja la OC 'incierta' y NO se reenvia hasta confirmar por la referencia que Siesa no la guardo."""
+import json
 import time
+import urllib.error
+import urllib.request
 from datetime import date, datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -152,6 +155,52 @@ def _enviar(oc_id: int, usuario: str | None) -> dict:
     return {"estado": "error", "mensaje": msg}
 
 
+def _enviar_bpm(oc_id: int, usuario: str | None) -> dict:
+    """Modo 'bpm': DDMRP arma el plano y lo ENTREGA al BPM (202). Desde ahi el BPM aprueba, crea en Siesa, genera PDF y correo, y avisa por callback
+    (/api/bpm/oc/{id}/estado). El BPM es idempotente por referencia: reenviar la misma OC no crea otra instancia."""
+    if not (settings.bpm_url and settings.bpm_secret):
+        msg = "Falta configurar el BPM (.env BPM_URL y BPM_SECRET)"
+        _marcar(oc_id, "error", msg); return {"estado": "error", "mensaje": msg}
+    with pg.connect() as c:
+        r = c.execute(text("SELECT * FROM ddmrp.orden_compra WHERE id = :i"), {"i": oc_id}).mappings().first()
+        lineas = _lineas_de(c, oc_id)
+    oc = _oc_dict(dict(r) | {"fecha": date.today()})
+    try:
+        plano = siesa_oc.armar_plano(oc, [dict(l) for l in lineas])
+    except ValueError as ex:
+        _marcar(oc_id, "error", str(ex)); return {"estado": "error", "mensaje": str(ex)}
+    revision = not (settings.oc_umbral_revision > 0 and float(r["total"] or 0) <= settings.oc_umbral_revision)
+    carga = {"id_externo": oc_id, "empresa": r["empresa"], "referencia": r["referencia"], "plano": plano, "proveedor_id": r["proveedor_id"], "sucursal": r["sucursal"],
+             "proveedor_nombre": r["proveedor_nombre"], "cond_pago": r["cond_pago"], "comprador": r["comprador"], "creado_por": r["creado_por"], "valor": float(r["valor"] or 0),
+             "iva": float(r["iva"] or 0), "total": float(r["total"] or 0), "items": r["items"], "requiere_revision": revision,
+             "lineas": [{"producto_id": l["producto_id"], "descripcion": l["descripcion"], "cantidad": l["cantidad"], "costo": l["costo"], "fecha_entrega": str(l["fecha_entrega"])} for l in lineas]}
+    req = urllib.request.Request(settings.bpm_url.rstrip("/") + "/api/internal/oc", data=json.dumps(carga).encode(), method="POST",
+                                 headers={"Content-Type": "application/json", "X-OC-Secret": settings.bpm_secret})
+    try:
+        with urllib.request.urlopen(req, timeout=settings.bpm_timeout) as resp:
+            ans = json.loads(resp.read().decode() or "{}")
+    except urllib.error.HTTPError as e:
+        msg = f"El BPM rechazó la OC (HTTP {e.code}): {e.read().decode('utf-8', 'replace')[:300]}"
+        _marcar(oc_id, "error", msg); return {"estado": "error", "mensaje": msg}
+    except Exception as e:      # el BPM es idempotente por referencia: reintentar es seguro
+        msg = f"No se pudo entregar al BPM ({type(e).__name__}); nada se creó en Siesa. Reintenta."
+        _marcar(oc_id, "error", msg); return {"estado": "error", "mensaje": msg}
+    with pg.begin() as c:
+        c.execute(text("UPDATE ddmrp.orden_compra SET estado = :e, mensaje = :m, bpm_id = :b, requiere_revision = :r, enviado = now(), estado_bpm_fecha = now(), intentos = intentos + 1, plano = :p WHERE id = :i"),
+                  {"e": "en_bpm", "m": "Entregada al BPM" + (" (requiere revisión)" if revision else " (sin revisión)"), "b": str(ans.get("instance_id") or ""), "r": revision, "p": plano, "i": oc_id})
+    evento("compras", usuario, f"OC {r['referencia']} entregada al BPM", {"oc_id": oc_id, "revision": revision})
+    return {"estado": "en_bpm", "mensaje": "Entregada al BPM: " + ("pasa por revisión" if revision else "se crea sin revisión")}
+
+
+def _despachar(oc_id: int, usuario: str | None) -> dict:
+    return _enviar_bpm(oc_id, usuario) if settings.oc_destino == "bpm" else _enviar(oc_id, usuario)
+
+
+@router.get("/config")
+def config_oc():
+    return {"destino": settings.oc_destino, "umbral_revision": settings.oc_umbral_revision}
+
+
 @router.post("/enviar")
 def enviar(b: EnviarIn, user=Depends(requiere("gestionar_compras"))):
     """Crea en Siesa una OC por proveedor y empresa con los items elegidos (cantidad y costo salen del servidor). `solo_plano`: devuelve el plano sin enviar."""
@@ -188,7 +237,7 @@ def enviar(b: EnviarIn, user=Depends(requiere("gestionar_compras"))):
                           {"i": oc_id, "n": n, "p": l["producto_id"], "d": l["descripcion"], "q": l["cantidad"], "c": l["costo"], "t": l["iva_tasa"], "o": l["origen_costo"], "f": l["fecha_entrega"]})
         if i:
             time.sleep(1.5)          # espaciado entre creaciones: Siesa no se lleva bien con rafagas
-        salida.append(res | {"oc_id": oc_id, "referencia": siesa_oc.referencia(oc_id)} | _enviar(oc_id, usuario))
+        salida.append(res | {"oc_id": oc_id, "referencia": siesa_oc.referencia(oc_id)} | _despachar(oc_id, usuario))
     return {"ordenes": salida, "avisos": avisos}
 
 
@@ -201,7 +250,7 @@ def listar(empresa: str | None = None, estado: str | None = None, limit: int = 2
         w.append("estado = :s"); p["s"] = estado
     with pg.connect() as c:
         filas = [dict(r) for r in c.execute(text(f"SELECT id, empresa, proveedor_id, sucursal, proveedor_nombre, cond_pago, comprador, estado, referencia, valor, iva, total, items, unidades, "
-                                                 f"siesa_consecutivo, mensaje, intentos, creado_por, creado, enviado, confirmado FROM ddmrp.orden_compra WHERE {' AND '.join(w)} "
+                                                 f"siesa_consecutivo, mensaje, intentos, creado_por, creado, enviado, confirmado, grupo, tomada_por, estado_bpm_fecha FROM ddmrp.orden_compra WHERE {' AND '.join(w)} "
                                                  f"ORDER BY id DESC LIMIT :lim"), p).mappings()]
     return {"datos": filas}
 
@@ -243,4 +292,4 @@ def reenviar(oc_id: int, user=Depends(requiere("gestionar_compras"))):
         raise HTTPException(409, f"La OC está '{r['estado']}': solo se reenvían las que están en error o incierta")
     if r["estado"] == "incierta" and r["enviado"] and datetime.now(timezone.utc) - r["enviado"] < ESPERA_INCIERTA:
         raise HTTPException(409, "Espera unos minutos y reconsulta: Siesa puede estar terminando de procesar el envío anterior")
-    return _enviar(oc_id, usuario_de(user))
+    return _despachar(oc_id, usuario_de(user))
