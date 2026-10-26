@@ -32,6 +32,7 @@ export const VISTAS = [
   { grupo: 'Análisis', to: '/clasificacion', label: 'Clasificación ABC', ayuda: 'ABC por margen × XYZ por variabilidad, con filtros', req: ['ver_control'] },
   { grupo: 'Análisis', to: '/lanzamientos', label: 'Lanzamientos', ayuda: 'Items nuevos y reingresos al CEDI', req: ['ver_control'] },
   // Compras: las mismas pantallas, abiertas en «Ver solo CEDI». Solo para perfiles con ver_compras; aquí irán los informes propios de compras (necesidades, OC)
+  { grupo: 'Compras', to: '/compras/necesidades', label: 'Necesidades de compra', ayuda: 'Qué pedir según el buffer del CEDI: proveedor, cantidad, costo y valor', req: ['ver_compras'], compras: true },
   { grupo: 'Compras', to: '/salud-inventario', label: 'Sobrestock y salud del CEDI', ayuda: 'Qué sobra, qué falta y dónde hay capital dormido en el CEDI', req: ['ver_control'], compras: true, cedi: true },
   { grupo: 'Compras', to: '/clasificacion', label: 'Clasificación ABC del CEDI', ayuda: 'ABC × XYZ del CEDI (su rotación suma lo que sale a las tiendas)', req: ['ver_control'], compras: true, cedi: true },
   { grupo: 'Compras', to: '/dashboard', label: 'Alertas del CEDI', ayuda: 'Zona roja y lo que hay que atender en el CEDI', req: ['ver_alertas'], compras: true, cedi: true },
@@ -100,7 +101,7 @@ export default function Shell() {
             
             : <Typography noWrap sx={{ flex: 1, minWidth: 0, fontSize: { xs: 15, sm: 16 } }}>{titulo}</Typography>}
           <Box sx={{ flex: 1 }} />
-          {enInformes && (
+          {enInformes && !loc.pathname.startsWith('/compras') && (
             <Tooltip disableInteractive title="Solo el CEDI: sus necesidades, sobrestock y clasificación. La rotación suma lo que sale a las tiendas. Oculta las tiendas en Informes.">
               <FormControlLabel sx={{ color: '#fff', mr: 1, ml: 0, '.MuiFormControlLabel-label': { fontSize: 14, fontWeight: 600 } }}
                 control={<Switch size="small" color="default" checked={soloCediOn()}

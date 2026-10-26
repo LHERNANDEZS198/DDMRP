@@ -331,6 +331,14 @@ SENTENCIAS_COMPRAS = [
     "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS ultimo_costo NUMERIC(16,4)",
     "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS ultimo_costo_fecha DATE",
     "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS ultimo_costo_nit TEXT",
+    # como se redondea la cantidad al multiplo de pedido de ese proveedor: arriba (por defecto), cercano o abajo
+    "ALTER TABLE ddmrp.proveedor ADD COLUMN IF NOT EXISTS redondeo TEXT CHECK (redondeo IS NULL OR redondeo IN ('arriba', 'cercano', 'abajo'))",
+    # configuracion general de compras (valor vacio = el defecto)
+    """CREATE TABLE IF NOT EXISTS ddmrp.compras_config (clave TEXT PRIMARY KEY, valor NUMERIC, detalle TEXT)""",
+    """INSERT INTO ddmrp.compras_config (clave, valor, detalle) VALUES
+         ('pedido_minimo_bloquea', 0, 'Proveedores bajo su pedido minimo: 0 = se muestran con alerta (no se bloquean); 1 = se bloquean y no se muestran'),
+         ('poca_historia_meses', 3, 'Un item con menos de estos meses con venta (ultimos 12) se marca «poca historia»: solo es una alerta, no bloquea')
+       ON CONFLICT DO NOTHING""",
     # proveedor de compra: el de la COTIZACION vigente del item (lo que importa a compras) y, si no hay cotizacion, el del item de Siesa (respaldo). Aqui se guarda
     # el proveedor que trae el item en Siesa (informativo) y de donde salio el proveedor efectivo (proveedor_id/sucursal): 'cotizacion' o 'item'
     "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS proveedor_item TEXT",

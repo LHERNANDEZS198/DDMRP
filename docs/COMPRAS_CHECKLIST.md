@@ -10,15 +10,15 @@ Estados: ✅ listo · 🟡 hecho, sin validar en producción · ⬜ pendiente ·
 - 🟡 Lead time del CEDI: ítem > proveedor del ítem > general (30 d) — maestro «Lead time del CEDI» y «Proveedores»
 - 🟡 Informes en modo «Ver solo CEDI»: Control (foto/cambios/tendencia/mapa), Alertas, Salud y Clasificación
 - ⬜ Retroprueba: validar la necesidad del CEDI contra lo que compras realmente pidió
-- ⬜ Ítems con poca historia → revisión manual; picos atípicos como demanda calificada o recortados; excluir días con quiebre en PT001
-- ⬜ Se pide si flujo neto ≤ TOY hasta TOG, redondeado a múltiplo de compra y respetando MOQ
+- 🟡 Poca historia: alerta (no bloquea) con umbral configurable (3 meses con venta). ⬜ picos atípicos como demanda calificada o recortados; excluir días con quiebre en PT001
+- 🟡 Se pide si flujo neto ≤ TOY hasta TOG (lo calcula el motor); la cantidad a pedir se lleva al múltiplo de la unidad de pedido del ítem con el redondeo del PROVEEDOR (arriba por defecto / cercano / abajo). No hay MOQ por ítem
 - 🟡 Filtro de comprables = «Criterios comprables» (falta usarlo al calcular la necesidad)
-- ⬜ Lead time desde el tiempo de entrega de la cotización (f212_tiempo_entrega; en los ejemplos siempre 8): validar con compras que sea real antes de usarlo como capa del lead time
+- ✅ Lead time: manda el que se cargue en DDMRP (ítem > proveedor > general); NO se usa el tiempo de entrega de la cotización de Siesa (decidido)
 - ✅ Descuentos por rango de cantidad: no se usan hoy en Siesa (no aplica; si algún día se usan, retomar)
 - ✅ Varias cotizaciones vigentes del mismo proveedor: no hay (sección E vacía y 047114 da 1 fila, igual que Siesa); el ETL toma, como Siesa, la de mayor fecha de activación por combinación, solo UND y COP
 - ✅ Cotización validada contra Siesa: 047114 → 365.546,22 igual en el ETL y en la consulta
 - ✅ Cotizaciones en USD: se ignoran (decidido); el ETL solo toma COP
-- ⬜ Impuesto al consumo: queda FUERA del costo (decidido)
+- ✅ Impuesto al consumo: queda FUERA del costo (decidido)
 - ⬜ Ítems sin proveedor en Siesa (todos los estados, incluye inactivos): 737 de 7.587 de terceros (0002) y 1.501 de 4.271 de Productos Funat (0001); compras debe asignarlos en Siesa para que entren a la necesidad
 - 🟡 Qué se compra: por CATEGORÍA (plan 001) y empresa, en el maestro «Criterios comprables»: Funat (05) compra Terceros (0002) y Maquila (0003), NO Productos Funat (0001); Stores (21) compra todo. (Se descartó la marca «propio» del proveedor: hay maquilas con Laboratorios Funat como proveedor en el ítem)
 - ✅ Servidor: el `.env` de producción ya incluye `001:0003` en `SIESA_CRITERIOS_ITEMS` (la maquila entra al maestro y al ETL); el valor por defecto del código y `.env.example` quedaron igual
@@ -30,13 +30,16 @@ Estados: ✅ listo · 🟡 hecho, sin validar en producción · ⬜ pendiente ·
 - ⬜ Cotizaciones viejas: hay «vigentes» de 2020–2022 (sin fecha final); marcarlas como viejas pasado un umbral (ej. 12 meses) antes de usarlas en una OC
 - ⬜ Zonas con factores parametrizables (prioridad ítem > proveedor > ABC > general)
 
+- 🟡 Ítems sin cotización: se muestran con la marca «Sin cotización» y no suman a los totales (el costo de respaldo es la última compra)
+- 🟡 Pedido mínimo del proveedor: config general en Maestros de compras → «Configuración de compras» (`pedido_minimo_bloquea`: 0 alerta / 1 bloquea y no muestra)
+
 ## DDMRP (pendientes de la lista original)
 - ✅ 1. Menú de compras y permisos (`ver_compras`, `cargar_maestros_compras`, perfil Compras, «Maestros» con desplegable)
 - 🟡 2. Maestros: **criterios comprables** · **proveedores** (NIT, sucursal, lead time, correos para/cc, activo, pedido mínimo, contacto, teléfono, notas) · **items de compras** (cotización, unidad de pedido y de empaque; sin crear ni borrar) · lead time del CEDI
 - ⬜ 2b. Maestros que faltan: empaque/MOQ por proveedor-ítem si hace falta, tiendas de compra directa, `item_compra_destino` (etapa 2), factores de zona
-- 🟡 3. Proveedor por ítem desde Siesa: ✅ columnas confirmadas (`f120_rowid_tercero_prov`, `f120_id_sucursal_prov`), sin proveedores huérfanos; falta correr el ETL y ver `items_con_proveedor` · ✅ costo de la cotización validado · 🟡 IVA por ítem (falta validar la tarifa)
-- ⬜ 4. Necesidad a nivel CEDI como informe de compras (lo calculado ya existe; falta la vista de «qué pedir»)
-- ⬜ 5. Vista de necesidades con filtros multi-proveedor y generación de borradores
+- 🟡 3. Proveedor por ítem desde Siesa: ✅ columnas confirmadas (`f120_rowid_tercero_prov`, `f120_id_sucursal_prov`), sin proveedores huérfanos; falta correr el ETL y ver `items_con_proveedor` · ✅ costo de la cotización validado · ✅ IVA por ítem validado
+- 🟡 4. Informe «Necesidades de compra» (Informes > Compras): ítems comprables con necesidad, proveedor, cantidad, costo, valor e IVA estimado; Excel
+- 🟡 5. Vista con filtros multi-proveedor, resumen por proveedor, lista «Sin proveedor» y pedido mínimo (alerta o bloqueo, configurable). ⬜ Generación de borradores (BPM)
 - ⬜ 6. Estado de OC (grupo asignado, días esperando) + conciliación con el BPM y Siesa
 - 🟡 7. Excel por maestro: proveedores e items de compras ya suben y bajan por Excel; ⬜ resto de maestros nuevos
 

@@ -9,7 +9,7 @@ from .esquema import asegurar_esquema
 from .bitacora import cerrar_huerfanas
 from .progreso import Ocupado
 from .orchestrator import pipeline_nocturno
-from .routers import auth, alertas, maestros, despacho, admin, reglas, control, usuarios, log, auditoria, lanzamientos, clasificacion, salud, vistas, diagnostico
+from .routers import auth, alertas, maestros, despacho, admin, reglas, control, usuarios, log, auditoria, lanzamientos, clasificacion, salud, vistas, diagnostico, compras
 from . import consultas
 
 logging.basicConfig(level=logging.INFO)
@@ -64,7 +64,7 @@ async def _registrar_consulta(request: Request, call_next):
     return resp
 
 
-for r in (auth, alertas, maestros, despacho, admin, reglas, control, usuarios, log, auditoria, lanzamientos, clasificacion, salud, vistas, diagnostico):
+for r in (auth, alertas, maestros, despacho, admin, reglas, control, usuarios, log, auditoria, lanzamientos, clasificacion, salud, vistas, diagnostico, compras):
     app.include_router(r.router, prefix="/api")
 
 
