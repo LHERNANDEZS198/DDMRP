@@ -19,7 +19,7 @@ import { useEmpresa } from '../Empresa'
 type Filtros = { tienda: boolean; item: boolean; lab: boolean; texto: boolean; empresa?: boolean; empresa_opc?: boolean; mes?: boolean }
 type Tienda = { bodega_id: string; nombre: string | null; empresa: string | null }
 type Lab = { codigo: string; nombre: string | null }
-type Def = { ayuda: string; filtros: Filtros; todas?: boolean; clave: string; label: string; llave: string[]; editable: string[]; tipos: Record<string, string>; sin_reemplazo: boolean; puede_vaciar?: boolean }
+type Def = { grupo?: string; ayuda: string; filtros: Filtros; todas?: boolean; clave: string; label: string; llave: string[]; editable: string[]; tipos: Record<string, string>; sin_reemplazo: boolean; puede_vaciar?: boolean }
 
 
 const OPERADORES: { v: string; t: string; solo?: 'txt' | 'num' }[] = [
@@ -34,17 +34,19 @@ const resumen = (r: any) =>
   (r.repetidas ? ` · ${r.repetidas} repetidas en el archivo (misma llave: se usó la última)` : '') +
   (r.omitidas ? ` · ${r.omitidas} filas omitidas por datos inválidos (ej. ${r.ejemplos_omitidas?.[0] ?? ''})` : '')
 
-export default function Config() {
-  const { puede } = useYo(); const pCarga = puede('cargar_maestros'); const pSync = puede('sincronizar_siesa')
+/** `grupo`: 'ddmrp' (maestros de abastecimiento a tiendas) o 'compras' (maestros del area de compras): dos pantallas con la misma tabla. */
+export default function Config({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
+  const { puede } = useYo(); const pCarga = puede(grupo === 'compras' ? 'cargar_maestros_compras' : 'cargar_maestros'); const pSync = grupo === 'ddmrp' && puede('sincronizar_siesa')
   const [defs, setDefs] = useState<Def[]>([])
-  const [sel, setSel] = useState('bitacora')
+  const inicial = grupo === 'compras' ? 'leadtime-cedi' : 'bitacora'
+  const [sel, setSel] = useState(inicial)
   const [rows, setRows] = useState<any[]>([])
   const [cargando, setCargando] = useState(true)
   const [total, setTotal] = useState(0)
   // Filtros de la pantalla. Se resuelven en el SERVIDOR (el maestro puede tener cientos de miles de filas y la pantalla solo trae un pedazo),
   // y son los mismos para la descarga a Excel y para "Eliminar todo lo filtrado". Van atados al maestro con que se escribieron
   const VACIO = { tienda: [] as string[], texto: '', lab: [] as string[], mes: '', emp: '', col: '', op: 'eq', val: '' }
-  const [fRaw, setFRaw] = useState({ sel: 'bitacora', ...VACIO })
+  const [fRaw, setFRaw] = useState({ sel: inicial, ...VACIO })
   const f = fRaw.sel === sel ? fRaw : { sel, ...VACIO }
   const setF = (c: Partial<typeof VACIO>) => setFRaw({ ...f, ...c, sel })
   const colActiva = !!(f.col && (f.op === 'vacio' || f.op === 'lleno' || f.val.trim()))
@@ -77,7 +79,7 @@ export default function Config() {
   const def = defs.find(d => d.clave === sel)
 
   const [opc, setOpc] = useState<{ tiendas: Tienda[]; laboratorios: Lab[] }>({ tiendas: [], laboratorios: [] })
-  useEffect(() => { api('/maestros').then(setDefs); api('/maestros/_opciones').then(setOpc).catch(() => {}) }, [])
+  useEffect(() => { api('/maestros').then((x: Def[]) => { const mios = x.filter(d => (d.grupo ?? 'ddmrp') === grupo); setDefs(mios); if (mios.length && !mios.some(d => d.clave === inicial)) setSel(mios[0].clave) }); api('/maestros/_opciones').then(setOpc).catch(() => {}) }, [])
   // solo vale la respuesta de la ultima peticion (el usuario sigue escribiendo o cambia de maestro mientras llegan las anteriores)
   const peticion = useRef(0)
   const cargar = () => {

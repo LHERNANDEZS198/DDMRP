@@ -95,6 +95,8 @@ PERMISOS = [
     ("ver_despacho", "Ver la matriz de despacho", "Despacho"),
     ("aprobar_despacho", "Aprobar / ajustar cantidades a despachar", "Despacho"),
     ("descargar_planos", "Descargar planos de Siesa", "Despacho"),
+    ("ver_compras", "Ver los informes y maestros de compras (CEDI, proveedores, órdenes de compra)", "Compras"),
+    ("cargar_maestros_compras", "Cargar / editar / eliminar en los maestros de compras", "Compras"),
     ("ver_maestros", "Ver y descargar los maestros", "Configurar"),
     ("cargar_maestros", "Cargar / editar / eliminar en los maestros", "Configurar"),
     ("editar_reglas", "Cambiar las reglas de pedido", "Configurar"),

@@ -14,6 +14,7 @@ import ManageAccounts from '@mui/icons-material/ManageAccounts'
 import History from '@mui/icons-material/History'
 import MonitorHeart from '@mui/icons-material/MonitorHeart'
 import FactCheck from '@mui/icons-material/FactCheck'
+import ShoppingCart from '@mui/icons-material/ShoppingCart'
 import { useYo } from './Yo'
 import { NOMBRE_EMPRESA, useEmpresa } from './Empresa'
 import { BannerSalud } from './Salud'
@@ -30,7 +31,11 @@ export const VISTAS = [
   { grupo: 'Análisis', to: '/salud-inventario', label: 'Salud del inventario', ayuda: 'Zona de hoy × importancia del item: qué atender primero', req: ['ver_control'] },
   { grupo: 'Análisis', to: '/clasificacion', label: 'Clasificación ABC', ayuda: 'ABC por margen × XYZ por variabilidad, con filtros', req: ['ver_control'] },
   { grupo: 'Análisis', to: '/lanzamientos', label: 'Lanzamientos', ayuda: 'Items nuevos y reingresos al CEDI', req: ['ver_control'] },
-]
+  // Compras: las mismas pantallas, abiertas en «Ver solo CEDI». Solo para perfiles con ver_compras; aquí irán los informes propios de compras (necesidades, OC)
+  { grupo: 'Compras', to: '/salud-inventario', label: 'Sobrestock y salud del CEDI', ayuda: 'Qué sobra, qué falta y dónde hay capital dormido en el CEDI', req: ['ver_control'], compras: true, cedi: true },
+  { grupo: 'Compras', to: '/clasificacion', label: 'Clasificación ABC del CEDI', ayuda: 'ABC × XYZ del CEDI (su rotación suma lo que sale a las tiendas)', req: ['ver_control'], compras: true, cedi: true },
+  { grupo: 'Compras', to: '/dashboard', label: 'Alertas del CEDI', ayuda: 'Zona roja y lo que hay que atender en el CEDI', req: ['ver_alertas'], compras: true, cedi: true },
+] as { grupo: string; to: string; label: string; ayuda: string; req: string[]; compras?: boolean; cedi?: boolean }[]
 export const NAV = [
   { to: '/control', label: 'Informes', icon: <Insights />, vistas: true, req: ['ver_control', 'ver_alertas'] },
   { to: '/despacho', label: 'Matriz de despacho', icon: <LocalShipping />, req: ['ver_despacho'] },
@@ -38,6 +43,7 @@ export const NAV = [
   { to: '/motor', label: 'Motor DDMRP', icon: <Calculate />, req: ['correr_motor'] },
   { to: '/reglas', label: 'Reglas de pedido', icon: <Rule />, req: ['editar_reglas', 'correr_motor'] },
   { to: '/config', label: 'Maestros', icon: <Storage />, req: ['ver_maestros', 'cargar_maestros', 'sincronizar_siesa'] },
+  { to: '/compras/maestros', label: 'Maestros compras', icon: <ShoppingCart />, req: ['ver_compras', 'cargar_maestros_compras'] },
   { to: '/usuarios', label: 'Usuarios', icon: <ManageAccounts />, req: ['admin_usuarios'] },
   { to: '/log', label: 'Log', icon: <History />, req: ['ver_log'] },
   { to: '/diagnostico', label: 'Diagnóstico', icon: <MonitorHeart />, req: ['ver_diagnostico'] },
@@ -46,7 +52,10 @@ export const NAV = [
 export default function Shell() {
   const { yo, puede } = useYo(); const { empresa, setEmpresa, opciones } = useEmpresa()
   const NAV_OK = NAV.filter(n => puede(...n.req))
-  const VISTAS_OK = VISTAS.filter(v => puede(...v.req))
+  const VISTAS_OK = VISTAS.filter(v => puede(...v.req) && (!v.compras || puede('ver_compras')))
+  // quien ve los dos grupos de maestros tiene UN solo botón «Maestros» con un desplegable (DDMRP / compras); quien ve uno, el botón directo
+  const ambosMaestros = puede('ver_maestros', 'cargar_maestros', 'sincronizar_siesa') && puede('ver_compras', 'cargar_maestros_compras')
+  const [anclaM, setAnclaM] = useState<HTMLElement | null>(null)
   const theme = useTheme(); const movil = useMediaQuery(theme.breakpoints.down('md'))
   const [abierto, setAbierto] = useState(false); const [ancla, setAncla] = useState<HTMLElement | null>(null)
   const loc = useLocation(); const user = getUser(); const nav = useNavigate()
@@ -54,7 +63,9 @@ export default function Shell() {
   const [menuEmp, setMenuEmp] = useState(false) // con el menú abierto el tooltip se apaga: tapaba la primera opción
   const enInformes = VISTAS.some(v => v.to === '/control' ? loc.pathname === '/control' : loc.pathname.startsWith(v.to))
   const titulo = VISTAS.find(v => loc.pathname === v.to)?.label ?? NAV.find(n => !(n as any).vistas && loc.pathname.startsWith(n.to))?.label ?? ''
-  const activo = (n: any) => n.vistas ? enInformes : loc.pathname.startsWith(n.to)
+  const activo = (n: any) => n.vistas ? enInformes : n.to === '/config' && ambosMaestros ? (loc.pathname.startsWith('/config') || loc.pathname.startsWith('/compras/maestros')) : loc.pathname.startsWith(n.to)
+  // las entradas «del CEDI» de Compras activan «Ver solo CEDI» (y recargan si hacía falta); las demás respetan el modo actual
+  const irA = (v: { to: string; cedi?: boolean }) => { setAnclaV(null); if (v.cedi && !soloCediOn()) { setSoloCedi(true); location.href = v.to } else nav(v.to) }
   return (
     <Box sx={{ height: '100dvh', width: '100%', maxWidth: '100vw', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
       <AppBar position="static" color="primary">
@@ -62,15 +73,25 @@ export default function Shell() {
           {movil && <IconButton color="inherit" edge="start" onClick={() => setAbierto(true)}><MenuIcon /></IconButton>}
           <Box component="img" src="/logo-sersa.jpeg" alt="" sx={{ height: 28, borderRadius: 1, bgcolor: 'white', p: .3, flexShrink: 0, display: { xs: 'none', sm: 'block' } }} />
           <Typography sx={{ fontWeight: 700, mr: { xs: 0, md: 2 }, display: { xs: 'none', sm: 'block' } }}>DDMRP</Typography>
-          {!movil ? NAV_OK.map(n => (n as any).vistas ? (
+          {!movil ? NAV_OK.filter(n => !(ambosMaestros && n.to === '/compras/maestros')).map(n => (n as any).vistas ? (
             <Box key={n.to}>
               <Button color="inherit" startIcon={n.icon} endIcon={<ExpandMore />} onClick={e => setAnclaV(e.currentTarget)}
                 sx={{ opacity: activo(n) ? 1 : .75, borderBottom: activo(n) ? '2px solid #fff' : '2px solid transparent', borderRadius: 0 }}>{n.label}</Button>
               <Menu anchorEl={anclaV} open={!!anclaV} onClose={() => setAnclaV(null)}>
                 {[...new Set(VISTAS_OK.map(v => v.grupo))].flatMap(g => [
                   <ListSubheader key={'g' + g} sx={{ lineHeight: '30px', fontWeight: 700, color: 'primary.main' }}>{g}</ListSubheader>,
-                  ...VISTAS_OK.filter(v => v.grupo === g).map(v => <MenuItem key={v.to} selected={loc.pathname === v.to} onClick={() => { setAnclaV(null); nav(v.to) }}>
+                  ...VISTAS_OK.filter(v => v.grupo === g).map(v => <MenuItem key={v.to + (v.cedi ? '#cedi' : '')} selected={loc.pathname === v.to && (!v.cedi || soloCediOn())} onClick={() => irA(v)}>
                     <Box><Box sx={{ fontWeight: 600 }}>{v.label}</Box><Box sx={{ fontSize: 12, color: 'text.secondary' }}>{v.ayuda}</Box></Box></MenuItem>)])}
+              </Menu>
+            </Box>) : n.to === '/config' && ambosMaestros ? (
+            <Box key={n.to}>
+              <Button color="inherit" startIcon={n.icon} endIcon={<ExpandMore />} onClick={e => setAnclaM(e.currentTarget)}
+                sx={{ opacity: activo(n) ? 1 : .75, borderBottom: activo(n) ? '2px solid #fff' : '2px solid transparent', borderRadius: 0 }}>Maestros</Button>
+              <Menu anchorEl={anclaM} open={!!anclaM} onClose={() => setAnclaM(null)}>
+                <MenuItem selected={loc.pathname.startsWith('/config')} onClick={() => { setAnclaM(null); nav('/config') }}>
+                  <Box><Box sx={{ fontWeight: 600 }}>Maestros DDMRP</Box><Box sx={{ fontSize: 12, color: 'text.secondary' }}>Tiendas, lead times, cotas, reglas…</Box></Box></MenuItem>
+                <MenuItem selected={loc.pathname.startsWith('/compras/maestros')} onClick={() => { setAnclaM(null); nav('/compras/maestros') }}>
+                  <Box><Box sx={{ fontWeight: 600 }}>Maestros de compras</Box><Box sx={{ fontSize: 12, color: 'text.secondary' }}>Lead time del CEDI, proveedores…</Box></Box></MenuItem>
               </Menu>
             </Box>) : (
             <Button key={n.to} component={NavLink} to={n.to} color="inherit" startIcon={n.icon}

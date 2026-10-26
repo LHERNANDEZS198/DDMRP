@@ -295,6 +295,10 @@ SENTENCIAS_BITACORA = [
          RETURN NEW;
        END
        $$ LANGUAGE plpgsql""",
+    """INSERT INTO ddmrp.perfil (perfil_id, nombre, descripcion, nivel, permisos, sistema) VALUES
+         ('compras', 'Compras', 'Ve el CEDI (necesidades, sobrestock, clasificacion) y administra los maestros de compras', 'edicion',
+          '{ver_control,ver_alertas,ver_compras,cargar_maestros_compras}', true)
+       ON CONFLICT (perfil_id) DO NOTHING""",
     "DROP TRIGGER IF EXISTS trg_bitacora_nombre ON ddmrp.abast_bitacora",
     "CREATE TRIGGER trg_bitacora_nombre AFTER INSERT OR UPDATE OF descripcion ON ddmrp.abast_bitacora FOR EACH ROW EXECUTE FUNCTION ddmrp.fn_bitacora_nombre()",
 ]

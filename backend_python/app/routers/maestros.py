@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from ..db import pg
 from .. import bitacora
-from ..security import usuario_actual, filtro_sql_permisos, exigir, asignaciones, nivel_efectivo, NIVELES, requiere
+from ..security import usuario_actual, filtro_sql_permisos, exigir, asignaciones, nivel_efectivo, NIVELES, requiere, permisos
 
 router = APIRouter(prefix="/maestros", tags=["maestros"])
 
@@ -45,7 +45,7 @@ MAESTROS = {
     "leadtime-cedi": dict(
         label="Lead time del CEDI (dias): general (*) o por item", tabla="ddmrp.abast_leadtime_cedi",
         llave=["empresa", "producto_id"], editable={"leadtime": "num"},
-        bodega=None, producto="producto_id", global_=True),
+        bodega=None, producto="producto_id", global_=True, grupo="compras"),
     "pronostico": dict(
         label="Pronostico (unidades/mes)", tabla="ddmrp.pronostico",
         llave=["empresa", "bodega_id", "producto_id"], editable={"pronostico": "num"},
@@ -153,6 +153,25 @@ def _def(nombre: str) -> dict:
     return d
 
 
+# Cada maestro pertenece a un grupo: "ddmrp" (abastecimiento a tiendas, el de siempre) o "compras" (lo que usa el area de compras).
+# Cada grupo tiene su propio permiso de ver y de cargar; el administrador tiene todos.
+PERM_GRUPO = {"ddmrp": (("ver_maestros", "cargar_maestros"), ("cargar_maestros",)),
+              "compras": (("ver_compras", "cargar_maestros_compras"), ("cargar_maestros_compras",))}
+
+
+def _grupo(d: dict) -> str:
+    return d.get("grupo", "ddmrp")
+
+
+def _def_para(nombre: str, user, escritura: bool = False) -> dict:
+    """El maestro, solo si el perfil del usuario tiene permiso sobre SU grupo (ver o, con escritura, cargar)."""
+    d = _def(nombre)
+    ver, esc = PERM_GRUPO[_grupo(d)]
+    if not permisos(user["id"]).intersection(esc if escritura else ver):
+        raise HTTPException(403, f"Tu perfil no tiene permiso sobre los maestros de {_grupo(d)}")
+    return d
+
+
 def _es_admin(user) -> bool:
     return any(a["es_admin"] for a in asignaciones(user["id"]))
 
@@ -178,8 +197,9 @@ def _autorizar(user, d: dict, llave: dict, conn):
 
 
 @router.get("")
-def listar_maestros(user=Depends(requiere("ver_maestros", "cargar_maestros"))):
-    return [{"clave": k, "label": v["label"], "llave": v["llave"], "editable": list(v["editable"]),
+def listar_maestros(user=Depends(requiere("ver_maestros", "cargar_maestros", "ver_compras", "cargar_maestros_compras"))):
+    mios = permisos(user["id"])
+    return [{"clave": k, "grupo": _grupo(v), "label": v["label"], "llave": v["llave"], "editable": list(v["editable"]),
              "tipos": v["editable"], "sin_reemplazo": bool(v.get("sin_reemplazo")), "todas": bool(v.get("todas")),
              "ayuda": AYUDA.get(k, ""),
              "puede_vaciar": not v.get("sin_reemplazo") and k not in SIN_VACIAR,
@@ -188,11 +208,11 @@ def listar_maestros(user=Depends(requiere("ver_maestros", "cargar_maestros"))):
                          "empresa": k == "items",                                   # items: la empresa es obligatoria (cada base tiene su catalogo)
                          "empresa_opc": k != "items" and "empresa" in v["llave"],   # los demas: opcional (vacio = las dos)
                          "mes": k == "ventas-mensual"}}
-            for k, v in MAESTROS.items() if not v.get("oculto")]
+            for k, v in MAESTROS.items() if not v.get("oculto") and mios.intersection(PERM_GRUPO[_grupo(v)][0])]
 
 
 @router.get("/_opciones")
-def opciones(user=Depends(requiere("ver_maestros", "cargar_maestros"))):
+def opciones(user=Depends(requiere("ver_maestros", "cargar_maestros", "ver_compras", "cargar_maestros_compras"))):
     """Listas para los filtros de la pantalla: tiendas (con nombre y empresa) y laboratorios. Va antes de /{nombre}."""
     w, p = filtro_sql_permisos(user, "mb.bodega_id", "'*'")
     with pg.connect() as c:
@@ -278,8 +298,8 @@ def _filtros_maestro(nombre: str, d: dict, bodega_id: str | None, q: str | None,
 def leer(nombre: str, response: Response, bodega_id: str | None = None, producto_id: str | None = None, q: str | None = None,
          lab: str | None = None, empresa: str | None = None, mes: str | None = None, estado: str | None = None, limit: int = 20000,
          col: str | None = None, op: str | None = None, val: str | None = None, orden: str | None = None, desc: bool = False,
-         user=Depends(requiere("ver_maestros", "cargar_maestros"))):
-    d = _def(nombre)
+         user=Depends(requiere("ver_maestros", "cargar_maestros", "ver_compras", "cargar_maestros_compras"))):
+    d = _def_para(nombre, user, False)
     cols = d["llave"] + [c for c in d["editable"] if c not in d["llave"]]
     sel = ", ".join(f"t.{c}" for c in cols)
     join, w, p = "", "TRUE", {}
@@ -334,8 +354,8 @@ class Cambio(BaseModel):
 
 
 @router.patch("/{nombre}")
-def editar(nombre: str, cambios: list[Cambio], user=Depends(requiere("cargar_maestros"))):
-    d = _def(nombre)
+def editar(nombre: str, cambios: list[Cambio], user=Depends(requiere("cargar_maestros", "cargar_maestros_compras"))):
+    d = _def_para(nombre, user, True)
     with pg.begin() as c:
         for ch in cambios:
             if ch.campo not in d["editable"]:
@@ -648,18 +668,18 @@ class Carga(BaseModel):
 
 
 @router.post("/{nombre}/carga")
-def cargar(nombre: str, body: Carga, user=Depends(requiere("cargar_maestros"))):
+def cargar(nombre: str, body: Carga, user=Depends(requiere("cargar_maestros", "cargar_maestros_compras"))):
     """Alta/actualizacion masiva (pegar desde Excel). Cada fila trae las columnas llave y las editables."""
-    d = _def(nombre)
+    d = _def_para(nombre, user, True)
     return _importar(nombre, d, [{str(k).strip().lower(): v for k, v in f.items()} for f in body.filas], body.modo, user, body.omitir_invalidas)
 
 
 @router.post("/{nombre}/excel")
 async def subir_excel(nombre: str, archivo: UploadFile = File(...), modo: str = Query("actualizar"),
-                      omitir_invalidas: bool = Query(False), user=Depends(requiere("cargar_maestros"))):
+                      omitir_invalidas: bool = Query(False), user=Depends(requiere("cargar_maestros", "cargar_maestros_compras"))):
     """Carga un .xlsx / .csv. modo=actualizar: crea las filas nuevas y actualiza las existentes (solo las columnas
     que vengan en el archivo). modo=reemplazar: borra el maestro y deja exactamente lo del archivo."""
-    d = _def(nombre)
+    d = _def_para(nombre, user, True)
     datos = await archivo.read()
     if len(datos) > 60_000_000:
         raise HTTPException(400, "Archivo demasiado grande")
@@ -670,11 +690,11 @@ async def subir_excel(nombre: str, archivo: UploadFile = File(...), modo: str = 
 def bajar_excel(nombre: str, bodega_id: str | None = None, q: str | None = None, lab: str | None = None,
                 empresa: str | None = None, mes: str | None = None, estado: str | None = None,
                 col: str | None = None, op: str | None = None, val: str | None = None,
-                user=Depends(requiere("ver_maestros", "cargar_maestros"))):
+                user=Depends(requiere("ver_maestros", "cargar_maestros", "ver_compras", "cargar_maestros_compras"))):
     """Descarga lo que el usuario puede ver, con los mismos encabezados que acepta la carga (sirve de plantilla).
     Maestros por tienda: la tienda va con su codigo y su nombre (la empresa se deduce). Solo trae las filas que ya estan en el maestro:
     nada se agrega solo (para sumar una tienda a la bitacora se escribe o se pega)."""
-    d = _def(nombre)
+    d = _def_para(nombre, user, False)
     bod = d.get("bodega")
     llave_xl = [k for k in d["llave"] if not (bod and k in ("empresa", bod))]
     con_emp = bool(bod) and "empresa" in d["llave"]      # la empresa viaja en el archivo: asi se puede subir a otra base sin tiendas cargadas
@@ -738,10 +758,10 @@ class Eliminar(BaseModel):
 
 
 @router.post("/{nombre}/eliminar")
-def eliminar(nombre: str, body: Eliminar, user=Depends(requiere("cargar_maestros"))):
+def eliminar(nombre: str, body: Eliminar, user=Depends(requiere("cargar_maestros", "cargar_maestros_compras"))):
     """Borra filas por su llave (p.ej. quitar una tienda de un DIA), de a miles en una sola sentencia. No aplica a factores ni parametros.
     Para borrar todo lo que cumple un filtro (sin pasar por la seleccion de la pantalla) esta /vaciar."""
-    d = _def(nombre)
+    d = _def_para(nombre, user, True)
     if d.get("sin_reemplazo") or nombre == "factores":
         raise HTTPException(400, "Este maestro no admite eliminar filas")
     if len(body.llaves) > MAX_ELIMINAR:
@@ -778,10 +798,10 @@ class Vaciar(BaseModel):
 
 
 @router.post("/{nombre}/vaciar")
-def vaciar(nombre: str, body: Vaciar, user=Depends(requiere("cargar_maestros"))):
+def vaciar(nombre: str, body: Vaciar, user=Depends(requiere("cargar_maestros", "cargar_maestros_compras"))):
     """Borra TODAS las filas que cumplen los filtros de la pantalla (no solo las que se ven ni las seleccionadas), sin tope de filas.
     Sin filtros vacia el maestro completo y exige todo=true. Es la forma de dejar un maestro limpio para volverlo a subir."""
-    d = _def(nombre)
+    d = _def_para(nombre, user, True)
     if d.get("sin_reemplazo") or nombre in SIN_VACIAR:
         raise HTTPException(400, "Este maestro no se vacia desde aqui")
     if not _puede_global(user):

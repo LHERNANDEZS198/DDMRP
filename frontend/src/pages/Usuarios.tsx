@@ -203,9 +203,9 @@ function Perfiles({ perfiles, permisos, recargar, setMsg }: { perfiles: Perfil[]
         <Button variant="contained" startIcon={<Add />} onClick={() => setNuevo({ id: '', nombre: '', descripcion: '' })}>Nuevo perfil</Button>
       </Stack>
       <Paper variant="outlined" sx={{ overflow: 'auto' }}>
-        <Table size="small" sx={{ minWidth: 700 }}>
+        <Table size="small" sx={{ minWidth: 700, width: '100%' }}>
           <TableHead><TableRow sx={{ bgcolor: '#eef2e3' }}>
-            <TableCell sx={{ fontWeight: 700, minWidth: 280 }}>Función</TableCell>
+            <TableCell sx={{ fontWeight: 700, minWidth: 320, position: 'sticky', left: 0, zIndex: 2, bgcolor: '#eef2e3' }}>Función</TableCell>
             {perfiles.map(p => (
               <TableCell key={p.perfil_id} align="center" sx={{ minWidth: 120, verticalAlign: 'top' }}>
                 <Tooltip title={p.descripcion || ''}><Box sx={{ fontWeight: 700 }}>{p.nombre}</Box></Tooltip>
@@ -215,7 +215,7 @@ function Perfiles({ perfiles, permisos, recargar, setMsg }: { perfiles: Perfil[]
           </TableRow></TableHead>
           <TableBody>
             <TableRow>
-              <TableCell><b>Nivel sobre sus tiendas</b><Box sx={{ fontSize: 12, color: 'text.secondary' }}>Lectura · Edición · Aprobación</Box></TableCell>
+              <TableCell sx={{ position: 'sticky', left: 0, zIndex: 1, bgcolor: 'background.paper' }}><b>Nivel sobre sus tiendas</b><Box sx={{ fontSize: 12, color: 'text.secondary' }}>Lectura · Edición · Aprobación</Box></TableCell>
               {perfiles.map(p => (
                 <TableCell key={p.perfil_id} align="center">
                   <TextField select size="small" value={p.nivel} disabled={p.permisos.includes('admin')} onChange={e => guardar(p, { nivel: e.target.value })} sx={{ minWidth: 112 }}>
@@ -226,7 +226,7 @@ function Perfiles({ perfiles, permisos, recargar, setMsg }: { perfiles: Perfil[]
               <TableRow key={'g' + g}><TableCell colSpan={perfiles.length + 1} sx={{ bgcolor: '#f6f7f1', fontWeight: 700, fontSize: 12, letterSpacing: .5, textTransform: 'uppercase', color: 'text.secondary' }}>{g}</TableCell></TableRow>,
               ...permisos.filter(x => x.grupo === g).map(x => (
                 <TableRow key={x.clave} hover>
-                  <TableCell>{x.label}</TableCell>
+                  <TableCell sx={{ position: 'sticky', left: 0, zIndex: 1, bgcolor: 'background.paper' }}>{x.label}</TableCell>
                   {perfiles.map(p => {
                     const adm = p.permisos.includes('admin')
                     return <TableCell key={p.perfil_id} align="center" padding="checkbox">
@@ -259,7 +259,7 @@ export default function UsuariosPage() {
   const cargar = () => api('/usuarios/perfiles').then(setPerfiles).catch(e => setMsg('Error: ' + e.message))
   useEffect(() => { cargar(); api('/usuarios/catalogo').then(x => setPermisos(x.permisos)) }, [])
   return (
-    <Box sx={{ maxWidth: 1100, mx: 'auto', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 1.5 }}>
+    <Box sx={{ maxWidth: tab === 1 ? 'none' : 1100, mx: 'auto', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 1.5 }}>   {/* la matriz de perfiles usa todo el ancho; Usuarios queda más angosta */}
       <Typography variant="h6" sx={{ fontWeight: 700 }}>Usuarios y perfiles</Typography>
       <Tabs value={tab} onChange={(_, v) => { setTab(v); cargar() }}><Tab label="Usuarios" /><Tab label="Perfiles y permisos" /></Tabs>
       {tab === 0 ? <Usuarios perfiles={perfiles} setMsg={setMsg} /> : <Perfiles perfiles={perfiles} permisos={permisos} recargar={cargar} setMsg={setMsg} />}

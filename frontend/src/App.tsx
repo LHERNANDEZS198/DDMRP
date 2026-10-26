@@ -33,6 +33,7 @@ export const PANTALLAS = [
   { to: '/motor', req: ['correr_motor'] },
   { to: '/reglas', req: ['editar_reglas', 'correr_motor'] },
   { to: '/config', req: ['ver_maestros', 'cargar_maestros', 'sincronizar_siesa'] },
+  { to: '/compras/maestros', req: ['ver_compras', 'cargar_maestros_compras'] },
   { to: '/usuarios', req: ['admin_usuarios'] },
   { to: '/log', req: ['ver_log'] },
   { to: '/diagnostico', req: ['ver_diagnostico'] },
@@ -77,7 +78,8 @@ export default function App() {
           <Route path="/despacho" element={<Req to="/despacho"><Despacho /></Req>} />
           <Route path="/motor" element={<Req to="/motor"><Motor /></Req>} />
           <Route path="/reglas" element={<Req to="/reglas"><Reglas /></Req>} />
-          <Route path="/config" element={<Req to="/config"><Config /></Req>} />
+          <Route path="/config" element={<Req to="/config"><Config key="ddmrp" grupo="ddmrp" /></Req>} />
+          <Route path="/compras/maestros" element={<Req to="/compras/maestros"><Config key="compras" grupo="compras" /></Req>} />
           <Route path="/usuarios" element={<Req to="/usuarios"><Usuarios /></Req>} />
           <Route path="/auditoria" element={<Req to="/auditoria"><Auditoria /></Req>} />
           <Route path="/log" element={<Req to="/log"><Log /></Req>} />
