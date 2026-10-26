@@ -69,7 +69,7 @@ export default function Necesidades() {
     { field: 'sin_costo', headerName: 'Sin cotización', type: 'numericColumn', width: 120, valueFormatter: ent },
     { field: 'poca_historia', headerName: 'Poca historia', type: 'numericColumn', width: 120, valueFormatter: ent },
     { field: 'redondeo', headerName: 'Redondeo', width: 100 },
-    { field: 'estado', headerName: 'Estado', width: 230, cellStyle: (p: any) => p.value === 'OK' ? { color: '#2e7d32' } : { color: '#b45309', fontWeight: 600 } },
+    { field: 'estado', headerName: 'Estado', width: 230, cellStyle: (p: any): Record<string, string | number> => p.value === 'OK' ? { color: '#2e7d32' } : { color: '#b45309', fontWeight: 600 } },
   ], [])
   const colsDet: ColDef[] = useMemo(() => [
     { field: 'empresa', headerName: 'Emp.', width: 70, pinned: 'left', filter: true },
