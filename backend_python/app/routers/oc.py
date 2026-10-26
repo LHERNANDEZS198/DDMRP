@@ -241,8 +241,32 @@ def enviar(b: EnviarIn, user=Depends(requiere("gestionar_compras"))):
     return {"ordenes": salida, "avisos": avisos}
 
 
+def _sincronizar_estados() -> None:
+    """Trae de Siesa el estado de las OC creadas hace menos de 90 dias (una consulta por empresa). Si Siesa la anulo, aqui queda 'anulada' (y deja de contar:
+    las OC anuladas ya no entran al transito). Un fallo de Siesa no tumba el listado."""
+    try:
+        with pg.connect() as c:
+            filas = c.execute(text("SELECT id, empresa, referencia, estado FROM ddmrp.orden_compra WHERE estado IN ('creada', 'anulada') AND confirmado > now() - interval '90 days'")).mappings().all()
+        por_emp: dict[str, list] = {}
+        for f in filas:
+            por_emp.setdefault(f["empresa"], []).append(f)
+        for emp, lst in por_emp.items():
+            est = siesa_oc.estados_en_siesa(emp, [f["referencia"] for f in lst])
+            with pg.begin() as c:
+                for f in lst:
+                    e = est.get(f["referencia"])
+                    if not e:
+                        continue
+                    nuevo = "anulada" if e["cod"] == 9 else "creada"
+                    c.execute(text("UPDATE ddmrp.orden_compra SET estado_siesa = :s, estado_siesa_fecha = now(), estado = :e, siesa_consecutivo = COALESCE(siesa_consecutivo, :c) WHERE id = :i"),
+                              {"s": e["estado"], "e": nuevo, "c": e["consecutivo"], "i": f["id"]})
+    except Exception:    # noqa: BLE001 -- el historial sigue sirviendo con lo ultimo que se supo
+        pass
+
+
 @router.get("")
 def listar(empresa: str | None = None, estado: str | None = None, limit: int = 200):
+    _sincronizar_estados()
     w, p = ["TRUE"], {"lim": min(max(limit, 1), 1000)}
     if empresa:
         w.append("empresa = :e"); p["e"] = empresa
@@ -250,7 +274,7 @@ def listar(empresa: str | None = None, estado: str | None = None, limit: int = 2
         w.append("estado = :s"); p["s"] = estado
     with pg.connect() as c:
         filas = [dict(r) for r in c.execute(text(f"SELECT id, empresa, proveedor_id, sucursal, proveedor_nombre, cond_pago, comprador, estado, referencia, valor, iva, total, items, unidades, "
-                                                 f"siesa_consecutivo, mensaje, intentos, creado_por, creado, enviado, confirmado, grupo, tomada_por, estado_bpm_fecha FROM ddmrp.orden_compra WHERE {' AND '.join(w)} "
+                                                 f"siesa_consecutivo, mensaje, intentos, creado_por, creado, enviado, confirmado, grupo, tomada_por, estado_bpm_fecha, estado_siesa, estado_siesa_fecha FROM ddmrp.orden_compra WHERE {' AND '.join(w)} "
                                                  f"ORDER BY id DESC LIMIT :lim"), p).mappings()]
     return {"datos": filas}
 

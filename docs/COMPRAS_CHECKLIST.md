@@ -65,7 +65,7 @@ Estados: ✅ listo · 🟡 hecho, sin validar en producción · ⬜ pendiente ·
 - ✅ 1 ventas del CEDI (query de rotación PT001) · ✅ 3 OC abiertas
 - ✅ 2 cotización / costo + tarifa de IVA por ítem (SP `sp_cotizacion_consulta_compra`; se replica su lógica sin llamarlo)
 - ✅ 4 proveedor por ítem (columnas confirmadas con `proveedor_item.sql`)
-- 🟡 5 Conector de OC: **directo al web service de Siesa** (WSUNOEE `ImportarXML`, plano de ancho fijo 0420 v5 / 0421 v5, como ChaTest con terceros), NO Generic Transfer. Construido: `siesa_oc.py` + `routers/oc.py` + botón en Necesidades (vista previa del plano, crear OC, historial). ⏸ Falta probar en Siesa real (sin ambiente de pruebas; las de prueba se anulan a mano) y llenar `.env` (`SIESA_WS_*`, Stores aparte). Pareja de versiones documento v5 / movimiento v5 por confirmar con el primer envío; si Siesa la rechaza, plan B = Generic Transfer (`docs/OC_CONECTOR.md`)
+- 🟡 5 Conector de OC: **directo al web service de Siesa** (WSUNOEE `ImportarXML`, plano de ancho fijo 0420 v5 / 0421 v5, como ChaTest con terceros), NO Generic Transfer. Construido: `siesa_oc.py` + `routers/oc.py` + botón en Necesidades (vista previa del plano, crear OC, historial). ✅ Primer envío real OK (26-oct): documento v5 + movimiento v5 pasan; moneda de conversión = USD con `ind_tasa=0`; Siesa tarda ~30 s por OC. ⏸ Falta revisar el resultado en Siesa (proveedor/sucursal, cond. pago, IVA, bodega, comprador) y anularla; Stores sigue pendiente de `SIESA_WS_*_S`
 - ⏸ 6 plantilla del PDF · ⏸ 7 umbral de aprobación y grupos aprobadores
 
 ## Validaciones pendientes antes de confiar
@@ -90,3 +90,6 @@ Estados: ✅ listo · 🟡 hecho, sin validar en producción · ⬜ pendiente ·
 - ⬜ Si una cotización trae decimales distintos de 2 en COP, ajustar `OC_DECIMALES_PRECIO`
 - ⬜ Estado de la OC en Siesa (aprobada/anulada/cumplida) en el historial: hoy solo se lee el consecutivo al crear
 - ⏸ BPM (aprobación, PDF, correo): ahora la OC entra aprobada directo; el flujo de aprobación queda para después
+
+- ✅ 26-oct: el 413 al subir maestros era el nginx del host (client_max_body_size); subir a 30m en /etc/nginx y recargar
+- 🟡 Modo BPM: DDMRP ya tiene `OC_DESTINO=bpm|directo`, `POST /api/bpm/oc/{id}/estado` y `/plano` (contrato en `docs/OC_BPM_CONTRATO.md`); falta el lado BPM (router 202, acción crear en Siesa, BPMN)

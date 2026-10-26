@@ -219,3 +219,28 @@ def buscar_en_siesa(empresa: str, ref: str) -> dict | None:
 
 def fecha_entrega(hoy: date, lead_time) -> date:
     return hoy + timedelta(days=int(round(float(lead_time or 0))))
+
+
+ESTADO_SIESA = {0: "en elaboración", 1: "aprobada", 2: "cumplida", 3: "cumplida", 9: "anulada"}
+
+
+def estados_en_siesa(empresa: str, referencias: list[str]) -> dict[str, dict]:
+    """Estado actual en Siesa de varias OC, por referencia: {ref: {estado: 'anulada'|..., consecutivo, cod}}. Las que no aparecen no estan en el resultado.
+    Si hay varias con la misma referencia (p.ej. una anulada y una nueva) gana la NO anulada mas reciente."""
+    if not referencias:
+        return {}
+    db = settings.siesa_db_s if empresa == "21" else settings.siesa_db
+    if not db:
+        return {}
+    marcas = ", ".join(f":r{i}" for i in range(len(referencias)))
+    params = {f"r{i}": r for i, r in enumerate(referencias)} | {"cia": settings.siesa_cia}
+    with siesa_engine(db).connect() as c:
+        filas = c.execute(text(f"SELECT RTRIM(f420_num_docto_referencia) AS ref, RTRIM(f420_id_tipo_docto) AS tipo, f420_consec_docto AS consec, f420_ind_estado AS cod "
+                               f"FROM t420_cm_oc_docto WHERE f420_id_cia = :cia AND RTRIM(f420_num_docto_referencia) IN ({marcas}) ORDER BY f420_rowid"), params).mappings().all()
+    out: dict[str, dict] = {}
+    for f in filas:    # orden ascendente: la ultima fila pisa, salvo que la nueva sea anulada y ya hubiera una viva
+        previo = out.get(f["ref"])
+        if previo and f["cod"] == 9 and previo["cod"] != 9:
+            continue
+        out[f["ref"]] = {"cod": int(f["cod"]), "estado": ESTADO_SIESA.get(int(f["cod"]), f"código {int(f['cod'])}"), "consecutivo": f"{f['tipo']}-{int(f['consec'])}"}
+    return out

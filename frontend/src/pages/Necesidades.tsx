@@ -13,7 +13,7 @@ import { GuiaNecesidades } from '../guias'
 
 const num = (p: any) => p.value == null ? '' : Number(p.value).toLocaleString('es-CO', { maximumFractionDigits: 2 })
 const ent = (p: any) => p.value == null ? '' : Math.round(Number(p.value)).toLocaleString('es-CO')
-const colorOC = (e: string) => e === 'creada' ? '#2e7d32' : ['plano', 'en_bpm', 'en_revision', 'aprobada'].includes(e) ? '#1565c0' : e === 'incierta' ? '#b45309' : '#c62828'
+const colorOC = (e: string) => e === 'creada' ? '#2e7d32' : e === 'anulada' ? '#757575' : ['plano', 'en_bpm', 'en_revision', 'aprobada'].includes(e) ? '#1565c0' : e === 'incierta' ? '#b45309' : '#c62828'
 const COP = (p: any) => p.value == null ? '' : '$' + Math.round(p.value).toLocaleString('es-CO')
 const MM = (v: number) => '$' + (Math.abs(v) >= 1e6 ? (v / 1e6).toLocaleString('es-CO', { maximumFractionDigits: 1 }) + ' M' : Math.round(v).toLocaleString('es-CO'))
 const ZONA: Record<string, string> = { ROJA: '#c62828', AMARILLA: '#f9a825', VERDE: '#2e7d32', EXCESO: '#1565c0' }
@@ -393,13 +393,13 @@ export default function Necesidades() {
         <DialogContent dividers>
           {histCarga && <Typography variant="body2">Cargando…</Typography>}
           <Table size="small">
-            <TableHead><TableRow>{['#', 'Fecha', 'Emp.', 'Proveedor', 'Ítems', 'Total', 'Estado', 'OC Siesa', 'Referencia', 'Creó', 'Grupo / tomó', 'Mensaje', ''].map(h => <TableCell key={h} sx={{ fontWeight: 700 }}>{h}</TableCell>)}</TableRow></TableHead>
+            <TableHead><TableRow>{['#', 'Fecha', 'Emp.', 'Proveedor', 'Ítems', 'Total', 'Estado', 'OC Siesa', 'En Siesa', 'Referencia', 'Creó', 'Grupo / tomó', 'Mensaje', ''].map(h => <TableCell key={h} sx={{ fontWeight: 700 }}>{h}</TableCell>)}</TableRow></TableHead>
             <TableBody>{hist.map(o => (
               <TableRow key={o.id}>
                 <TableCell>{o.id}</TableCell><TableCell>{String(o.creado).slice(0, 16).replace('T', ' ')}</TableCell><TableCell>{o.empresa}</TableCell><TableCell>{o.proveedor_nombre}</TableCell><TableCell>{o.items}</TableCell>
                 <TableCell>{COP({ value: Number(o.total) })}</TableCell>
                 <TableCell sx={{ fontWeight: 700, color: colorOC(o.estado) }}>{o.estado}</TableCell>
-                <TableCell>{o.siesa_consecutivo ?? ''}</TableCell><TableCell>{o.referencia}</TableCell><TableCell>{o.creado_por}</TableCell><TableCell>{[o.grupo, o.tomada_por].filter(Boolean).join(' · ')}</TableCell>
+                <TableCell>{o.siesa_consecutivo ?? ''}</TableCell><TableCell>{o.estado_siesa ?? ''}</TableCell><TableCell>{o.referencia}</TableCell><TableCell>{o.creado_por}</TableCell><TableCell>{[o.grupo, o.tomada_por].filter(Boolean).join(' · ')}</TableCell>
                 <TableCell sx={{ maxWidth: 360, wordBreak: 'break-word' }}>{o.mensaje}</TableCell>
                 <TableCell sx={{ whiteSpace: 'nowrap' }}>
                   {gestiona && ['incierta', 'error'].includes(o.estado) && <Button size="small" onClick={() => accionOC(o.id, 'reconsultar')}>Reconsultar</Button>}

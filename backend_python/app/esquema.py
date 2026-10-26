@@ -393,6 +393,8 @@ SENTENCIAS_COMPRAS = [
          valor NUMERIC(18,2), iva NUMERIC(18,2), total NUMERIC(18,2), items INT, unidades NUMERIC(16,3),
          siesa_consecutivo TEXT, mensaje TEXT, plano TEXT, intentos INT NOT NULL DEFAULT 0,
          creado_por TEXT, creado TIMESTAMPTZ NOT NULL DEFAULT now(), enviado TIMESTAMPTZ, confirmado TIMESTAMPTZ)""",
+    "ALTER TABLE ddmrp.orden_compra ADD COLUMN IF NOT EXISTS estado_siesa TEXT",
+    "ALTER TABLE ddmrp.orden_compra ADD COLUMN IF NOT EXISTS estado_siesa_fecha TIMESTAMPTZ",
     "ALTER TABLE ddmrp.orden_compra ADD COLUMN IF NOT EXISTS bpm_id TEXT",
     "ALTER TABLE ddmrp.orden_compra ADD COLUMN IF NOT EXISTS requiere_revision BOOLEAN",
     "ALTER TABLE ddmrp.orden_compra ADD COLUMN IF NOT EXISTS grupo TEXT",
