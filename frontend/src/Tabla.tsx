@@ -20,8 +20,8 @@ const celdaTsv = (v: unknown): string => {
 /** AG Grid con mensaje mientras llegan los datos, texto propio cuando de verdad no hay filas y selección de celdas como en Excel:
  *  clic y arrastre (o Mayús+clic) para marcar un bloque, Ctrl+A para todo y Ctrl+C para copiarlo (se pega en Excel con sus columnas y filas).
  *  Si se selecciona todo con Ctrl+A, la copia incluye los encabezados. La selección por rangos de AG Grid es de pago, por eso se hace aquí. */
-export default function Tabla({ cargando, textoCargando = 'Cargando datos…', vacio = 'Sin resultados', onGridReady, onCellMouseDown, onCellMouseOver, onRowDataUpdated, defaultColDef, ...p }:
-  AgGridReactProps & { cargando?: boolean; textoCargando?: string; vacio?: string }) {
+export default function Tabla({ cargando, textoCargando = 'Cargando datos…', vacio = 'Sin resultados', memoria, onGridReady, onCellMouseDown, onCellMouseOver, onRowDataUpdated, defaultColDef, ...p }:
+  AgGridReactProps & { cargando?: boolean; textoCargando?: string; vacio?: string; memoria?: string }) {
   const api = useRef<GridApi | null>(null)
   const raiz = useRef<HTMLDivElement>(null)
   const ancla = useRef<Pos | null>(null)
@@ -29,15 +29,33 @@ export default function Tabla({ cargando, textoCargando = 'Cargando datos…', v
   const arrastrando = useRef(false)
   const todo = useRef(false)
 
+  // Memoria de la vista (orden, ancho, columnas fijas y orden de filas): con `memoria="nombre"` se guarda en este navegador cada vez que el usuario la cambia y se
+  // vuelve a poner al abrir la tabla y cada vez que la pantalla redefine las columnas. Asi un cambio de datos (editar una celda, recargar) nunca desacomoda lo que el usuario movió.
+  const LSM = memoria ? 'ddmrp_vista_' + memoria : ''
+  const guardarVista = () => { try { if (LSM && api.current) localStorage.setItem(LSM, JSON.stringify(api.current.getColumnState())) } catch { /* sin almacenamiento */ } }
+  const aplicarVista = () => {
+    try { const raw = LSM && localStorage.getItem(LSM); if (raw && api.current) api.current.applyColumnState({ state: JSON.parse(raw), applyOrder: true }) } catch { /* vista guardada invalida: se ignora */ }
+  }
+
   const columnas = (): Column[] => api.current?.getAllDisplayedColumns() ?? []
   const refrescar = () => api.current?.refreshCells({ force: true, suppressFlash: true })
   const limpiar = () => { if (ancla.current) { ancla.current = fin.current = null; todo.current = false; refrescar() } }
 
+  // `defaultColDef` suele llegar como un objeto nuevo en cada render de la pantalla ({ resizable: true, ... }): si cambia de identidad AG Grid redefine las columnas y se
+  // pierde el orden / ancho que movio el usuario. Se conserva la misma referencia mientras su contenido sea igual.
+  const dcdPrev = useRef(defaultColDef)
+  const dcdEstable = useMemo(() => {
+    const a: any = dcdPrev.current, b: any = defaultColDef
+    const igual = a === b || (!!a && !!b && Object.keys(a).length === Object.keys(b).length && Object.keys(b).every(k => a[k] === b[k]))
+    if (!igual) dcdPrev.current = b
+    return dcdPrev.current
+  }, [defaultColDef])
+
   // el resaltado va como regla de clase de cada columna (la que defina una columna propia la reemplaza: no pasa en estas pantallas)
   const colDefBase = useMemo(() => ({
-    ...defaultColDef,
+    ...dcdEstable,
     cellClassRules: {
-      ...defaultColDef?.cellClassRules,
+      ...dcdEstable?.cellClassRules,
       'celda-rango': (q: { node: { rowIndex: number | null }; column: Column }) => {
         const a = ancla.current, f = fin.current
         if (!a || !f || q.node.rowIndex == null) return false
@@ -45,7 +63,7 @@ export default function Tabla({ cargando, textoCargando = 'Cargando datos…', v
         return r >= Math.min(a.r, f.r) && r <= Math.max(a.r, f.r) && c >= Math.min(a.c, f.c) && c <= Math.max(a.c, f.c)
       },
     },
-  }), [defaultColDef])
+  }), [dcdEstable])
 
   const posDe = (e: CellMouseDownEvent | CellMouseOverEvent): Pos | null => {
     const c = columnas().indexOf(e.column as Column)
@@ -109,7 +127,10 @@ export default function Tabla({ cargando, textoCargando = 'Cargando datos…', v
   return (
     <div ref={raiz} style={{ display: 'contents' }}>
       <AgGridReact {...p} defaultColDef={colDefBase} loading={!!cargando}
-        onGridReady={(e: GridReadyEvent) => { api.current = e.api; onGridReady?.(e) }}
+        onGridReady={(e: GridReadyEvent) => { api.current = e.api; aplicarVista(); onGridReady?.(e) }}
+        onNewColumnsLoaded={() => aplicarVista()}
+        onColumnMoved={e => { if (e.finished) guardarVista() }} onColumnResized={e => { if (e.finished) guardarVista() }}
+        onColumnPinned={() => guardarVista()} onColumnVisible={() => guardarVista()} onSortChanged={() => guardarVista()}
         onCellMouseDown={alBajar} onCellMouseOver={alPasar}
         onRowDataUpdated={e => { limpiar(); onRowDataUpdated?.(e) }}
         overlayLoadingTemplate={cargandoHtml(textoCargando)}

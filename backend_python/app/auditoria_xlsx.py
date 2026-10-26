@@ -35,6 +35,12 @@ PR = {k: f"Parametros!$B${i + 2}" for i, (k, _, _) in enumerate(PARAMS)}
 TRAMO0 = len(PARAMS) + 5   # primera fila de tramos en Parametros (1 encabezado + params + vacia + titulo + encabezado)
 
 
+def _RED(C, r) -> str:
+    """Formula de Excel: la NECESIDAD llevada al multiplo de la unidad de pedido con el redondeo del proveedor (arriba, cercano o abajo)."""
+    n, u = C('nec', r), f"MAX({C('upe', r)},1)"
+    return (f"({u}*IF({C('red', r)}=\"abajo\",ROUNDDOWN({n}/{u},0),IF({C('red', r)}=\"cercano\",ROUND({n}/{u},0),ROUNDUP({n}/{u},0))))")
+
+
 def _tramos_formula(tramos: list[dict], x: str, offset: int) -> str:
     """Replica los SI(Y(x>=desde; x<=hasta)...) del Excel: el primer tramo incluye 'desde', los demas son (desde, hasta]."""
     f = "0"
@@ -118,6 +124,7 @@ def construir(filas: list[dict], meses: list[str], params: dict, factores: list[
     if compras:   # capa de compra: del pedido del buffer a lo que se le pide al proveedor
         col("upe", "Unidad de pedido", "Múltiplo en que se pide al proveedor (maestro de ítems de compras; por defecto 1)", "e", 10, "#,##0.##")
         col("red", "Redondeo", "arriba · cercano · abajo (maestro de proveedores; por defecto arriba)", "e", 10)
+        col("moq", "MOQ (u.)", "Cantidad mínima de compra del ítem (maestro de ítems de compras; por defecto 1): si el pedido queda por debajo se sube a este mínimo al múltiplo de pedido", "e", 9, "#,##0.##")
         col("pedir", "A PEDIR (fórmula)", "NECESIDAD llevada al múltiplo de la unidad de pedido según el redondeo del proveedor", "f", 12, "#,##0")
         col("costo", "Costo", "Cotización manual › cotización de Siesa › última compra (maestro de ítems de compras)", "e", 12, "#,##0.00")
         col("orig", "Origen del costo", "De dónde sale el costo; vacío = sin cotización (no suma a los totales)", "e", 14)
@@ -185,8 +192,7 @@ def construir(filas: list[dict], meses: list[str], params: dict, factores: list[
         "basem": lambda r: f"=IF(AND({C('base', r)}>0,{C('base', r)}<{p['cantidad_minima']}),0,{C('base', r)})",
         "vef": lambda r: f"=IF({p['sumar_vectorizacion']}=1,{C('vect', r)},0)",
         "nec": lambda r: f"=IF({C('cond', r)}=1,0,{C('basem', r)}+{C('vef', r)})",
-        "pedir": lambda r: (f"=IF({C('nec', r)}<=0,0,MAX({C('upe', r)},1)*IF({C('red', r)}=\"abajo\",ROUNDDOWN({C('nec', r)}/MAX({C('upe', r)},1),0),"
-                            f"IF({C('red', r)}=\"cercano\",ROUND({C('nec', r)}/MAX({C('upe', r)},1),0),ROUNDUP({C('nec', r)}/MAX({C('upe', r)},1),0))))"),
+        "pedir": lambda r: (f"=IF({C('nec', r)}<=0,0,IF({_RED(C, r)}<=0,0,MAX({_RED(C, r)},MAX({C('upe', r)},1)*ROUNDUP(MAX({C('moq', r)},1)/MAX({C('upe', r)},1),0))))"),
         "valor": lambda r: f"=IF({C('costo', r)}=\"\",\"\",{C('pedir', r)}*{C('costo', r)})",
         "iva": lambda r: f"=IF({C('valor', r)}=\"\",\"\",IF({C('ivap', r)}=\"\",0,{C('valor', r)}*{C('ivap', r)}/100))",
         "tot": lambda r: f"=IF({C('valor', r)}=\"\",\"\",{C('valor', r)}+{C('iva', r)})",
@@ -226,7 +232,7 @@ def construir(filas: list[dict], meses: list[str], params: dict, factores: list[
                     "promo": "promo", "vect": "vectorizacion", "inv": "inventario", "tr": "en_transito", "dc": "demanda_calificada", "cond": "condenado", "robj": "regla_objetivo",
                     "m_adu": "adu", "m_toyaj": "toy_aj", "m_togaj": "tog_aj", "m_zona": "zona", "m_nec": "necesidad", "m_cedi": "stock_cedi",
                     "m_asig": "cantidad_sugerida", "m_est": "estado", "m_apr": "cantidad_aprobada",
-                    "upe": "unidad_pedido", "red": "redondeo", "costo": "costo", "orig": "origen_costo", "ivap": "iva_tasa"}
+                    "upe": "unidad_pedido", "red": "redondeo", "moq": "moq", "costo": "costo", "orig": "origen_costo", "ivap": "iva_tasa"}
     fuentes = {kc: [] for kc in idx}
     for i, fila in enumerate(filas):
         r = R0 + i
@@ -297,7 +303,7 @@ def construir(filas: list[dict], meses: list[str], params: dict, factores: list[
         txt = [t.replace("bodega × referencia", "CEDI × referencia").replace("'Auditoría'", f"'{titulo_hoja}'") for t in txt]
         txt += ["", "EN COMPRAS (CEDI):",
                 "  · La «bodega» es el CEDI: sus ventas son la suma de las ventas de TODAS las tiendas que abastece más la venta directa del CEDI (mayorista / digital); los traslados no cuentan.",
-                "  · Lead time = el del ítem en «Lead time del CEDI», si no el del proveedor, si no el general (30 días). Frecuencia 1 día, unidad de despacho 1, sin cotas ni promoción.",
+                "  · Lead time = el del ítem en «Lead time del CEDI», si no el del proveedor, si no el general (8 días). Frecuencia = la de compra del proveedor (si no, la general de compras, 15 días), unidad de despacho 1, sin cotas ni promoción.",
                 "  · Tránsito = saldo de las órdenes de compra abiertas hacia el CEDI. El pronóstico del CEDI es la suma del de las tiendas que abastece.",
                 "  · NECESIDAD (fórmula) es lo que pide el buffer; A PEDIR la lleva al múltiplo de la unidad de pedido con el redondeo del proveedor; el valor usa el costo (cotización) y el IVA es una tarifa estimada."]
     else:

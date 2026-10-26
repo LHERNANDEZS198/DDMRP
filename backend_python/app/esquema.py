@@ -262,7 +262,7 @@ SENTENCIAS_CEDI = [
     # (comprado o maquilado; la produccion propia no se modela): luego se afina por proveedor / item en este maestro.
     "CREATE TABLE IF NOT EXISTS ddmrp.abast_leadtime_cedi (empresa TEXT NOT NULL, producto_id TEXT NOT NULL DEFAULT '*', "
     "leadtime NUMERIC(8,2) NOT NULL CHECK (leadtime >= 0), PRIMARY KEY (empresa, producto_id))",
-    "INSERT INTO ddmrp.abast_leadtime_cedi (empresa, producto_id, leadtime) SELECT e, '*', 30 FROM (VALUES ('05'), ('21')) v(e) ON CONFLICT DO NOTHING",
+    "INSERT INTO ddmrp.abast_leadtime_cedi (empresa, producto_id, leadtime) SELECT e, '*', 8 FROM (VALUES ('05'), ('21')) v(e) ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('oc_dias_historia', 365, 'Antiguedad maxima (dias) de las ordenes de compra abiertas que cuentan como transito: una OC vieja sin cerrar en Siesa no debe inflar el flujo neto') ON CONFLICT DO NOTHING",
     # de donde sale la demanda de cada CEDI: TODAS las tiendas de la bitacora de su empresa (su venta) y el propio CEDI (venta directa mayorista / digital).
     # Un CEDI por empresa (el primero del maestro), igual que el reparto y la matriz de despacho, que tampoco miran la columna cedi de la bitacora:
@@ -331,14 +331,27 @@ SENTENCIAS_COMPRAS = [
     "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS ultimo_costo NUMERIC(16,4)",
     "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS ultimo_costo_fecha DATE",
     "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS ultimo_costo_nit TEXT",
+    # cada cuantos dias se le compra a este proveedor: define el tamaño de la zona verde del CEDI (vacio = el general de compras_config, 15 dias)
+    "ALTER TABLE ddmrp.proveedor ADD COLUMN IF NOT EXISTS frecuencia NUMERIC(8,2) CHECK (frecuencia IS NULL OR frecuencia > 0)",
+    # cantidad minima de compra del item en unidades (MOQ): si el pedido queda por debajo se sube a este minimo (al multiplo de pedido)
+    "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS moq NUMERIC(14,3) DEFAULT 1 CHECK (moq IS NULL OR moq >= 1)",
     # como se redondea la cantidad al multiplo de pedido de ese proveedor: arriba (por defecto), cercano o abajo
     "ALTER TABLE ddmrp.proveedor ADD COLUMN IF NOT EXISTS redondeo TEXT CHECK (redondeo IS NULL OR redondeo IN ('arriba', 'cercano', 'abajo'))",
     # configuracion general de compras (valor vacio = el defecto)
     """CREATE TABLE IF NOT EXISTS ddmrp.compras_config (clave TEXT PRIMARY KEY, valor NUMERIC, detalle TEXT)""",
     """INSERT INTO ddmrp.compras_config (clave, valor, detalle) VALUES
          ('pedido_minimo_bloquea', 0, 'Proveedores bajo su pedido minimo: 0 = se muestran con alerta (no se bloquean); 1 = se bloquean y no se muestran'),
-         ('poca_historia_meses', 3, 'Un item con menos de estos meses con venta (ultimos 12) se marca «poca historia»: solo es una alerta, no bloquea')
+         ('poca_historia_meses', 3, 'Un item con menos de estos meses con venta (ultimos 12) se marca «poca historia»: solo es una alerta, no bloquea'),
+         ('frecuencia_defecto', 15, 'Frecuencia de compra (dias) de los proveedores que no tienen la suya: cada cuanto se les compra; define el tamaño de la zona verde del CEDI')
        ON CONFLICT DO NOTHING""",
+    # el lead time general pasa de 30 a 8 dias (una sola vez: lo que se cambie despues no se pisa)
+    "CREATE TABLE IF NOT EXISTS ddmrp.migracion_marca (clave TEXT PRIMARY KEY, fecha TIMESTAMPTZ NOT NULL DEFAULT now())",
+    """DO $$ BEGIN
+         IF NOT EXISTS (SELECT 1 FROM ddmrp.migracion_marca WHERE clave = 'leadtime_general_8') THEN
+           UPDATE ddmrp.abast_leadtime_cedi SET leadtime = 8 WHERE producto_id = '*' AND leadtime = 30;
+           INSERT INTO ddmrp.migracion_marca (clave) VALUES ('leadtime_general_8');
+         END IF;
+       END $$""",
     # cantidad a pedir que compras edito en «Necesidades de compra»: vive aparte del calculo, asi que sobrevive a las corridas del motor y se conserva hasta que se monte la OC
     """CREATE TABLE IF NOT EXISTS ddmrp.compras_cantidad (
          empresa TEXT NOT NULL, producto_id TEXT NOT NULL, cantidad NUMERIC(14,3) NOT NULL CHECK (cantidad >= 0), nota TEXT,

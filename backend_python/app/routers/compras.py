@@ -23,7 +23,7 @@ CAT_NOM = ("(SELECT CASE WHEN cr.nombre IS NULL THEN ci.criterio_id ELSE ci.crit
            "LEFT JOIN ddmrp.criterio cr ON cr.plan_id = ci.plan_id AND cr.criterio_id = ci.criterio_id WHERE ci.producto_id = s.producto_id AND ci.plan_id = '001' LIMIT 1)")
 # se compra si la categoria no esta marcada como produccion propia en esa empresa (sin fila o vacio = se compra)
 COMPRABLE = f"COALESCE((SELECT cc.se_compra FROM ddmrp.categoria_compra cc WHERE cc.empresa = s.empresa AND cc.plan_id = '001' AND cc.criterio_id = {CAT_ID}), 1) <> 0"
-CONFIG_DEFECTO = {"pedido_minimo_bloquea": 0.0, "poca_historia_meses": 3.0}
+CONFIG_DEFECTO = {"pedido_minimo_bloquea": 0.0, "poca_historia_meses": 3.0, "frecuencia_defecto": 15.0}
 
 
 def _csv(v: str | None) -> list[str]:
@@ -46,6 +46,12 @@ def _redondear(q: float, u: float, modo: str) -> float:
     k = q / u
     n = math.floor(k + 1e-9) if modo == "abajo" else math.floor(k + 0.5) if modo == "cercano" else math.ceil(k - 1e-9)
     return float(max(n, 0) * u)
+
+
+def _subir(q: float, u: float) -> float:
+    """Cantidad llevada SIEMPRE hacia arriba al multiplo de la unidad de pedido (para el MOQ)."""
+    u = u if u and u > 0 else 1.0
+    return float(math.ceil(q / u - 1e-9) * u)
 
 
 def _mes_hace(meses: int) -> str:
@@ -79,6 +85,7 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
              COALESCE(s.regla_objetivo, 0)::int AS regla_objetivo, s.condenado::int AS condenado,
              s.adu::float8 AS adu, s.lead_time::float8 AS lead_time, s.inventario::float8 AS inventario, s.en_transito::float8 AS en_transito, s.flujo_neto::float8 AS flujo_neto,
              s.tor::float8 AS tor, s.toy_aj::float8 AS toy_aj, s.tog_aj::float8 AS tog_aj, s.pct_buffer::float8 AS pct_buffer, s.zona::text AS zona, s.cantidad_sugerida::float8 AS qty_buffer,
+             COALESCE(NULLIF(ic.moq, 0), 1)::float8 AS moq, pv.frecuencia::float8 AS frecuencia_proveedor,
              COALESCE(NULLIF(ic.unidad_pedido, 0), 1)::float8 AS unidad_pedido, COALESCE(NULLIF(ic.unidad_empaque, 0), 1)::float8 AS unidad_empaque,
              COALESCE(ic.cotizacion, ic.cotizacion_siesa, ic.ultimo_costo)::float8 AS costo,
              CASE WHEN ic.cotizacion IS NOT NULL THEN 'Manual' WHEN ic.cotizacion_siesa IS NOT NULL THEN 'Cotización' WHEN ic.ultimo_costo IS NOT NULL THEN 'Última compra' END AS origen_costo,
@@ -111,7 +118,10 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
     poca = cfg.get("poca_historia_meses", 3.0)
     grupos: dict[tuple, dict] = {}
     for f in filas:
-        f["qty_calculada"] = _redondear(f["qty_buffer"], f["unidad_pedido"], f["redondeo"])
+        base = _redondear(f["qty_buffer"], f["unidad_pedido"], f["redondeo"])
+        moq_m = _subir(f["moq"], f["unidad_pedido"])
+        f["subio_moq"] = base > 0 and base < moq_m                    # el pedido quedaba por debajo del MOQ del ítem: se sube al mínimo (al múltiplo de pedido)
+        f["qty_calculada"] = moq_m if f["subio_moq"] else base
         f["editada"] = f["qty_manual"] is not None
         f["qty_pedir"] = f["qty_manual"] if f["editada"] else f["qty_calculada"]   # lo que compras edito manda sobre el calculo
         costo = f["costo"]
@@ -129,12 +139,14 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
             u = f["unidad_pedido"]
             if u > 1 and abs(f["qty_manual"] / u - round(f["qty_manual"] / u)) > 1e-9: alertas.append("No es múltiplo de la unidad de pedido")
             if f["qty_manual"] > 2 * max(f["qty_buffer"], 1): alertas.append("Más del doble de lo que pide el buffer")
+            if f["qty_manual"] < f["moq"]: alertas.append(f"Menor que el MOQ ({f['moq']:g})")
         elif f["qty_pedir"] <= 0: alertas.append("Redondeo a 0")
+        elif f["subio_moq"]: alertas.append(f"Subió al MOQ ({f['moq']:g})")
         f["alertas"] = "; ".join(alertas)
         k = (f["empresa"], f["proveedor_id"], f["sucursal"])
         g = grupos.setdefault(k, {"empresa": f["empresa"], "proveedor_id": f["proveedor_id"], "sucursal": f["sucursal"], "proveedor_nombre": f["proveedor_nombre"],
                                   "activo": bool(f["prov_activo"]), "redondeo": f["redondeo"], "pedido_minimo": f["pedido_minimo"],
-                                  "leadtime": f["leadtime_proveedor"], "items": 0, "unidades": 0.0, "valor": 0.0, "iva": 0.0, "total": 0.0, "sin_costo": 0, "poca_historia": 0, "editadas": 0})
+                                  "leadtime": f["leadtime_proveedor"], "frecuencia": f["frecuencia_proveedor"] if f["frecuencia_proveedor"] is not None else cfg.get("frecuencia_defecto", 15.0), "items": 0, "unidades": 0.0, "valor": 0.0, "iva": 0.0, "total": 0.0, "sin_costo": 0, "poca_historia": 0, "editadas": 0})
         g["items"] += 1; g["unidades"] += f["qty_pedir"]
         if f["editada"]: g["editadas"] += 1
         if f["valor"] is None: g["sin_costo"] += 1
@@ -216,7 +228,7 @@ def necesidades_excel(empresa: str | None = None, proveedores: str | None = None
     excel.hoja(wb, "Por proveedor", [
         {"t": "NIT", "k": "proveedor_id", "w": 13}, {"t": "Proveedor", "k": "proveedor_nombre", "w": 36}, {"t": "Empresa", "k": "empresa", "w": 9}, {"t": "Sucursal", "k": "sucursal", "w": 9},
         {"t": "Ítems", "k": "items", "f": "int", "w": 8}, {"t": "Unidades", "k": "unidades", "f": "int", "w": 11}, {"t": "Valor sin IVA", "k": "valor", "f": "cop", "w": 15},
-        {"t": "IVA estimado", "k": "iva", "f": "cop", "w": 14}, {"t": "Total", "k": "total", "f": "cop", "w": 15}, {"t": "Lead time (d)", "k": "leadtime", "f": "int", "w": 10}, {"t": "Pedido mínimo", "k": "pedido_minimo", "f": "cop", "w": 14},
+        {"t": "IVA estimado", "k": "iva", "f": "cop", "w": 14}, {"t": "Total", "k": "total", "f": "cop", "w": 15}, {"t": "Lead time (d)", "k": "leadtime", "f": "int", "w": 10}, {"t": "Frecuencia de compra (d)", "k": "frecuencia", "f": "int", "w": 11}, {"t": "Pedido mínimo", "k": "pedido_minimo", "f": "cop", "w": 14},
         {"t": "Ítems sin cotización", "k": "sin_costo", "f": "int", "w": 12}, {"t": "Poca historia", "k": "poca_historia", "f": "int", "w": 11},
         {"t": "Redondeo", "k": "redondeo", "w": 10}, {"t": "Estado", "k": "estado", "w": 30}], r["proveedores"], fijar=2)
     excel.hoja(wb, "Detalle", [
@@ -225,7 +237,7 @@ def necesidades_excel(empresa: str | None = None, proveedores: str | None = None
         {"t": "Zona", "k": "zona", "w": 11, "zona": True}, {"t": "ADU (u/mes)", "k": "adu", "f": "dec1", "w": 11}, {"t": "Lead time (d)", "k": "lead_time", "f": "int", "w": 9},
         {"t": "Inventario", "k": "inventario", "f": "int", "w": 11}, {"t": "Tránsito", "k": "en_transito", "f": "int", "w": 10}, {"t": "Flujo neto", "k": "flujo_neto", "f": "int", "w": 11},
         {"t": "TOG aj.", "k": "tog_aj", "f": "int", "w": 10}, {"t": "Cobertura (días)", "k": "cobertura_dias", "f": "dec1", "w": 11},
-        {"t": "Pide el buffer", "k": "qty_buffer", "f": "int", "w": 11}, {"t": "Unidad de pedido", "k": "unidad_pedido", "f": "dec2", "w": 10}, {"t": "A pedir", "k": "qty_pedir", "f": "int", "w": 10},
+        {"t": "Pide el buffer", "k": "qty_buffer", "f": "int", "w": 11}, {"t": "Unidad de pedido", "k": "unidad_pedido", "f": "dec2", "w": 10}, {"t": "MOQ (u.)", "k": "moq", "f": "dec2", "w": 9}, {"t": "A pedir", "k": "qty_pedir", "f": "int", "w": 10},
         {"t": "Calculada", "k": "qty_calculada", "f": "int", "w": 10}, {"t": "Editada por compras", "k": "qty_manual", "f": "int", "w": 11},
         {"t": "Costo", "k": "costo", "f": "dec2", "w": 12}, {"t": "Origen del costo", "k": "origen_costo", "w": 14}, {"t": "Costo vigente desde", "k": "costo_fecha", "w": 14},
         {"t": "Valor sin IVA", "k": "valor", "f": "cop", "w": 14}, {"t": "IVA % (est.)", "k": "iva_tasa", "f": "dec1", "w": 9}, {"t": "Total", "k": "total", "f": "cop", "w": 14}, {"t": "Alertas", "k": "alertas", "w": 34}], r["filas"], fijar=2)

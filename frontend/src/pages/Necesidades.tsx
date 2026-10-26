@@ -18,6 +18,7 @@ const MM = (v: number) => '$' + (Math.abs(v) >= 1e6 ? (v / 1e6).toLocaleString('
 const ZONA: Record<string, string> = { ROJA: '#c62828', AMARILLA: '#f9a825', VERDE: '#2e7d32', EXCESO: '#1565c0' }
 const CATEGORIAS: Record<string, string> = { '0001': '0001 · Productos Funat', '0002': '0002 · Productos de terceros', '0003': '0003 · Maquila Funat' }
 const ZONAS = ['ROJA', 'AMARILLA', 'VERDE', 'EXCESO']
+const COL_DEF = { resizable: true, sortable: true }   // con identidad fija: un objeto nuevo en cada render hace que AG Grid redefina las columnas y se pierda el orden que movió el usuario
 const ENLACE = { color: '#1565c0', cursor: 'pointer', textDecoration: 'underline' }   // celdas en las que se hace clic
 
 type Resp = { config: Record<string, number>; ejecucion: { id: number; fecha_calculo: string } | null; aviso: string | null; filas: any[]; proveedores: any[]; bloqueados: any[]
@@ -168,7 +169,8 @@ export default function Necesidades() {
       headerTooltip: 'La casilla elige TODOS los ítems de este proveedor para la OC. Clic en el NIT: abre el proveedor en el maestro (lead time, correos, redondeo…)' },
     { field: 'proveedor_nombre', headerName: 'Proveedor', width: 280, pinned: 'left', filter: true, cellStyle: ENLACE, headerTooltip: 'Haz clic en un proveedor para ver sus ítems' },
     { field: 'empresa', headerName: 'Emp.', width: 70, filter: true, headerTooltip: 'Empresa (05 Funat, 21 Stores): cada una tiene su CEDI' },
-    { field: 'leadtime', headerName: 'Lead time (d)', type: 'numericColumn', width: 120, valueFormatter: ent, headerTooltip: 'Lead time del proveedor en el maestro de proveedores (vacío = se usa el del ítem o el general de 30 días)' },
+    { field: 'leadtime', headerName: 'Lead time (d)', type: 'numericColumn', width: 120, valueFormatter: ent, headerTooltip: 'Lead time del proveedor en el maestro de proveedores (vacío = se usa el del ítem o el general de 8 días)' },
+    { field: 'frecuencia', headerName: 'Frecuencia (d)', type: 'numericColumn', width: 120, valueFormatter: ent, headerTooltip: 'Cada cuántos días se le compra a este proveedor (maestro de proveedores; vacío = el general de Configuración de compras, 15). Define el tamaño de la zona verde: más frecuencia, pedidos más grandes' },
     { field: 'items', headerName: 'Ítems', type: 'numericColumn', width: 90, valueFormatter: ent, cellStyle: ENLACE, headerTooltip: 'Ítems con necesidad de este proveedor. Clic para verlos' },
     { headerName: 'Elegidos', width: 100, type: 'numericColumn', headerTooltip: 'Ítems de este proveedor que elegiste para la OC',
       valueGetter: (p: any) => p.data ? (p.context.itemsDeProv.get(kProv(p.data)) ?? []).filter((i: any) => p.context.sel.has(kItem(i))).length : null },
@@ -195,7 +197,7 @@ export default function Necesidades() {
     { field: 'zona', headerName: 'Zona', width: 100, filter: true, cellStyle: (p: any) => ({ color: ZONA[p.value] ?? '#333', fontWeight: 700 }), headerTooltip: 'Zona del buffer del CEDI: roja (urgente), amarilla (reponer), verde, exceso' },
     { field: 'adu', headerName: 'ADU (u/mes)', type: 'numericColumn', width: 110, valueFormatter: num, cellStyle: ENLACE,
       headerTooltip: 'Rotación mensual del CEDI: venta de las tiendas que abastece + venta directa. Clic: ver la rotación por tienda y CEDI' },
-    { field: 'lead_time', headerName: 'Lead time (d)', type: 'numericColumn', width: 110, valueFormatter: ent, headerTooltip: 'Días de reposición que usa el buffer: ítem, proveedor o general (30)' },
+    { field: 'lead_time', headerName: 'Lead time (d)', type: 'numericColumn', width: 110, valueFormatter: ent, headerTooltip: 'Días de reposición que usa el buffer: ítem, proveedor o general (8)' },
     { field: 'inventario', headerName: 'Inventario', type: 'numericColumn', width: 110, valueFormatter: ent, cellStyle: ENLACE,
       headerTooltip: 'Stock disponible del CEDI. Clic: ver el saldo por tienda y CEDI' },
     { field: 'en_transito', headerName: 'Tránsito', type: 'numericColumn', width: 100, valueFormatter: ent, headerTooltip: 'Saldo de órdenes de compra abiertas hacia el CEDI' },
@@ -204,6 +206,7 @@ export default function Necesidades() {
     { field: 'cobertura_dias', headerName: 'Cobertura (días)', type: 'numericColumn', width: 120, valueFormatter: num, headerTooltip: 'Días que dura el inventario actual al ritmo del ADU' },
     { field: 'qty_buffer', headerName: 'Pide el buffer', type: 'numericColumn', width: 120, valueFormatter: ent, headerTooltip: 'Lo que pide el buffer del CEDI (hasta el tope verde), antes del múltiplo de pedido' },
     { field: 'unidad_pedido', headerName: 'Unidad de pedido', type: 'numericColumn', width: 130, valueFormatter: num, headerTooltip: 'Múltiplo en que se pide al proveedor (maestro de ítems de compras)' },
+    { field: 'moq', headerName: 'MOQ (u.)', type: 'numericColumn', width: 100, valueFormatter: num, headerTooltip: 'Cantidad mínima de compra del ítem (maestro de ítems de compras; por defecto 1). Si el pedido queda por debajo, sube a este mínimo' },
     { field: 'qty_calculada', headerName: 'Calculada', type: 'numericColumn', width: 110, valueFormatter: ent, headerTooltip: 'Lo que pide el buffer llevado al múltiplo de pedido con el redondeo del proveedor (sin tus ediciones)' },
     { field: 'qty_pedir', headerName: gestiona ? 'A pedir (editable)' : 'A pedir', type: 'numericColumn', width: 140, valueFormatter: ent, editable: gestiona,
       valueParser: (p: any) => { const t = String(p.newValue ?? '').trim().replace(',', '.'); if (t === '') return null; const n = Number(t); return Number.isFinite(n) && n >= 0 ? n : p.oldValue },
@@ -217,7 +220,7 @@ export default function Necesidades() {
     { field: 'iva_tasa', headerName: 'IVA % (est.)', type: 'numericColumn', width: 110, valueFormatter: num, headerTooltip: 'Tarifa estimada del grupo impositivo del ítem' },
     { field: 'total', headerName: 'Total', type: 'numericColumn', width: 130, valueFormatter: COP, headerTooltip: 'Valor + IVA estimado' },
     { field: 'alertas', headerName: 'Alertas', width: 320, cellStyle: (p: any) => p.value ? { color: '#b45309' } : undefined,
-      headerTooltip: 'Sin cotización · Poca historia · Proveedor inactivo · Redondeo a 0 · Cantidad editada (no múltiplo, más del doble). No bloquean: son para revisar' },
+      headerTooltip: 'Sin cotización · Poca historia · Proveedor inactivo · Redondeo a 0 · Subió al MOQ · Cantidad editada (no múltiplo, más del doble, menor que el MOQ). No bloquean: son para revisar' },
   ], [gestiona])
   const colsSin: ColDef[] = useMemo(() => [
     { field: 'producto_id', headerName: 'SKU', width: 100, pinned: 'left', filter: true, headerTooltip: 'Código del producto' },
@@ -284,6 +287,9 @@ export default function Necesidades() {
         <Tooltip title="Elige todos los ítems que se ven con los filtros actuales" placement="top" disableInteractive>
           <span><Button size="small" disabled={!d.filas.length} onClick={() => setSel(new Set(d.filas.map(kItem)))}>Elegir todo lo filtrado</Button></span></Tooltip>
         <Button size="small" disabled={!sel.size} onClick={() => setSel(new Set())}>Quitar elección</Button>
+        <Tooltip title="Vuelve las columnas de las tres pestañas a su orden, ancho y columnas fijas originales (tu vista se guarda sola en este navegador)" placement="top" disableInteractive>
+          <Button size="small" onClick={() => { ['necesidades_proveedor', 'necesidades_detalle', 'necesidades_sin_proveedor'].forEach(k => { try { localStorage.removeItem('ddmrp_vista_' + k) } catch { /* nada */ } })
+            for (const a of [apiDet.current, apiProv.current]) { try { if (a && !a.isDestroyed()) a.resetColumnState() } catch { /* tabla ya cerrada */ } } }}>Restablecer columnas</Button></Tooltip>
         <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>La casilla del NIT elige todo el proveedor; la del SKU, un ítem. Puedes combinar ambas.</Typography>
         <Tooltip title={gestiona ? 'Revisa por proveedor lo que vas a montar: cantidades, valores y alertas' : 'Tu perfil no tiene permiso para enviar órdenes de compra'} placement="top" disableInteractive>
           <span><Button variant="contained" size="small" startIcon={<SendIcon />} disabled={!elegidas.length || !gestiona} onClick={() => setOcAbierta(true)}>Revisar y enviar OC</Button></span></Tooltip>
@@ -295,15 +301,15 @@ export default function Necesidades() {
         {d.bloqueados.length > 0 && <Tab label={<Tooltip title="Proveedores que quedaron bajo su pedido mínimo y se bloquearon (configuración de compras)" placement="top" disableInteractive><span>Bloqueados por pedido mínimo ({d.bloqueados.length})</span></Tooltip>} />}
       </Tabs>
       <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 320 }}>
-        {tab === 0 && <Tabla textoCargando="Calculando…" vacio="Sin necesidades con estos filtros" rowData={d.proveedores} columnDefs={colsProv} cargando={cargando} tooltipShowDelay={300}
+        {tab === 0 && <Tabla memoria="necesidades_proveedor" textoCargando="Calculando…" vacio="Sin necesidades con estos filtros" rowData={d.proveedores} columnDefs={colsProv} cargando={cargando} tooltipShowDelay={300}
           context={ctx} getRowId={(p: any) => kProv(p.data)} onGridReady={(e: any) => { apiProv.current = e.api }}
-          defaultColDef={{ resizable: true, sortable: true }} onCellClicked={alProveedor} />}
-        {tab === 1 && <Tabla textoCargando="Calculando…" vacio="Sin necesidades con estos filtros" rowData={d.filas} columnDefs={colsDet} cargando={cargando} rowBuffer={20} tooltipShowDelay={300}
+          defaultColDef={COL_DEF} onCellClicked={alProveedor} />}
+        {tab === 1 && <Tabla memoria="necesidades_detalle" textoCargando="Calculando…" vacio="Sin necesidades con estos filtros" rowData={d.filas} columnDefs={colsDet} cargando={cargando} rowBuffer={20} tooltipShowDelay={300}
           context={ctx} getRowId={(p: any) => kItem(p.data)} onGridReady={(e: any) => { apiDet.current = e.api }} stopEditingWhenCellsLoseFocus
-          defaultColDef={{ resizable: true, sortable: true }} onCellClicked={alDetalle} onCellValueChanged={alEditar} />}
-        {tab === 2 && <Tabla textoCargando="Calculando…" vacio="Todos los ítems con necesidad tienen proveedor" rowData={d.sin_proveedor.filas} columnDefs={colsSin} cargando={cargando} tooltipShowDelay={300}
-          defaultColDef={{ resizable: true, sortable: true }} />}
-        {tab === 3 && <Tabla vacio="Ninguno" rowData={d.bloqueados} columnDefs={colsProv} tooltipShowDelay={300} context={ctx} defaultColDef={{ resizable: true, sortable: true }} />}
+          defaultColDef={COL_DEF} onCellClicked={alDetalle} onCellValueChanged={alEditar} />}
+        {tab === 2 && <Tabla memoria="necesidades_sin_proveedor" textoCargando="Calculando…" vacio="Todos los ítems con necesidad tienen proveedor" rowData={d.sin_proveedor.filas} columnDefs={colsSin} cargando={cargando} tooltipShowDelay={300}
+          defaultColDef={COL_DEF} />}
+        {tab === 3 && <Tabla vacio="Ninguno" rowData={d.bloqueados} columnDefs={colsProv} tooltipShowDelay={300} context={ctx} defaultColDef={COL_DEF} />}
       </Box>
       <Typography variant="caption" color="text.secondary">
         Clic en el nombre del proveedor para ver sus ítems · NIT → maestro de proveedores · SKU → maestro de ítems de compras · inventario o ADU → saldo y rotación en todas las tiendas más el CEDI · doble clic en “A pedir” para editar · arrastra una columna hasta la raya para fijarla.

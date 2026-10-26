@@ -173,8 +173,9 @@ export function GuiaNecesidades({ abierta, cerrar, cfg }: { abierta: boolean; ce
       <P>El CEDI se calcula como una “tienda más grande”, con la misma metodología DDMRP:</P>
       <L items={[
         <><b>ADU (rotación mensual):</b> la venta de <b>todas las tiendas que abastece</b> más la venta directa del CEDI (mayorista y digital). No se usan los despachos del CEDI a las tiendas (distorsionan la demanda real) ni los traslados.</>,
-        <><b>Lead time:</b> el del ítem en “Lead time del CEDI”; si no tiene, el de su proveedor; si no, el general (30 días). Manda el que cargues en DDMRP, no el tiempo de entrega de las cotizaciones de Siesa.</>,
-        <><b>Zonas del buffer:</b> amarilla = lead time × ADU / 30; roja = amarilla × factor de lead time (+ seguridad por variabilidad); verde = el mayor entre la frecuencia, el múltiplo y la roja base. Los topes son TOR (rojo), TOY (amarillo) y TOG (verde).</>,
+        <><b>Lead time:</b> el del ítem en “Lead time del CEDI”; si no tiene, el de su proveedor; si no, el general (8 días). Manda el que cargues en DDMRP, no el tiempo de entrega de las cotizaciones de Siesa.</>,
+        <><b>Frecuencia de compra:</b> cada cuántos días se le compra al proveedor (maestro de proveedores; si no la tiene, el general de “Configuración de compras”, 15 días). Define el tamaño de la zona verde: más frecuencia, pedidos más grandes.</>,
+        <><b>Zonas del buffer:</b> amarilla = lead time × ADU / 30; roja = amarilla × factor de lead time (+ seguridad por variabilidad); verde = el mayor entre (frecuencia × ADU / 30), el múltiplo y la roja base. Los topes son TOR (rojo), TOY (amarillo) y TOG (verde).</>,
         <><b>Flujo neto</b> = inventario del CEDI + tránsito − demanda calificada. El <b>tránsito</b> es el saldo de las órdenes de compra abiertas (aprobadas o parciales) hacia el CEDI.</>,
         <><b>Se pide</b> cuando el flujo neto cae a la zona amarilla o menos, y se pide hasta el tope verde (reglas configurables en “Reglas de pedido”). Eso es la columna <b>Pide el buffer</b>.</>,
       ]} />
@@ -189,7 +190,7 @@ export function GuiaNecesidades({ abierta, cerrar, cfg }: { abierta: boolean; ce
       <H>3 · Proveedor, cantidad y costo</H>
       <L items={[
         <><b>Proveedor:</b> el de la <b>cotización vigente</b> del ítem (si hay varios, el de la cotización más reciente). Solo si no hay cotización se usa el que trae el ítem en Siesa.</>,
-        <><b>A pedir:</b> lo que pide el buffer llevado al múltiplo de la <b>unidad de pedido</b> del ítem, con el <b>redondeo del proveedor</b> (arriba por defecto, cercano o abajo). Se editan en Maestros de compras.</>,
+        <><b>A pedir:</b> lo que pide el buffer llevado al múltiplo de la <b>unidad de pedido</b> del ítem, con el <b>redondeo del proveedor</b> (arriba por defecto, cercano o abajo). Si queda por debajo del <b>MOQ</b> del ítem (cantidad mínima de compra, por defecto 1), sube al MOQ (al múltiplo de pedido). Todo se edita en Maestros de compras.</>,
         <><b>Costo:</b> la cotización manual; si no hay, la cotización vigente de Siesa; si tampoco, el <b>último costo de compra</b>. “Origen del costo” dice cuál. Sin ninguno aparece “Sin cotización”, sin valor, y no suma a los totales.</>,
         <><b>IVA:</b> es una tarifa <b>estimada</b> del grupo impositivo del ítem; Siesa calcula el IVA real al crear la orden. El impuesto al consumo no entra.</>,
       ]} />
@@ -198,7 +199,7 @@ export function GuiaNecesidades({ abierta, cerrar, cfg }: { abierta: boolean; ce
       <L items={[
         <><b>Sin cotización:</b> no hay ningún costo para ese ítem.</>,
         <><b>Poca historia:</b> menos de {poca} meses con venta en los últimos 12; el ADU puede no ser confiable (se cambia en “Configuración de compras”).</>,
-        <><b>Proveedor inactivo</b> y <b>redondeo a 0</b> (el múltiplo con redondeo hacia abajo deja la cantidad en cero).</>,
+        <><b>Proveedor inactivo</b>, <b>redondeo a 0</b> (el múltiplo con redondeo hacia abajo deja la cantidad en cero) y <b>subió al MOQ</b> (el pedido quedaba por debajo del mínimo de compra).</>,
         <><b>Pedido mínimo del proveedor:</b> {bloquea
           ? 'hoy se BLOQUEA: los proveedores cuyo valor queda bajo su mínimo no se muestran (aparecen en una pestaña aparte).'
           : 'hoy solo se ALERTA: el proveedor se muestra con el estado “Bajo el pedido mínimo”.'} Si tiene ítems sin cotización su valor queda corto y se marca “Incompleto”, no “Bajo el mínimo”.</>,

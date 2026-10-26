@@ -50,14 +50,14 @@ MAESTROS = {
     "proveedores": dict(
         label="Proveedores: lead time, correos, estado y pedido minimo", tabla="ddmrp.proveedor",
         llave=["empresa", "proveedor_id", "sucursal"],
-        editable={"nombre": "txt", "leadtime": "num", "email_para": "txt", "email_cc": "txt", "activo": "int", "redondeo": "txt", "pedido_minimo": "num",
+        editable={"nombre": "txt", "leadtime": "num", "email_para": "txt", "email_cc": "txt", "activo": "int", "redondeo": "txt", "frecuencia": "num", "pedido_minimo": "num",
                   "contacto": "txt", "telefono": "txt", "notas": "txt"},
         bodega=None, producto=None, global_=True, grupo="compras",
         buscar=("proveedor_id", "nombre"),      # el cuadro de busqueda mira el NIT Y el nombre
         emails=("email_para", "email_cc"),      # varios correos separados por ; (o coma): se validan y se normalizan
         booleanas=("activo",),                  # 1 / 0 / si / no
         valores={"redondeo": ("arriba", "cercano", "abajo")},   # como se redondea la cantidad al multiplo de pedido
-        conservar=("activo", "redondeo")),                 # celda vacia en la carga = no cambia
+        conservar=("activo", "redondeo", "frecuencia")),                 # celda vacia en la carga = no cambia
     "config-compras": dict(
         label="Configuracion de compras: pedido minimo y poca historia", tabla="ddmrp.compras_config",
         llave=["clave"], editable={"valor": "num", "detalle": "txt"},
@@ -70,11 +70,11 @@ MAESTROS = {
         booleanas=("se_compra",), conservar=("nombre", "se_compra")),
     "items-compras": dict(
         label="Items de compras: cotizacion, unidad de pedido y unidad de empaque", tabla="ddmrp.item_compra",
-        llave=["empresa", "producto_id"], editable={"cotizacion": "num", "unidad_pedido": "num", "unidad_empaque": "num"},
+        llave=["empresa", "producto_id"], editable={"cotizacion": "num", "unidad_pedido": "num", "unidad_empaque": "num", "moq": "num"},
         bodega=None, producto="producto_id", global_=True, grupo="compras",
         solo_existentes=True,                   # los items vienen de Siesa: la carga solo actualiza, nunca crea
         sin_reemplazo=True, sin_eliminar=True,  # y aqui no se borra nada (ni filas sueltas, ni vaciar, ni reemplazar)
-        conservar=("cotizacion", "unidad_pedido", "unidad_empaque"),   # celda vacia = no cambia
+        conservar=("cotizacion", "unidad_pedido", "unidad_empaque", "moq"),   # celda vacia = no cambia
         lectura=[("laboratorio", "Laboratorio"), ("categoria", "Categoría"), ("linea", "Línea"), ("exhibicion", "Exhibición"), ("costo", "Costo promedio"),
                  ("cotizacion_siesa", "Cotización Siesa"), ("cotizacion_vigencia", "Vigente desde"), ("ultimo_costo", "Último costo de compra"),
                  ("ultimo_costo_fecha", "Fecha última compra"), ("costo_compra", "Costo a usar"), ("origen_costo", "Origen del costo"),
@@ -167,7 +167,7 @@ AYUDA = {
     "cedis": "CEDIs (bodegas desde donde se despacha a las tiendas), uno por empresa y código de bodega, ej. empresa 05 PT001. La bitácora dice qué CEDI abastece a cada tienda. "
              "Hoy el motor reparte el inventario de un solo CEDI por empresa (el primero de esta lista); la columna CEDI de la bitácora deja listo el modelo para cuando haya más de uno.",
     "proveedores": "Los proveedores llegan solos del maestro de items de Siesa (cada vez que se traen los items entran los nuevos, con su NIT y nombre) y aqui compras completa lo suyo: lead time en dias "
-                   "(prioridad al calcular el CEDI: el del item en «Lead time del CEDI», luego el del proveedor, luego el general), redondeo (como se lleva la cantidad a pedir al multiplo de pedido del item: arriba [por defecto], cercano o abajo), correos (varios separados por ;), activo (1/0 o si/no; vacio = activo), "
+                   "(prioridad al calcular el CEDI: el del item en «Lead time del CEDI», luego el del proveedor, luego el general), frecuencia de compra en dias (cada cuanto se le compra; define el tamaño de la zona verde del CEDI: a mayor frecuencia, pedidos mas grandes; vacio = el general de «Configuracion de compras», 15 dias), redondeo (como se lleva la cantidad a pedir al multiplo de pedido del item: arriba [por defecto], cercano o abajo), correos (varios separados por ;), activo (1/0 o si/no; vacio = activo), "
                    "pedido minimo (valor), contacto, telefono y notas. Lo que ya escribiste no se pisa al sincronizar. La llave es empresa + NIT + sucursal.",
     "items-compras": "Los items vienen de Siesa (no se crean ni se borran aqui) y casi todas las columnas son de solo lectura. "
                      "PROVEEDOR: es el de la COTIZACION vigente del item (si hay cotizaciones de varios proveedores, la de mayor fecha de activacion); solo si no hay cotizacion se usa el que trae el item en Siesa. "
@@ -175,13 +175,13 @@ AYUDA = {
                      "COSTO A USAR: la cotizacion manual; si no hay, la cotizacion de Siesa (costo bruto con el descuento del primer rango de cantidad); si tampoco, el ULTIMO COSTO DE COMPRA (precio de la ultima OC aprobada, parcial o cumplida); «Origen del costo» dice cual. "
                      "El IVA es una tarifa ESTIMADA: Siesa lo calcula al crear la OC. "
                      "CATEGORIA = criterio del plan 001 de Siesa (0001 Productos Funat, 0002 Productos de terceros, 0003 Maquila Funat). ABASTECIMIENTO: Compra, Produccion propia (la categoria no se compra en esa empresa: maestro Criterios comprables) o Sin proveedor. "
-                     "Compras carga a mano la cotizacion (solo si quiere pisar las demas), la unidad de pedido (multiplo en que se pide, por defecto 1) y la unidad de empaque (unidades por caja, por defecto 1). "
-                     "Por Excel: baja el archivo, llena esas tres columnas y subelo; celda vacia = no cambia. Solo se ven los items activos de su empresa.",
+                     "Compras carga a mano la cotizacion (solo si quiere pisar las demas), la unidad de pedido (multiplo en que se pide, por defecto 1), la unidad de empaque (unidades por caja, por defecto 1) y el MOQ (cantidad minima de compra en unidades, por defecto 1: si el pedido queda por debajo, se sube a ese minimo al multiplo de pedido). "
+                     "Por Excel: baja el archivo, llena esas columnas y subelo; celda vacia = no cambia. Solo se ven los items activos de su empresa.",
     "config-compras": "Ajustes generales del informe Necesidades de compra. pedido_minimo_bloquea: 0 = los proveedores cuyo total queda bajo su pedido minimo se muestran con una alerta (no se bloquean); 1 = se bloquean y no se muestran. "
                       "poca_historia_meses: un item con menos de estos meses con venta (de los ultimos 12) se marca «poca historia»: solo alerta, no bloquea. Solo se edita el valor.",
     "criterios-comprables": "Que categorias (criterio del plan 001 de Siesa) se COMPRAN en cada empresa: 1 = se compra, 0 = produccion propia (no genera OC). Funat (05): terceros y maquila se compran y Productos Funat no; Stores (21): todo se compra. "
                             "Una categoria que no aparece aqui se trata como compra. El codigo del criterio va como texto de 4 digitos (ej. 0003).",
-    "leadtime-cedi": "Dias que tarda en llegar un item al CEDI (compra o maquila; la produccion propia no se modela). La fila con producto * es el general de la empresa (30 dias); "
+    "leadtime-cedi": "Dias que tarda en llegar un item al CEDI (compra o maquila; la produccion propia no se modela). La fila con producto * es el general de la empresa (8 dias); "
                      "una fila con un item lo sobrescribe y, sin fila de item, manda el lead time del proveedor del item (maestro Proveedores). Alimenta el buffer del CEDI (Informes > Ver solo CEDI): se aplica en la siguiente corrida del motor.",
     "demanda-calificada": "Pedidos abiertos o picos conocidos por tienda y referencia. Se restan del flujo neto cuando la regla 'Restar demanda calificada' está en Sí.",
     "pronostico": "Venta mensual esperada (unidades/mes) por tienda y referencia. Sirve sobre todo para tiendas, referencias o laboratorios NUEVOS: si la combinacion tiene menos meses de venta que la regla 'Pronostico directo en casos nuevos' (por defecto 3), el motor usa este valor tal cual, aunque no haya historial. Con mas historial el pronostico solo ajusta: el motor lo lleva entre 1 y 2 veces el ADU de referencia (nunca baja el historial). Para campanas o promociones usa Promocion y las cotas.",

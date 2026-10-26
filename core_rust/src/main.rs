@@ -95,7 +95,7 @@ WHERE NOT EXISTS (SELECT 1 FROM rec r2 WHERE r2.empresa = b.empresa AND r2.rec_i
 
 /// Mismas columnas que SQL_ENTRADA, pero la fila es el CEDI de cada empresa (el primero de maestro_cedi): su demanda es la venta de las tiendas que
 /// abastece (NO los despachos: efecto latigo) mas su venta directa (mayorista / digital); los traslados no cuentan (ya van en la venta de las tiendas).
-/// Inventario = el del CEDI (inventario_cedi). Lead time = el del item en abast_leadtime_cedi > el del proveedor del item (ddmrp.proveedor) > el general '*' > 30 dias. Sin frecuencia fija (1 dia), sin
+/// Inventario = el del CEDI (inventario_cedi). Lead time = el del item en abast_leadtime_cedi > el del proveedor del item (ddmrp.proveedor) > el general '*' > 8 dias. Frecuencia de compra = la del proveedor > compras_config.frecuencia_defecto > 15 dias. Sin
 /// unidad de despacho (1), sin cotas, promocion, vectorizacion ni demanda calificada. Transito = saldo de las OC abiertas hacia el CEDI (ETL: SQL_OC_ABIERTAS).
 /// El pronostico del CEDI es la suma del de las tiendas que abastece (como en las tiendas: sin pronostico el ADU promedia un cero de mas).
 const SQL_ENTRADA_CEDI: &str = r#"
@@ -153,8 +153,8 @@ llaves AS (
 SELECT k.empresa, k.bodega_id, k.producto_id,
   COALESCE(v.m0, 0) AS m0, COALESCE(v.m1, 0) AS m1, COALESCE(v.m2, 0) AS m2, COALESCE(v.m3, 0) AS m3, COALESCE(v.m4, 0) AS m4, COALESCE(v.m5, 0) AS m5, COALESCE(v.m6, 0) AS m6, COALESCE(v.m7, 0) AS m7, COALESCE(v.m8, 0) AS m8, COALESCE(v.m9, 0) AS m9, COALESCE(v.m10, 0) AS m10, COALESCE(v.m11, 0) AS m11,
   COALESCE(p.pronostico, 0)::float8                       AS pronostico,
-  COALESCE(li.leadtime, pv.leadtime, lg.leadtime, 30)::float8 AS lead_time,
-  1::float8                                               AS frecuencia,
+  COALESCE(li.leadtime, pv.leadtime, lg.leadtime, 8)::float8 AS lead_time,
+  COALESCE(pv.frecuencia, (SELECT cc.valor FROM ddmrp.compras_config cc WHERE cc.clave = 'frecuencia_defecto'), 15)::float8 AS frecuencia,
   1::float8                                               AS unidad_despacho,
   0::float8                                               AS cota_max,
   0::float8                                               AS cota_min,

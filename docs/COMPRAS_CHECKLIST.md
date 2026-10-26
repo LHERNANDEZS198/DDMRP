@@ -7,7 +7,7 @@ Estados: ✅ listo · 🟡 hecho, sin validar en producción · ⬜ pendiente ·
 - 🟡 Rotación de PT001: ventas directas del CEDI (`ventas_cedi_05/21`) + ventas de las tiendas que abastece
 - 🟡 Buffer del CEDI por empresa (motor Rust, `--modo cedi`, tabla `sugerencias_cedi`): ADU, zonas, flujo neto
 - 🟡 Tránsito del CEDI = saldo de OC abiertas de Siesa (estado del ítem Aprobado o Parcial); tope de antigüedad `oc_dias_historia` (365)
-- 🟡 Lead time del CEDI: ítem > proveedor del ítem > general (30 d) — maestro «Lead time del CEDI» y «Proveedores»
+- 🟡 Lead time del CEDI: ítem > proveedor del ítem > general (8 d) — maestro «Lead time del CEDI» y «Proveedores»
 - 🟡 Informes en modo «Ver solo CEDI»: Control (foto/cambios/tendencia/mapa), Alertas, Salud y Clasificación
 - ⬜ Retroprueba: validar la necesidad del CEDI contra lo que compras realmente pidió
 - 🟡 Poca historia: alerta (no bloquea) con umbral configurable (3 meses con venta). ⬜ picos atípicos como demanda calificada o recortados; excluir días con quiebre en PT001
@@ -36,7 +36,7 @@ Estados: ✅ listo · 🟡 hecho, sin validar en producción · ⬜ pendiente ·
 ## DDMRP (pendientes de la lista original)
 - ✅ 1. Menú de compras y permisos (`ver_compras`, `cargar_maestros_compras`, perfil Compras, «Maestros» con desplegable)
 - 🟡 2. Maestros: **criterios comprables** · **proveedores** (NIT, sucursal, lead time, correos para/cc, activo, pedido mínimo, contacto, teléfono, notas) · **items de compras** (cotización, unidad de pedido y de empaque; sin crear ni borrar) · lead time del CEDI
-- ⬜ 2b. Maestros que faltan: empaque/MOQ por proveedor-ítem si hace falta, tiendas de compra directa, `item_compra_destino` (etapa 2), factores de zona
+- ⬜ 2b. Maestros que faltan: tiendas de compra directa, `item_compra_destino` (etapa 2), factores de zona
 - 🟡 3. Proveedor por ítem desde Siesa: ✅ columnas confirmadas (`f120_rowid_tercero_prov`, `f120_id_sucursal_prov`), sin proveedores huérfanos; falta correr el ETL y ver `items_con_proveedor` · ✅ costo de la cotización validado · ✅ IVA por ítem validado
 - 🟡 4. Informe «Necesidades de compra» (Informes > Compras): ítems comprables con necesidad, proveedor, cantidad, costo, valor e IVA estimado; Excel
   - 🟡 Navbar: «Necesidades de compra» es un botón propio (como la matriz de despacho); menú «Config» con Motor, Reglas de pedido, Usuarios, Log y Diagnóstico
@@ -46,6 +46,8 @@ Estados: ✅ listo · 🟡 hecho, sin validar en producción · ⬜ pendiente ·
   - 🟡 Botón «Recalcular necesidades» (sin correr el motor completo ni dar acceso a él): inventario fresco del CEDI + OC abiertas + buffer del CEDI; las cantidades editadas se conservan
   - 🟡 Elegir las OC a montar: casilla por proveedor (NIT) y/o por ítem (SKU); «Revisar y enviar OC» muestra una orden por proveedor-empresa (el envío queda desactivado hasta conectar el BPM). La elección NO se guarda al recargar
   - 🟡 Lead time del proveedor en la vista por proveedor; NIT → maestro de proveedores; SKU → maestro de ítems de compras
+  - 🟡 Frecuencia de compra por proveedor (defecto 15 d en «Configuración de compras») = tamaño de la zona verde del CEDI; lead time general 8 d; MOQ por ítem (defecto 1) que sube el pedido al mínimo; la vista de columnas (orden/ancho/fijas) se recuerda por navegador y hay «Restablecer columnas»
+  - ⏸ Cotas máxima/mínima del CEDI: explicadas, sin implementar (decisión pendiente)
 - 🟡 5. Vista con filtros multi-proveedor, resumen por proveedor, lista «Sin proveedor» y pedido mínimo (alerta o bloqueo, configurable). ⬜ Generación de borradores (BPM)
 - ⬜ 6. Estado de OC (grupo asignado, días esperando) + conciliación con el BPM y Siesa
 - 🟡 7. Excel por maestro: proveedores e items de compras ya suben y bajan por Excel; ⬜ resto de maestros nuevos
