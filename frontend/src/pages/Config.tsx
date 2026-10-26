@@ -108,7 +108,7 @@ export default function Config() {
     const conocidas = new Set([...def.llave, ...def.editable, 'descripcion', 'bodega_nombre', 'costo', 'estado'])
     const extra: ColDef[] = def.clave === 'items' && rows[0]
       ? Object.keys(rows[0]).filter(k => !conocidas.has(k)).map(k => ({ field: k, headerName: k, width: 190 })) : []
-    const ed2 = def.clave === 'items' ? ed.map(c => c.field === 'categoria' ? { ...c, headerName: 'Laboratorio (código)', width: 150 } : c.field === 'descripcion' ? { ...c, width: 300 } : c) : ed
+    const ed2 = def.clave === 'bitacora' ? ed.map(c => c.field === 'descripcion' ? { ...c, headerName: 'Tienda (nombre)', width: 240 } : c) : def.clave === 'items' ? ed.map(c => c.field === 'categoria' ? { ...c, headerName: 'Laboratorio (código)', width: 150 } : c.field === 'descripcion' ? { ...c, width: 300 } : c) : ed
     const costo: ColDef[] = def.clave === 'items' ? [{ field: 'costo', headerName: 'Costo promedio', type: 'numericColumn', width: 140,
       valueFormatter: p => p.value == null ? '' : '$' + Math.round(p.value).toLocaleString('es-CO'), headerTooltip: 'Costo promedio por instalación (lo trae el ETL desde Siesa). Solo lectura.' }] : []
     const est: ColDef[] = def.clave === 'items' ? [{ field: 'estado', headerName: 'Estado Siesa', width: 120, headerTooltip: 'Estado del item en Siesa (extensión del item). Solo lectura; sin dato = activo.' }] : []

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { AppBar, Avatar, Box, Divider, Drawer, IconButton, List, ListItemButton, ListItemIcon, ListItemText, ListSubheader, Menu, MenuItem,
-  Toolbar, Tooltip, Typography, useMediaQuery, useTheme, Button, Select } from '@mui/material'
+  Toolbar, Tooltip, Typography, useMediaQuery, useTheme, Button, Select, FormControlLabel, Switch } from '@mui/material'
 import ExpandMore from '@mui/icons-material/ExpandMore'
 import MenuIcon from '@mui/icons-material/Menu'
 import LogoutIcon from '@mui/icons-material/Logout'
@@ -18,7 +18,7 @@ import { useYo } from './Yo'
 import { NOMBRE_EMPRESA, useEmpresa } from './Empresa'
 import { BannerSalud } from './Salud'
 import Errores from './Errores'
-import { enPrueba, getUser, logout, volverDePrueba } from './api'
+import { enPrueba, getUser, logout, volverDePrueba, soloCediOn, setSoloCedi } from './api'
 
 /** Menú «Informes»: todo lo que se consulta (no se opera). Agrupado en el desplegable. */
 export const VISTAS = [
@@ -51,6 +51,7 @@ export default function Shell() {
   const [abierto, setAbierto] = useState(false); const [ancla, setAncla] = useState<HTMLElement | null>(null)
   const loc = useLocation(); const user = getUser(); const nav = useNavigate()
   const [anclaV, setAnclaV] = useState<HTMLElement | null>(null)
+  const [menuEmp, setMenuEmp] = useState(false) // con el menú abierto el tooltip se apaga: tapaba la primera opción
   const enInformes = VISTAS.some(v => v.to === '/control' ? loc.pathname === '/control' : loc.pathname.startsWith(v.to))
   const titulo = VISTAS.find(v => loc.pathname === v.to)?.label ?? NAV.find(n => !(n as any).vistas && loc.pathname.startsWith(n.to))?.label ?? ''
   const activo = (n: any) => n.vistas ? enInformes : loc.pathname.startsWith(n.to)
@@ -78,9 +79,16 @@ export default function Shell() {
             
             : <Typography noWrap sx={{ flex: 1, minWidth: 0, fontSize: { xs: 15, sm: 16 } }}>{titulo}</Typography>}
           <Box sx={{ flex: 1 }} />
-          <Tooltip title="Empresa con la que trabajas en todas las pantallas. Se conserva hasta que la cambies.">
+          {enInformes && (
+            <Tooltip disableInteractive title="Solo el CEDI: sus necesidades, sobrestock y clasificación. La rotación suma lo que sale a las tiendas. Oculta las tiendas en Informes.">
+              <FormControlLabel sx={{ color: '#fff', mr: 1, ml: 0, '.MuiFormControlLabel-label': { fontSize: 14, fontWeight: 600 } }}
+                control={<Switch size="small" color="default" checked={soloCediOn()}
+                  onChange={e => { setSoloCedi(e.target.checked); location.reload() }} />}
+                label={movil ? 'CEDI' : 'Ver solo CEDI'} />
+            </Tooltip>)}
+          <Tooltip disableInteractive title={menuEmp ? '' : 'Empresa con la que trabajas en todas las pantallas. Se conserva hasta que la cambies.'}>
             {opciones.length > 1 ? (
-              <Select size="small" value={empresa} onChange={e => setEmpresa(e.target.value)} variant="outlined" renderValue={(v: string) => movil ? (v === '*' ? 'Ambas' : (NOMBRE_EMPRESA[v] ?? v)) : (v === '*' ? 'Ambas empresas' : `${NOMBRE_EMPRESA[v] ?? v} (${v})`)}
+              <Select size="small" value={empresa} open={menuEmp} onOpen={() => setMenuEmp(true)} onClose={() => setMenuEmp(false)} onChange={e => setEmpresa(e.target.value)} variant="outlined" renderValue={(v: string) => movil ? (v === '*' ? 'Ambas' : (NOMBRE_EMPRESA[v] ?? v)) : (v === '*' ? 'Ambas empresas' : `${NOMBRE_EMPRESA[v] ?? v} (${v})`)}
                 sx={{ color: '#fff', height: 32, fontSize: 14, fontWeight: 600, '.MuiSelect-icon': { color: '#fff' }, '.MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(255,255,255,.6)' }, '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#fff' } }}>
                 {opciones.map(o => <MenuItem key={o} value={o}>{o === '*' ? 'Ambas empresas' : `${NOMBRE_EMPRESA[o] ?? o} (${o})`}</MenuItem>)}
               </Select>) : (

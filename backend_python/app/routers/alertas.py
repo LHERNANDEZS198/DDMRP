@@ -4,12 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
 from ..db import pg
 from ..security import usuario_actual, requiere
+from ..modo import fijar_modo
 from .control import _filtros
 
-router = APIRouter(prefix="/alertas", tags=["alertas"], dependencies=[Depends(requiere("ver_alertas"))])
+router = APIRouter(prefix="/alertas", tags=["alertas"], dependencies=[Depends(requiere("ver_alertas")), Depends(fijar_modo)])
 
 ULTIMA = "(SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok')"
-BASE = "FROM ddmrp.sugerencias_envio s LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = s.producto_id"
+BASE = "FROM ddmrp.v_sugerencias_informe s LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = s.producto_id"
 BASE_C = BASE + " LEFT JOIN ddmrp.costo_item ci ON ci.producto_id = s.producto_id"
 # unidades que sobran (sobre el tope verde ajustado, solo en sobrestock) o faltan (distancia al tope verde, en las demas zonas); x costo promedio = plata
 SOBRAN = "CASE WHEN s.zona::text = 'EXCESO' THEN GREATEST(s.flujo_neto - GREATEST(s.tog_aj, 0), 0) ELSE 0 END"

@@ -23,9 +23,11 @@ ANCHO = {"producto_id": 6, "empresa": 2}
 
 MAESTROS = {
     "bitacora": dict(
-        label="Bitacora: tiendas que se abastecen (lead time, frecuencia, CEDI y centro de operacion)", tabla="ddmrp.abast_bitacora",
-        llave=["empresa", "bodega_id"], editable={"frecuencia": "num", "leadtime": "num", "cedi": "txt", "id_co": "txt"},
-        bodega="bodega_id", producto=None, valida_cedi=True),
+        label="Bitacora: tiendas que se abastecen (nombre, lead time, frecuencia, CEDI y centro de operacion)", tabla="ddmrp.abast_bitacora",
+        llave=["empresa", "bodega_id"], editable={"descripcion": "txt", "frecuencia": "num", "leadtime": "num", "cedi": "txt", "id_co": "txt"},
+        bodega="bodega_id", producto=None, valida_cedi=True,
+        nombre_en_tabla=True,        # el nombre de la tienda vive en la bitacora (fuente de verdad); un archivo con bodega_nombre / tienda / nombre lo guarda aqui
+        conservar=("descripcion",)), # una celda de nombre vacia en la carga NO borra el nombre que ya tiene
     "cedis": dict(
         label="CEDIs: bodegas desde donde se abastece a las tiendas", tabla="ddmrp.maestro_cedi",
         llave=["empresa", "bodega_id"], editable={"descripcion": "txt"}, bodega=None, producto=None, global_=True, empresa_obligatoria=True),
@@ -40,6 +42,10 @@ MAESTROS = {
     "condenados": dict(
         label="Condenados: items que no se despachan (todas las tiendas o solo una)", tabla="ddmrp.item_condenado",
         llave=["empresa", "bodega_id", "producto_id"], editable={"motivo": "txt"}, bodega="bodega_id", producto="producto_id", todas="*"),
+    "leadtime-cedi": dict(
+        label="Lead time del CEDI (dias): general (*) o por item", tabla="ddmrp.abast_leadtime_cedi",
+        llave=["empresa", "producto_id"], editable={"leadtime": "num"},
+        bodega=None, producto="producto_id", global_=True),
     "pronostico": dict(
         label="Pronostico (unidades/mes)", tabla="ddmrp.pronostico",
         llave=["empresa", "bodega_id", "producto_id"], editable={"pronostico": "num"},
@@ -101,7 +107,7 @@ SIN_VACIAR = {"items", "factores", "parametros"}   # se llenan desde Siesa o son
 OPS = {"eq": "=", "ne": "<>", "gt": ">", "lt": "<", "ge": ">=", "le": "<="}
 
 AYUDA = {
-    "bitacora": "Las tiendas que se abastecen, solo las que tú metas aquí (nada se agrega solo). Por tienda: lead time (días que tarda el producto en llegar a la tienda), frecuencia (cada cuántos días se abastece), "
+    "bitacora": "Las tiendas que se abastecen y su nombre: ESTA es la fuente de verdad de las tiendas (el nombre que escribas aquí es el que se ve en todo el sistema; Siesa solo se usa si no hay nombre). Solo las que tú metas aquí (nada se agrega solo). Por tienda: nombre, lead time (días que tarda el producto en llegar a la tienda), frecuencia (cada cuántos días se abastece), "
                 "CEDI que la abastece (código de bodega del maestro CEDIs, ej. PT001) y centro de operación para el archivo plano de Siesa (si lo dejas vacío, el ETL lo completa desde Siesa y si no hay, se deduce con la regla del ejemplo). "
                 "El lead time × la venta diaria da la zona amarilla y la frecuencia × la venta diaria da la verde; además el lead time define el factor de la zona roja (maestro Factores). "
                 "Una tienda que no esté aquí no entra al cálculo del motor.",
@@ -126,6 +132,8 @@ AYUDA = {
                  "El ETL detecta los pares solo (origen auto) cuando el original existe en Siesa; aquí puedes agregar o corregir uno a mano (origen manual, no lo pisa el ETL). Se aplica con la regla 'Items REC se suman a su original'. Para despachar, el stock debe estar físicamente bajo el SKU original en Siesa.",
     "cedis": "CEDIs (bodegas desde donde se despacha a las tiendas), uno por empresa y código de bodega, ej. empresa 05 PT001. La bitácora dice qué CEDI abastece a cada tienda. "
              "Hoy el motor reparte el inventario de un solo CEDI por empresa (el primero de esta lista); la columna CEDI de la bitácora deja listo el modelo para cuando haya más de uno.",
+    "leadtime-cedi": "Dias que tarda en llegar un item al CEDI (compra o maquila; la produccion propia no se modela). La fila con producto * es el general de la empresa (30 dias); "
+                     "una fila con un item lo sobrescribe. Alimenta el buffer del CEDI (Informes > Ver solo CEDI): se aplica en la siguiente corrida del motor.",
     "demanda-calificada": "Pedidos abiertos o picos conocidos por tienda y referencia. Se restan del flujo neto cuando la regla 'Restar demanda calificada' está en Sí.",
     "pronostico": "Venta mensual esperada (unidades/mes) por tienda y referencia. Sirve sobre todo para tiendas, referencias o laboratorios NUEVOS: si la combinacion tiene menos meses de venta que la regla 'Pronostico directo en casos nuevos' (por defecto 3), el motor usa este valor tal cual, aunque no haya historial. Con mas historial el pronostico solo ajusta: el motor lo lleva entre 1 y 2 veces el ADU de referencia (nunca baja el historial). Para campanas o promociones usa Promocion y las cotas.",
     "ventas-mensual": "Unidades vendidas por mes, tienda y referencia: base de la venta diaria (ADU) y de la variabilidad. Se traen de Siesa con 'Traer ventas por mes' o se cargan por Excel.",
@@ -280,7 +288,8 @@ def leer(nombre: str, response: Response, bodega_id: str | None = None, producto
         w, p = filtro_sql_permisos(user, f"t.{d['bodega']}", "mi.categoria" if d.get("producto") else "'*'")
         sel += ", mi.descripcion" if d.get("producto") else ""
         join += f" LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = t.{d['bodega']}" + (" AND mb.empresa = t.empresa" if "empresa" in d["llave"] else "")
-        sel += ", mb.descripcion AS bodega_nombre"
+        if not d.get("nombre_en_tabla"):   # bitacora: el nombre es SU columna descripcion, no el del catalogo
+            sel += ", mb.descripcion AS bodega_nombre"
     elif d.get("producto"):
         join = f"LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = t.{d['producto']}"
         sel += ", mi.descripcion"
@@ -445,6 +454,8 @@ def _preparar(d: dict, filas: list[dict], omitir: bool = False, malas_out: list 
     presentes = set().union(*[f.keys() for f in filas]) if filas else set()
     cod_h = next((h for h in BOD_COD if h in presentes), None)
     nom_h = next((h for h in BOD_NOM if h in presentes), None)
+    if d.get("nombre_en_tabla") and nom_h:   # bitacora: la columna del nombre (bodega_nombre / tienda / nombre) tambien se guarda como descripcion
+        presentes = presentes | {"descripcion"}
     con_bodega = bool(d.get("bodega"))
     otras = [k for k in d["llave"] if k != "empresa" and not (con_bodega and k == d["bodega"])]
     faltan = [k for k in otras if k not in presentes]
@@ -465,6 +476,8 @@ def _preparar(d: dict, filas: list[dict], omitir: bool = False, malas_out: list 
                 cedis_ok.setdefault(bod_c.strip().upper(), set()).add(emp_c)
     for n, f in enumerate(filas, start=2):
         try:
+            if d.get("nombre_en_tabla") and nom_h and not f.get("descripcion"):
+                f = {**f, "descripcion": f.get(nom_h)}
             llave: dict[str, str] = {}
             if con_bodega:
                 cod = _valor_llave("bodega_id", f.get(cod_h)) if cod_h else ""
@@ -606,7 +619,8 @@ def _importar_(nombre: str, d: dict, filas: list[dict], modo: str, user, omitir:
         if reemplazo:
             c.execute(text(f"DELETE FROM {tabla}"))
             existentes = 0
-        upd = ", ".join(f"{k} = EXCLUDED.{k}" for k in cols)
+        conservar = d.get("conservar", ())
+        upd = ", ".join((f"{k} = COALESCE(EXCLUDED.{k}, {tabla}.{k})" if k in conservar else f"{k} = EXCLUDED.{k}") for k in cols)
         c.execute(text(f"INSERT INTO {tabla} ({', '.join(ins_cols)}) SELECT {', '.join(ins_val)} FROM {uniq} {sel_where} "
                        f"ON CONFLICT ({', '.join(llave)}) " + (f"DO UPDATE SET {upd}" if upd else "DO NOTHING")))
         if d.get("solo_existentes"):
@@ -673,9 +687,10 @@ def bajar_excel(nombre: str, bodega_id: str | None = None, q: str | None = None,
         join = f"LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = t.{d['producto']}" if d.get("producto") else ""
         join += f" LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = t.{bod}" + (" AND mb.empresa = t.empresa" if "empresa" in d["llave"] else "")
         w, p = filtro_sql_permisos(user, f"t.{bod}", "mi.categoria" if d.get("producto") else "'*'")
-        sel = (f"t.{bod}, mb.descripcion AS bodega_nombre" + (", t.empresa" if con_emp else "") + "".join(f", t.{c}" for c in cols_t if c != bod)
+        nom_sel = "" if d.get("nombre_en_tabla") else ", mb.descripcion AS bodega_nombre"   # bitacora: el nombre es su columna descripcion
+        sel = (f"t.{bod}{nom_sel}" + (", t.empresa" if con_emp else "") + "".join(f", t.{c}" for c in cols_t if c != bod)
                + "".join(f", t.{c}" for c in d["editable"]))
-        cab = [bod, "bodega_nombre"] + (["empresa"] if con_emp else []) + [c for c in cols_t if c != bod] + list(d["editable"])
+        cab = [bod] + ([] if d.get("nombre_en_tabla") else ["bodega_nombre"]) + (["empresa"] if con_emp else []) + [c for c in cols_t if c != bod] + list(d["editable"])
     else:
         cab = cols_t + list(d["editable"])
     if nombre == "items":   # costo promedio: columna informativa (la carga la ignora)
@@ -694,7 +709,8 @@ def bajar_excel(nombre: str, bodega_id: str | None = None, q: str | None = None,
     lineas = [d["label"], "", "Fila 1 = encabezados (no los cambies). Desde la fila 2, los datos."]
     if bod:
         lineas += ["Tienda: usa el codigo de Siesa (bodega_id, ej. SV021) o, si prefieres, solo el nombre (bodega_nombre). La empresa se deduce sola.",
-                   "La columna bodega_nombre es informativa.",
+                   ("La columna descripcion es el NOMBRE de la tienda y se guarda en la bitacora (tambien se acepta con el encabezado bodega_nombre, tienda o nombre). Celda vacia = no cambia el nombre."
+                    if d.get("nombre_en_tabla") else "La columna bodega_nombre es informativa."),
                    "Empresa (05 Funat, 21 Store): si la columna viene llena se usa tal cual; si no, se deduce de la tienda (requiere tener las tiendas cargadas)."]
     elif "empresa" in d["llave"]:
         lineas.append("Empresa (05 Funat, 21 Store): opcional; si la dejas vacia aplica a todas.")

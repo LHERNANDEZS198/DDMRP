@@ -36,6 +36,9 @@ def guardar_historia(eid: int):
         cols = "empresa, bodega_id, producto_id, zona, tor, toy_aj, tog_aj, inventario, flujo_neto, pct_buffer"
         c.execute(text(f"INSERT INTO ddmrp.buffer_historia (fecha, {cols}) SELECT :f, {cols} FROM ddmrp.sugerencias_envio WHERE ejecucion_id = :e"),
                   {"f": fecha, "e": eid})
+        # el CEDI tambien deja su foto diaria (tendencia / cambios / mapa en modo «Ver solo CEDI»); en los Informes se separa de las tiendas por el maestro de CEDIs
+        c.execute(text(f"INSERT INTO ddmrp.buffer_historia (fecha, {cols}) SELECT :f, {cols} FROM ddmrp.sugerencias_cedi WHERE ejecucion_id = :e ON CONFLICT DO NOTHING"),
+                  {"f": fecha, "e": eid})
         # dias anteriores que aun tengan detalle y no esten en la historia (primer despliegue)
         c.execute(text(f"""INSERT INTO ddmrp.buffer_historia (fecha, {cols})
                            SELECT e.fecha_calculo, {', '.join('s.' + x.strip() for x in cols.split(','))}
@@ -51,6 +54,11 @@ def guardar_historia(eid: int):
         dias = c.execute(text("SELECT valor FROM ddmrp.parametro WHERE clave = 'retener_dias'")).scalar()
         c.execute(text("DELETE FROM ddmrp.buffer_historia WHERE fecha < current_date - :d"), {"d": int(dias) if dias else 180})
         c.execute(text("""DELETE FROM ddmrp.sugerencias_envio s USING ddmrp.ejecucion_motor e
+                          WHERE s.ejecucion_id = e.id AND s.ejecucion_id <> :e
+                            AND (e.fecha_calculo < current_date - :d OR e.id NOT IN
+                                 (SELECT DISTINCT ON (fecha_calculo) id FROM ddmrp.ejecucion_motor WHERE estado = 'ok'
+                                  ORDER BY fecha_calculo, id DESC) AND e.fecha_calculo < current_date)"""), {"e": eid, "d": DETALLE_DIAS})
+        c.execute(text("""DELETE FROM ddmrp.sugerencias_cedi s USING ddmrp.ejecucion_motor e
                           WHERE s.ejecucion_id = e.id AND s.ejecucion_id <> :e
                             AND (e.fecha_calculo < current_date - :d OR e.id NOT IN
                                  (SELECT DISTINCT ON (fecha_calculo) id FROM ddmrp.ejecucion_motor WHERE estado = 'ok'
@@ -93,6 +101,19 @@ def ejecutar_motor(fecha: date | None = None, origen: str = "manual", usuario: s
         return res
 
 
+def calcular_cedi(eid: int, fecha: date) -> dict:
+    """Buffer del CEDI (PT001) con el mismo motor Rust en modo cedi: escribe en ddmrp.sugerencias_cedi, que despacho, reparto y planos no leen.
+    Si falla NO tumba la corrida de las tiendas: se anota y los Informes en modo CEDI quedan sin la corrida de hoy."""
+    try:
+        out = subprocess.run(
+            [settings.core_bin, "--ejecucion-id", str(eid), "--fecha", fecha.isoformat(), "--modo", "cedi"],
+            env={**os.environ, "DATABASE_URL": settings.pg_dsn}, capture_output=True, text=True, timeout=300, check=True)
+        return json.loads(out.stdout.strip().splitlines()[-1])
+    except Exception as e:
+        log.exception("No se pudo calcular el buffer del CEDI")
+        return {"ok": False, "error": ((getattr(e, "stderr", None) or str(e))[-300:])}
+
+
 def _ejecutar_motor(fecha: date | None = None) -> dict:
     fecha = fecha or date.today()
     progreso.avance("Leyendo el inventario fresco del CEDI…")
@@ -110,6 +131,8 @@ def _ejecutar_motor(fecha: date | None = None) -> dict:
         with pg.begin() as c:
             c.execute(text("UPDATE ddmrp.ejecucion_motor SET fin=now(), estado='ok', filas=:n WHERE id=:i"),
                       {"n": res["filas"], "i": eid})
+        progreso.avance("Calculando el buffer del CEDI…")
+        cedi_motor = calcular_cedi(eid, fecha)
         progreso.avance("Repartiendo el inventario del CEDI entre las tiendas…")
         try:
             with pg.begin() as c:
@@ -127,7 +150,7 @@ def _ejecutar_motor(fecha: date | None = None) -> dict:
             guardar_historia(eid)
         except Exception:
             log.exception("No se pudo guardar la historia del buffer")
-        return {"ejecucion_id": eid, **res, "cedi": cedi, "reparto": reparto}
+        return {"ejecucion_id": eid, **res, "cedi": cedi, "cedi_motor": cedi_motor, "reparto": reparto}
     except Exception as e:
         detalle = getattr(e, "stderr", None) or str(e)
         with pg.begin() as c:

@@ -16,7 +16,7 @@ Postgres queda como estaba y el pipeline no corre el motor con datos viejos sin 
 import logging
 import re
 import psycopg
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from sqlalchemy import bindparam, text
 from ..config import settings
@@ -126,6 +126,27 @@ WHERE t.f406_ind_estado = 0 AND t.f406_id_cia = :cia AND be.f150_id IN :bodegas 
 GROUP BY i.f120_referencia, be.f150_id, bs.f150_id
 HAVING SUM(t.f406_cant_base_pendiente) > 0"""
 
+# Ordenes de compra ABIERTAS (saldo por recibir) hacia las bodegas de la empresa: el CEDI y, en la etapa 2, las tiendas con compra directa. Entran a
+# ddmrp.transitos con documento 'OC-<tipo><consecutivo>' y suman al flujo neto de la bodega destino (el CEDI los lee en su buffer).
+# Regla de «abierta» (la misma de la hoja de OC de compras): estado del ITEM Aprobado (1) o Parcial (2). En los grupos de documento de OC de Siesa
+# (401, 402, 409) los estados son 0 En elaboracion, 1 Aprobado, 2 Parcial, 3 Cumplido, 7 En proceso de aprobacion, 9 Anulado: «no es Cumplido, ni En
+# elaboracion, ni En proceso de aprobacion» (y no anulado) es exactamente 1 o 2. Se usan los CODIGOS y no las descripciones: no dependen de tildes
+# ni de la collation. Sin el cruce con el plan 006 de la consulta original: el laboratorio sale del maestro de items y ese INNER JOIN duplicaria las
+# lineas de un item con mas de un criterio.
+SQL_OC_ABIERTAS = """
+SELECT RTRIM(i.f120_referencia), RTRIM(b.f150_id),
+       'OC-' + RTRIM(d.f420_id_tipo_docto) + RTRIM(CONVERT(varchar(12), d.f420_consec_docto)),
+       CONVERT(float, SUM(m.f421_cant_pedida - m.f421_cant_entrada))
+FROM t420_cm_oc_docto d
+JOIN t421_cm_oc_movto m ON m.f421_rowid_oc_docto = d.f420_rowid
+JOIN t150_mc_bodegas b ON b.f150_rowid = m.f421_rowid_bodega
+JOIN t121_mc_items_extensiones x ON x.f121_rowid = m.f421_rowid_item_ext
+JOIN t120_mc_items i ON i.f120_rowid = x.f121_rowid_item
+WHERE d.f420_id_cia = :cia AND d.f420_fecha >= :desde_oc AND b.f150_id IN :bodegas
+  AND d.f420_ind_estado <> 9 AND m.f421_ind_estado IN (1, 2) /*ACTIVO:x,i*/
+GROUP BY i.f120_referencia, b.f150_id, d.f420_id_tipo_docto, d.f420_consec_docto
+HAVING SUM(m.f421_cant_pedida - m.f421_cant_entrada) > 0"""
+
 ACTIVO_RE = re.compile(r"/\*ACTIVO:(\w+),(\w+)\*/")
 
 
@@ -207,11 +228,14 @@ def _filtrar_activos(solo: bool, eng) -> tuple[bool, str | None]:
 VENTAS_SQL_FILE = Path(__file__).parent / "sql" / "ventas_siesa.sql"
 
 
-def _ventas_sql() -> str | None:
+VENTAS_CEDI_SQL_FILE = Path(__file__).parent / "sql" / "ventas_cedi_siesa.sql"
+
+
+def _ventas_sql(archivo: Path = VENTAS_SQL_FILE) -> str | None:
     """Consulta de ventas por mes; None si el archivo solo tiene comentarios (aun no definida)."""
-    if not VENTAS_SQL_FILE.exists():
+    if not archivo.exists():
         return None
-    q = "\n".join(l for l in VENTAS_SQL_FILE.read_text(encoding="utf-8").splitlines() if not l.strip().startswith("--"))
+    q = "\n".join(l for l in archivo.read_text(encoding="utf-8").splitlines() if not l.strip().startswith("--"))
     return q.strip() or None
 
 
@@ -386,8 +410,10 @@ def sincronizar_bodegas(cur) -> int:
                 log.warning("No se pudieron leer las tiendas de %s: %s", db, e)
                 continue
             for cod, nombre in filas:
+                # el nombre de la bitacora (fuente de verdad) manda; el de Siesa solo se usa si la bitacora no tiene tienda o no tiene nombre
                 cur.execute("INSERT INTO ddmrp.maestro_bodega (bodega_id, empresa, descripcion) VALUES (%s, %s, %s) "
-                            "ON CONFLICT (empresa, bodega_id) DO UPDATE SET descripcion = EXCLUDED.descripcion",
+                            "ON CONFLICT (empresa, bodega_id) DO UPDATE SET descripcion = COALESCE("
+                            "(SELECT NULLIF(btrim(b.descripcion), '') FROM ddmrp.abast_bitacora b WHERE b.empresa = EXCLUDED.empresa AND b.bodega_id = EXCLUDED.bodega_id), EXCLUDED.descripcion)",
                             (cod, empresa, nombre))
                 n += 1
     cur.execute("INSERT INTO ddmrp.maestro_bodega (bodega_id, empresa) SELECT bodega_id, empresa FROM ddmrp.abast_bitacora "
@@ -635,24 +661,35 @@ def _sincronizar_ventas() -> dict:
                     por_empresa.setdefault(emp, []).append(b)
                 if not por_empresa:
                     raise RuntimeError("abast_bitacora esta vacia: cargala en Maestros antes de traer las ventas")
+                cur.execute("SELECT empresa, bodega_id FROM ddmrp.maestro_cedi")
+                cedis_por_empresa: dict[str, list[str]] = {}
+                for emp, b in cur.fetchall():
+                    cedis_por_empresa.setdefault(emp, []).append(b)
+                csql = _ventas_sql(VENTAS_CEDI_SQL_FILE)   # ventas directas del CEDI (PT001); su rotacion tambien cuenta para la necesidad de compra
                 cur.execute("CREATE TEMP TABLE stg_vm (empresa text, mes char(6), bodega_id text, producto_id text, cantidad numeric, valor numeric) ON COMMIT DROP")
                 leidas: list[str] = []
                 for empresa, db in (("05", settings.siesa_db), ("21", settings.siesa_db_s)):
                     bodegas = por_empresa.get(empresa, [])
-                    if not db or not bodegas:
+                    cedis = cedis_por_empresa.get(empresa, []) if csql else []
+                    if not db or not (bodegas or cedis):
                         continue
-                    eng, n = siesa_engine(db), 0
+                    eng = siesa_engine(db)
                     filtrar, aviso = _filtrar_activos(solo, eng)
                     if aviso:
                         res[f"aviso_estado_{empresa}"] = aviso
-                    progreso.avance(f"Leyendo ventas de {db} desde {desde:%Y-%m} ({len(bodegas)} bodegas)… puede tardar varios minutos")
-                    with cur.copy("COPY stg_vm (empresa, mes, bodega_id, producto_id, cantidad, valor) FROM STDIN") as cp:
-                        for r in _stream(eng, _con_estado(vsql, filtrar), {"cia": settings.siesa_cia, "bodegas": bodegas, "desde": desde}, expanding="bodegas"):
-                            cp.write_row((empresa,) + tuple(r)); n += 1
-                            if n % 50000 == 0:
-                                progreso.avance(f"Leyendo ventas de {db}: {n:,} filas…")
-                    res[f"ventas_{empresa}"] = n
-                    leidas += [(empresa, b) for b in bodegas]
+                    # (clave del resumen, consulta, bodegas): tiendas y, aparte, ventas directas de los CEDI
+                    for clave, sql_v, bods in ((f"ventas_{empresa}", vsql, bodegas), (f"ventas_cedi_{empresa}", csql, cedis)):
+                        if not bods:
+                            continue
+                        n = 0
+                        progreso.avance(f"Leyendo ventas de {db} desde {desde:%Y-%m} ({len(bods)} bodegas{' CEDI' if 'cedi' in clave else ''})… puede tardar varios minutos")
+                        with cur.copy("COPY stg_vm (empresa, mes, bodega_id, producto_id, cantidad, valor) FROM STDIN") as cp:
+                            for r in _stream(eng, _con_estado(sql_v, filtrar), {"cia": settings.siesa_cia, "bodegas": bods, "desde": desde}, expanding="bodegas"):
+                                cp.write_row((empresa,) + tuple(r)); n += 1
+                                if n % 50000 == 0:
+                                    progreso.avance(f"Leyendo ventas de {db}: {n:,} filas…")
+                        res[clave] = n
+                        leidas += [(empresa, b) for b in bods]
                 if not leidas:
                     raise RuntimeError("No hay bodegas para leer (revisa SIESA_DB / SIESA_DB_S y la bitacora)")
                 progreso.avance("Guardando las ventas en la base…")
@@ -707,6 +744,12 @@ def _correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
                 por_empresa.setdefault(emp, []).append(b)
             if not por_empresa:
                 log.warning("abast_bitacora vacia: cargala en Configuracion (Excel) antes de correr el ETL")
+            cur.execute("SELECT empresa, bodega_id FROM ddmrp.maestro_cedi")
+            cedis_emp: dict[str, list[str]] = {}
+            for emp, b in cur.fetchall():
+                cedis_emp.setdefault(emp, []).append(b)
+            oc_dias = _param(cur, "oc_dias_historia")   # las OC mas viejas que esto no cuentan (una OC olvidada sin cerrar inflaria el transito para siempre)
+            desde_oc = date.today() - timedelta(days=int(min(max(oc_dias, 30), 1500)) if oc_dias else 365)
             if not settings.siesa_host:
                 log.warning("Siesa no configurado: inventario, transitos y ventas quedan como estaban")
                 raw.commit()
@@ -740,6 +783,17 @@ def _correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
                 res[f"transitos_{empresa}"] = _volcar(
                     cur, ((empresa,) + r for r in _stream(eng, _con_estado(SQL_TRANSITOS, filtrar), prm, expanding="bodegas")), "ddmrp.transitos",
                     ["empresa", "producto_id", "bodega_id", "documento", "cantidad"], reemplazar=False)
+                progreso.avance(f"Leyendo órdenes de compra abiertas de Siesa ({db})…")
+                bod_oc = sorted(set(bodegas) | set(cedis_emp.get(empresa, [])))
+                try:   # sin las OC el buffer del CEDI solo pierde el transito: no tumba el ETL
+                    filas_oc = list(_stream(eng, _con_estado(SQL_OC_ABIERTAS, filtrar), {**prm, "bodegas": bod_oc, "desde_oc": desde_oc}, expanding="bodegas"))   # se lee todo ANTES de escribir: un fallo del origen no deja la transaccion a medias
+                    res[f"oc_abiertas_{empresa}"] = _volcar(
+                        cur, ((empresa,) + r for r in filas_oc),
+                        "ddmrp.transitos", ["empresa", "producto_id", "bodega_id", "documento", "cantidad"], reemplazar=False)
+                except Exception as e:
+                    if isinstance(e, psycopg.Error):
+                        raise
+                    log.warning("OC abiertas de %s no leidas: %s", db, e); res[f"oc_error_{empresa}"] = str(e)[:200]
                 progreso.avance(f"Leyendo items, criterios y centros de operación ({db})…")
                 try:  # descripciones, laboratorio, criterios y centro de operacion: utiles pero no criticos
                     res[f"items_{empresa}"] = _items_de_siesa(cur, eng, primera=(empresa == "05"), empresa=empresa)

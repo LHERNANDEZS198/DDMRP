@@ -248,6 +248,66 @@ def empresa_en_llaves() -> None:
             log.exception("No se pudo meter la empresa en la llave de %s", tabla)
 
 
+COLS_SUG = ("ejecucion_id, fecha_calculo, empresa, bodega_id, producto_id, adu, iv, forecast, lead_time, frecuencia, unidad_despacho, zrb, zrs, za, zv, "
+            "tor, toy, tog, toy_aj, tog_aj, inventario, en_transito, demanda_calificada, flujo_neto, pct_buffer, zona, vectorizacion, cantidad_sugerida, "
+            "condenado, cantidad_necesaria, stock_cedi, regla_objetivo, estado, cantidad_aprobada")
+
+# El CEDI como fila del buffer (modo «Ver solo CEDI» de los Informes). Va aparte del bloque principal y cada sentencia en su propia transaccion:
+# si algo falla aqui no se pierde el resto del esquema.
+SENTENCIAS_CEDI = [
+    # buffer del CEDI: mismas columnas que las de las tiendas, pero en otra tabla para que el despacho, el reparto y los planos NUNCA lo vean
+    "CREATE TABLE IF NOT EXISTS ddmrp.sugerencias_cedi (LIKE ddmrp.sugerencias_envio INCLUDING DEFAULTS)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_sug_cedi ON ddmrp.sugerencias_cedi (ejecucion_id, empresa, bodega_id, producto_id)",
+    # lead time del abastecimiento al CEDI (dias): una fila por item o producto_id = '*' para el general de la empresa. Por ahora 30 dias para todo
+    # (comprado o maquilado; la produccion propia no se modela): luego se afina por proveedor / item en este maestro.
+    "CREATE TABLE IF NOT EXISTS ddmrp.abast_leadtime_cedi (empresa TEXT NOT NULL, producto_id TEXT NOT NULL DEFAULT '*', "
+    "leadtime NUMERIC(8,2) NOT NULL CHECK (leadtime >= 0), PRIMARY KEY (empresa, producto_id))",
+    "INSERT INTO ddmrp.abast_leadtime_cedi (empresa, producto_id, leadtime) SELECT e, '*', 30 FROM (VALUES ('05'), ('21')) v(e) ON CONFLICT DO NOTHING",
+    "INSERT INTO ddmrp.parametro VALUES ('oc_dias_historia', 365, 'Antiguedad maxima (dias) de las ordenes de compra abiertas que cuentan como transito: una OC vieja sin cerrar en Siesa no debe inflar el flujo neto') ON CONFLICT DO NOTHING",
+    # de donde sale la demanda de cada CEDI: las tiendas que abastece (su venta) y el propio CEDI (venta directa mayorista / digital).
+    # Un CEDI por empresa (el primero del maestro), igual que el reparto.
+    """CREATE OR REPLACE VIEW ddmrp.v_origen_cedi AS
+       WITH cedis AS (SELECT empresa, min(bodega_id) AS bodega_id FROM ddmrp.maestro_cedi GROUP BY empresa)
+       SELECT b.empresa, b.cedi AS cedi, b.bodega_id AS origen FROM ddmrp.abast_bitacora b JOIN cedis c ON c.empresa = b.empresa AND c.bodega_id = b.cedi
+       UNION
+       SELECT empresa, bodega_id AS cedi, bodega_id AS origen FROM cedis""",
+    # lo que leen los Informes: tiendas + CEDI. Cual de los dos se ve lo decide app/modo.py (por defecto solo tiendas)
+    f"""CREATE OR REPLACE VIEW ddmrp.v_sugerencias_informe AS
+        SELECT {COLS_SUG} FROM ddmrp.sugerencias_envio UNION ALL SELECT {COLS_SUG} FROM ddmrp.sugerencias_cedi""",
+]
+
+
+# La bitacora es la fuente de verdad de las tiendas y de sus nombres. maestro_bodega (catalogo que usan los demas joins: filtros, permisos, nombres en pantalla)
+# solo la refleja: un trigger copia el nombre de la bitacora cada vez que se escribe, y el ETL de Siesa ya no pisa un nombre que la bitacora tenga.
+SENTENCIAS_BITACORA = [
+    "ALTER TABLE ddmrp.abast_bitacora ADD COLUMN IF NOT EXISTS descripcion TEXT",
+    # una sola vez de hecho: solo llena los nombres que falten con el que ya tenia el catalogo (Siesa)
+    """UPDATE ddmrp.abast_bitacora b SET descripcion = mb.descripcion FROM ddmrp.maestro_bodega mb
+       WHERE mb.empresa = b.empresa AND mb.bodega_id = b.bodega_id AND (b.descripcion IS NULL OR btrim(b.descripcion) = '')
+         AND mb.descripcion IS NOT NULL AND btrim(mb.descripcion) <> ''""",
+    """CREATE OR REPLACE FUNCTION ddmrp.fn_bitacora_nombre() RETURNS trigger AS $$
+       BEGIN
+         INSERT INTO ddmrp.maestro_bodega (bodega_id, empresa, descripcion)
+         VALUES (NEW.bodega_id, NEW.empresa, NULLIF(btrim(NEW.descripcion), ''))
+         ON CONFLICT (empresa, bodega_id) DO UPDATE
+           SET descripcion = COALESCE(NULLIF(btrim(NEW.descripcion), ''), ddmrp.maestro_bodega.descripcion);
+         RETURN NEW;
+       END
+       $$ LANGUAGE plpgsql""",
+    "DROP TRIGGER IF EXISTS trg_bitacora_nombre ON ddmrp.abast_bitacora",
+    "CREATE TRIGGER trg_bitacora_nombre AFTER INSERT OR UPDATE OF descripcion ON ddmrp.abast_bitacora FOR EACH ROW EXECUTE FUNCTION ddmrp.fn_bitacora_nombre()",
+]
+
+
+def esquema_cedi() -> None:
+    for s in SENTENCIAS_CEDI + SENTENCIAS_BITACORA:
+        try:
+            with pg.begin() as c:
+                c.execute(text(s))
+        except Exception:
+            log.exception("No se pudo aplicar el esquema del CEDI: %s", s[:80])
+
+
 def asegurar_esquema():
     nueva = False
     try:
@@ -266,6 +326,7 @@ def asegurar_esquema():
     except Exception:
         log.exception("No se pudo actualizar el esquema")
     empresa_en_llaves()
+    esquema_cedi()
     if nueva:
         cedi_y_co_iniciales()
 

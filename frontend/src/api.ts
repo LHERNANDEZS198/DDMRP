@@ -24,8 +24,16 @@ async function errorDe(r: Response): Promise<string> {
   try { const j = JSON.parse(t); return typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail ?? j) } catch { return t || `Error ${r.status}` }
 }
 
+/** «Ver solo CEDI» de los Informes: se guarda en el navegador y se agrega como ?solo_cedi=true a las consultas de Control, Alertas, Salud y Clasificación. */
+const LS_CEDI = 'ddmrp_solo_cedi'
+export const soloCediOn = () => { try { return localStorage.getItem(LS_CEDI) === '1' } catch { return false } }
+export const setSoloCedi = (v: boolean) => { try { localStorage.setItem(LS_CEDI, v ? '1' : '0') } catch { /* sin almacenamiento */ } }
+const RUTAS_INFORMES = /^\/(control|alertas|salud|clasificacion)(\/|\?|$)/
+const conModo = (path: string) =>
+  soloCediOn() && RUTAS_INFORMES.test(path) && !/[?&]solo_cedi=/.test(path) ? path + (path.includes('?') ? '&' : '?') + 'solo_cedi=true' : path
+
 export async function api<T = any>(path: string, init: RequestInit = {}): Promise<T> {
-  const r = await fetch('/api' + path, {
+  const r = await fetch('/api' + conModo(path), {
     ...init,
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(init.headers || {}) },
   })
@@ -36,7 +44,7 @@ export async function api<T = any>(path: string, init: RequestInit = {}): Promis
 
 /** GET de una lista que el servidor puede recortar: devuelve las filas y el total real (cabecera X-Total-Rows). */
 export async function apiLista<T = any>(path: string): Promise<{ datos: T[]; total: number }> {
-  const r = await fetch('/api' + path, { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } })
+  const r = await fetch('/api' + conModo(path), { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } })
   if (r.status === 401) { localStorage.removeItem('token'); location.reload() }
   if (!r.ok) throw new Error(await errorDe(r))
   const datos = await r.json()
@@ -76,7 +84,7 @@ function bajarBlob(blob: Blob, nombre: string) {
 
 /** GET que devuelve un archivo (p.ej. el Excel de un maestro). */
 export async function bajar(path: string, nombre: string) {
-  const r = await fetch('/api' + path, { headers: { Authorization: `Bearer ${token}` } })
+  const r = await fetch('/api' + conModo(path), { headers: { Authorization: `Bearer ${token}` } })
   if (r.status === 401) { localStorage.removeItem('token'); location.reload() }
   if (!r.ok) throw new Error(await errorDe(r))
   bajarBlob(await r.blob(), nombre)

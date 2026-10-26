@@ -9,11 +9,12 @@ from .. import excel, mapa_calor
 from ..activos import solo_activos
 from ..db import pg
 from ..security import usuario_actual, filtro_sql_permisos, requiere
+from ..modo import fijar_modo, cond_cedi
 
-router = APIRouter(prefix="/control", tags=["control"], dependencies=[Depends(requiere("ver_control"))])
+router = APIRouter(prefix="/control", tags=["control"], dependencies=[Depends(requiere("ver_control")), Depends(fijar_modo)])
 ULTIMA = "(SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok')"
 ZONAS = ("ROJA", "AMARILLA", "VERDE", "EXCESO")
-FROM = """FROM ddmrp.sugerencias_envio s
+FROM = """FROM ddmrp.v_sugerencias_informe s
           LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = s.producto_id
           LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = s.bodega_id AND mb.empresa = s.empresa
           LEFT JOIN ddmrp.laboratorio lb ON lb.codigo = mi.categoria"""
@@ -25,7 +26,7 @@ def _csv(v: str | None) -> list[str]:
 
 def _filtros(user, bodegas, labs, q, zonas, dia, empresa, a="s", zona_expr="s.zona::text", crit=None) -> tuple[list[str], dict]:
     w, p = filtro_sql_permisos(user, f"{a}.bodega_id", "mi.categoria")
-    cond = [w, solo_activos(a)]   # solo items activos de Siesa (regla solo_items_activos), tambien en la historia
+    cond = [w, solo_activos(a), cond_cedi(a)]   # solo items activos de Siesa (regla solo_items_activos), tambien en la historia; tiendas o, con «Ver solo CEDI», el CEDI
     if _csv(bodegas):
         cond.append(f"{a}.bodega_id = ANY(:f_bod)"); p["f_bod"] = _csv(bodegas)
     if _csv(labs):
@@ -58,7 +59,7 @@ def _donde(user, bodegas, labs, q, zonas, dia, empresa=None, crit=None) -> tuple
 @router.get("/filtros")
 def filtros(user=Depends(usuario_actual)):
     w, p = filtro_sql_permisos(user)
-    base = f"{FROM} WHERE s.ejecucion_id = {ULTIMA} AND {w} AND {solo_activos('s')}"
+    base = f"{FROM} WHERE s.ejecucion_id = {ULTIMA} AND {w} AND {solo_activos('s')} AND {cond_cedi('s')}"
     with pg.connect() as c:
         ej = c.execute(text(f"SELECT id, fecha_calculo, fin FROM ddmrp.ejecucion_motor WHERE id = {ULTIMA}")).mappings().first()
         tiendas = [dict(r) for r in c.execute(text(
@@ -317,7 +318,7 @@ def _mapa_datos(c, user, bodegas, labs, q, zonas, dia, empresa, crit, desde, has
     total = c.execute(text(f"SELECT count(*) {base} WHERE {w}"), p).scalar()
     sql = f"""SELECT h.empresa, h.bodega_id, mb.descripcion AS bodega_nombre, h.producto_id, mi.descripcion,
                      COALESCE(mi.categoria, '(sin laboratorio)') AS laboratorio, h.zona::text AS zona, h.pct_buffer,
-                     (SELECT s.adu::float8 FROM ddmrp.sugerencias_envio s WHERE s.ejecucion_id = {ULTIMA}
+                     (SELECT s.adu::float8 FROM ddmrp.v_sugerencias_informe s WHERE s.ejecucion_id = {ULTIMA}
                         AND s.empresa = h.empresa AND s.bodega_id = h.bodega_id AND s.producto_id = h.producto_id) AS adu,
                      (SELECT ci.costo::float8 FROM ddmrp.costo_item ci WHERE ci.producto_id = h.producto_id) AS costo
               {base} WHERE {w} ORDER BY {ORDEN[orden]} LIMIT :lim"""

@@ -5,10 +5,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from .. import clasificacion as cl, excel
 from ..security import usuario_actual, requiere
+from ..modo import fijar_modo
 from .clasificacion import _calcular
 from .control import ZONAS, _csv
 
-router = APIRouter(prefix="/salud", tags=["salud"], dependencies=[Depends(requiere("ver_control"))])
+router = APIRouter(prefix="/salud", tags=["salud"], dependencies=[Depends(requiere("ver_control")), Depends(fijar_modo)])
 ORDEN_DIAG = ["prioridad", "reponer", "vigilar", "exceso_clave", "exceso", "dormido", "ok"]
 
 

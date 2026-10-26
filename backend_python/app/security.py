@@ -191,5 +191,6 @@ def filtro_sql_permisos(user: dict, alias_bodega="s.bodega_id", alias_cat="mi.ca
     extra = ""
     if emp:      # solo las tiendas de sus empresas (una tienda pertenece a la empresa en la que esta en el maestro de bodegas)
         params["emp_perm"] = emp
-        extra = f" AND {alias_bodega} IN (SELECT bodega_id FROM ddmrp.maestro_bodega WHERE empresa = ANY(:emp_perm))"
+        extra = (f" AND ({alias_bodega} IN (SELECT bodega_id FROM ddmrp.maestro_bodega WHERE empresa = ANY(:emp_perm))"
+                 f" OR {alias_bodega} IN (SELECT bodega_id FROM ddmrp.maestro_cedi WHERE empresa = ANY(:emp_perm)))")
     return "(" + " OR ".join(partes) + ")" + extra, params

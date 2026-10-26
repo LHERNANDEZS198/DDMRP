@@ -11,9 +11,10 @@ from ..activos import solo_activos
 from ..consultas import anotar
 from ..db import pg
 from ..security import usuario_actual, filtro_sql_permisos, requiere
+from ..modo import fijar_modo, solo_cedi
 from .control import _csv
 
-router = APIRouter(prefix="/clasificacion", tags=["clasificacion"], dependencies=[Depends(requiere("ver_control"))])
+router = APIRouter(prefix="/clasificacion", tags=["clasificacion"], dependencies=[Depends(requiere("ver_control")), Depends(fijar_modo)])
 ULTIMA = "(SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok')"
 
 
@@ -40,6 +41,14 @@ def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, l
     """Una fila por tienda x item (REC ya sumado al original) con la venta de la ventana, el buffer de la ultima corrida y el costo."""
     w, p = filtro_sql_permisos(user, "k.bodega_id", "mi.categoria")
     cond = [w, solo_activos("k")]
+    # «Ver solo CEDI»: la fila es (CEDI, item); su rotacion = venta directa del CEDI + la de TODAS las tiendas que abastece (lo que sale a las tiendas),
+    # su buffer sale de sugerencias_cedi y no hay tiendas. Sin el modo: solo tiendas, como siempre (las ventas directas del CEDI no cuentan como tienda).
+    cedi = solo_cedi()
+    v_bod = "d.cedi" if cedi else "a.bodega_id"
+    v_from = ("FROM ddmrp.ventas_mensual a JOIN ddmrp.v_origen_cedi d ON d.empresa = a.empresa AND d.origen = a.bodega_id" if cedi
+              else "FROM ddmrp.ventas_mensual a")
+    v_sin_cedi = ("true" if cedi else "NOT EXISTS (SELECT 1 FROM ddmrp.maestro_cedi mc WHERE mc.empresa = a.empresa AND mc.bodega_id = a.bodega_id)   -- las ventas directas del CEDI no son una tienda")
+    t_sug = "ddmrp.sugerencias_cedi" if cedi else "ddmrp.sugerencias_envio"
     pre_h = pre_v = pre_s = ""     # empresa y tienda elegidas tambien dentro de cada CTE (si no, Postgres agrega TODA la historia y filtra al final)
     if filtrar:
         if _csv(empresa):
@@ -47,7 +56,7 @@ def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, l
             pre_h += " AND empresa = ANY(:f_emp)"; pre_v += " AND a.empresa = ANY(:f_emp)"; pre_s += " AND empresa = ANY(:f_emp)"
         if _csv(bodegas):
             cond.append("k.bodega_id = ANY(:f_bod)"); p["f_bod"] = _csv(bodegas)
-            pre_h += " AND bodega_id = ANY(:f_bod)"; pre_v += " AND a.bodega_id = ANY(:f_bod)"; pre_s += " AND bodega_id = ANY(:f_bod)"
+            pre_h += " AND bodega_id = ANY(:f_bod)"; pre_v += f" AND {v_bod} = ANY(:f_bod)"; pre_s += " AND bodega_id = ANY(:f_bod)"
         if _csv(labs):
             cond.append("COALESCE(mi.categoria, '') = ANY(:f_lab)"); p["f_lab"] = [("" if x == "(sin laboratorio)" else x) for x in _csv(labs)]
         if q and q.strip():
@@ -87,17 +96,18 @@ def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, l
       SELECT empresa, bodega_id, producto_id, SUM(inv_suma)::float8 AS inv_suma, SUM(dias)::int AS dias_hist, SUM(dias_cero)::int AS dias_cero
       FROM ddmrp.inventario_mes WHERE mes >= :mes_desde AND {'true' if hist else 'false'}{pre_h} GROUP BY 1, 2, 3),
     v AS (
-      SELECT a.empresa, a.bodega_id, COALESCE(r.original_id, a.producto_id) AS producto_id,
+      SELECT a.empresa, {v_bod} AS bodega_id, COALESCE(r.original_id, a.producto_id) AS producto_id,
              SUM(a.cantidad)::float8 AS cant, SUM(a.valor)::float8 AS valor,
              MIN(a.mes) FILTER (WHERE a.cantidad > 0) AS primer_mes
-      FROM ddmrp.ventas_mensual a
+      {v_from}
       LEFT JOIN ddmrp.v_item_rec r ON r.empresa = a.empresa AND r.rec_id = a.producto_id
       WHERE a.mes >= :mes_desde{pre_v}
+        AND {v_sin_cedi}
       GROUP BY 1, 2, 3),
     s AS (
       SELECT empresa, bodega_id, producto_id, inventario::float8 AS inventario, iv::float8 AS iv, adu::float8 AS adu,
              zona::text AS zona, pct_buffer::float8 AS pct_buffer, flujo_neto::float8 AS flujo_neto, tog_aj::float8 AS tog_aj, cantidad_sugerida::float8 AS sugerido
-      FROM ddmrp.sugerencias_envio WHERE ejecucion_id = {ULTIMA}{pre_s}),
+      FROM {t_sug} WHERE ejecucion_id = {ULTIMA}{pre_s}),
     k AS (
       SELECT COALESCE(v.empresa, s.empresa) AS empresa, COALESCE(v.bodega_id, s.bodega_id) AS bodega_id,
              COALESCE(v.producto_id, s.producto_id) AS producto_id,
@@ -125,7 +135,7 @@ def _clase_global(c, user, mes_desde, nivel, criterio, corte_a, corte_b, nuevo, 
     import time
     w, p = filtro_sql_permisos(user, "k.bodega_id", "mi.categoria")
     ej = c.execute(text(f"SELECT {ULTIMA}")).scalar()
-    clave_c = (ej, w, tuple(sorted((k, str(v)) for k, v in p.items())), mes_desde, nivel, criterio, corte_a, corte_b, str(nuevo), tuple(cortes), metodo, corte_i)
+    clave_c = (ej, solo_cedi(), w, tuple(sorted((k, str(v)) for k, v in p.items())), mes_desde, nivel, criterio, corte_a, corte_b, str(nuevo), tuple(cortes), metodo, corte_i)
     hit = _CACHE_GLOBAL.get(clave_c)
     if hit and time.time() - hit[0] < _CACHE_TTL:
         anotar(cache_global="hit")

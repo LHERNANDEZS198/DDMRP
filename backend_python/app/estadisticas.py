@@ -3,7 +3,7 @@ import time
 from sqlalchemy import text
 from .db import pg
 
-TABLAS_ANALIZAR = ("sugerencias_envio", "buffer_historia", "inventario_mes", "ventas_mensual", "inventario_actual", "transitos", "item_criterio", "criterio",
+TABLAS_ANALIZAR = ("sugerencias_envio", "sugerencias_cedi", "buffer_historia", "inventario_mes", "ventas_mensual", "inventario_actual", "transitos", "item_criterio", "criterio",
                    "maestro_item", "costo_item", "item_estado", "inventario_cedi", "demanda_calificada")
 
 

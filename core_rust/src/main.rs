@@ -93,6 +93,96 @@ WHERE NOT EXISTS (SELECT 1 FROM rec r2 WHERE r2.empresa = b.empresa AND r2.rec_i
        OR NOT EXISTS (SELECT 1 FROM ddmrp.item_estado ie WHERE ie.empresa = b.empresa AND ie.producto_id = k.producto_id AND ie.estado <> 1))
 "#;
 
+/// Mismas columnas que SQL_ENTRADA, pero la fila es el CEDI de cada empresa (el primero de maestro_cedi): su demanda es la venta de las tiendas que
+/// abastece (NO los despachos: efecto latigo) mas su venta directa (mayorista / digital); los traslados no cuentan (ya van en la venta de las tiendas).
+/// Inventario = el del CEDI (inventario_cedi). Lead time = abast_leadtime_cedi (item > general '*' > 30 dias). Sin frecuencia fija (1 dia), sin
+/// unidad de despacho (1), sin cotas, promocion, vectorizacion ni demanda calificada. Transito = saldo de las OC abiertas hacia el CEDI (ETL: SQL_OC_ABIERTAS).
+/// El pronostico del CEDI es la suma del de las tiendas que abastece (como en las tiendas: sin pronostico el ADU promedia un cero de mas).
+const SQL_ENTRADA_CEDI: &str = r#"
+WITH meses AS (
+  SELECT n, to_char(date_trunc('month', $1::text::date) - make_interval(months => 11 - n), 'YYYYMM') AS mes
+  FROM generate_series(0, 11) AS n
+),
+rec AS (SELECT empresa, rec_id, original_id FROM ddmrp.v_item_rec),
+cedis AS (SELECT empresa, min(bodega_id) AS bodega_id FROM ddmrp.maestro_cedi GROUP BY empresa),
+v AS (
+  SELECT o.empresa, o.cedi AS bodega_id, COALESCE(r.original_id, a.producto_id) AS producto_id,
+    COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 0), 0)::float8 AS m0,
+    COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 1), 0)::float8 AS m1,
+    COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 2), 0)::float8 AS m2,
+    COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 3), 0)::float8 AS m3,
+    COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 4), 0)::float8 AS m4,
+    COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 5), 0)::float8 AS m5,
+    COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 6), 0)::float8 AS m6,
+    COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 7), 0)::float8 AS m7,
+    COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 8), 0)::float8 AS m8,
+    COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 9), 0)::float8 AS m9,
+    COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 10), 0)::float8 AS m10,
+    COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 11), 0)::float8 AS m11
+  FROM ddmrp.ventas_mensual a JOIN meses m ON m.mes = a.mes
+  JOIN ddmrp.v_origen_cedi o ON o.empresa = a.empresa AND o.origen = a.bodega_id
+  LEFT JOIN rec r ON r.empresa = a.empresa AND r.rec_id = a.producto_id
+  GROUP BY o.empresa, o.cedi, COALESCE(r.original_id, a.producto_id)
+),
+inv AS (
+  SELECT ic.empresa, ce.bodega_id, COALESCE(r.original_id, ic.producto_id) AS producto_id, SUM(ic.disponible) AS disponible
+  FROM ddmrp.inventario_cedi ic
+  JOIN cedis ce ON ce.empresa = ic.empresa
+  LEFT JOIN rec r ON r.empresa = ic.empresa AND r.rec_id = ic.producto_id
+  GROUP BY 1, 2, 3
+),
+tr AS (   -- OC abiertas (saldo por recibir) con destino el CEDI, que el ETL deja en transitos con documento 'OC-...'
+  SELECT t.empresa, t.bodega_id, COALESCE(r.original_id, t.producto_id) AS producto_id, SUM(t.cantidad)::float8 AS cant
+  FROM ddmrp.transitos t
+  JOIN cedis ce ON ce.empresa = t.empresa AND ce.bodega_id = t.bodega_id
+  LEFT JOIN rec r ON r.empresa = t.empresa AND r.rec_id = t.producto_id
+  WHERE t.documento LIKE 'OC-%'
+  GROUP BY 1, 2, 3
+),
+pron AS (
+  SELECT o.empresa, o.cedi AS bodega_id, p.producto_id, SUM(p.pronostico)::float8 AS pronostico
+  FROM ddmrp.pronostico p
+  JOIN ddmrp.v_origen_cedi o ON o.empresa = p.empresa AND o.origen = p.bodega_id
+  GROUP BY 1, 2, 3
+),
+llaves AS (
+  SELECT empresa, bodega_id, producto_id FROM v
+  UNION SELECT empresa, bodega_id, producto_id FROM inv WHERE disponible <> 0
+  UNION SELECT empresa, bodega_id, producto_id FROM tr WHERE cant <> 0
+)
+SELECT k.empresa, k.bodega_id, k.producto_id,
+  COALESCE(v.m0, 0) AS m0, COALESCE(v.m1, 0) AS m1, COALESCE(v.m2, 0) AS m2, COALESCE(v.m3, 0) AS m3, COALESCE(v.m4, 0) AS m4, COALESCE(v.m5, 0) AS m5, COALESCE(v.m6, 0) AS m6, COALESCE(v.m7, 0) AS m7, COALESCE(v.m8, 0) AS m8, COALESCE(v.m9, 0) AS m9, COALESCE(v.m10, 0) AS m10, COALESCE(v.m11, 0) AS m11,
+  COALESCE(p.pronostico, 0)::float8                       AS pronostico,
+  COALESCE(li.leadtime, lg.leadtime, 30)::float8          AS lead_time,
+  1::float8                                               AS frecuencia,
+  1::float8                                               AS unidad_despacho,
+  0::float8                                               AS cota_max,
+  0::float8                                               AS cota_min,
+  0::int2                                                 AS promo,
+  0::float8                                               AS vectorizacion,
+  (EXISTS (SELECT 1 FROM ddmrp.item_condenado cd WHERE cd.empresa = k.empresa AND cd.producto_id = k.producto_id AND cd.bodega_id IN (k.bodega_id, '*')))::int::int2 AS condenado,
+  COALESCE(i.disponible, 0)::float8                       AS inventario,
+  COALESCE(t.cant, 0)::float8                             AS en_transito,
+  0::float8                                               AS demanda_calificada,
+  COALESCE(oi.regla, ol.regla, 0)::int2                   AS regla_objetivo
+FROM llaves k
+LEFT JOIN v ON v.empresa = k.empresa AND v.bodega_id = k.bodega_id AND v.producto_id = k.producto_id
+LEFT JOIN pron p ON p.empresa = k.empresa AND p.bodega_id = k.bodega_id AND p.producto_id = k.producto_id
+LEFT JOIN inv i ON i.empresa = k.empresa AND i.bodega_id = k.bodega_id AND i.producto_id = k.producto_id
+LEFT JOIN tr t ON t.empresa = k.empresa AND t.bodega_id = k.bodega_id AND t.producto_id = k.producto_id
+LEFT JOIN ddmrp.abast_leadtime_cedi li ON li.empresa = k.empresa AND li.producto_id = k.producto_id
+LEFT JOIN ddmrp.abast_leadtime_cedi lg ON lg.empresa = k.empresa AND lg.producto_id = '*'
+LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = k.producto_id
+LEFT JOIN ddmrp.reposicion_item oi ON oi.producto_id = k.producto_id
+LEFT JOIN ddmrp.reposicion_laboratorio ol ON ol.laboratorio = mi.categoria
+WHERE NOT EXISTS (SELECT 1 FROM rec r2 WHERE r2.empresa = k.empresa AND r2.rec_id = k.producto_id)
+  AND (mi.producto_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM ddmrp.maestro_item))
+  AND (NOT EXISTS (SELECT 1 FROM ddmrp.item_empresa ie0 WHERE ie0.empresa = k.empresa)
+       OR EXISTS (SELECT 1 FROM ddmrp.item_empresa ie WHERE ie.empresa = k.empresa AND ie.producto_id = k.producto_id))
+  AND ((SELECT COALESCE(max(valor), 1) FROM ddmrp.parametro WHERE clave = 'solo_items_activos') = 0
+       OR NOT EXISTS (SELECT 1 FROM ddmrp.item_estado ie WHERE ie.empresa = k.empresa AND ie.producto_id = k.producto_id AND ie.estado <> 1))
+"#;
+
 fn arg(name: &str) -> Option<String> {
     let a: Vec<String> = std::env::args().collect();
     a.iter().position(|x| x == name).and_then(|p| a.get(p + 1).cloned())
@@ -154,6 +244,8 @@ fn main() -> Result<()> {
     let url = std::env::var("DATABASE_URL").context("falta DATABASE_URL")?;
     let ejecucion_id: i64 = arg("--ejecucion-id").context("falta --ejecucion-id")?.parse()?;
     let fecha_arg = arg("--fecha");
+    // --modo cedi: calcula el buffer del CEDI (SQL_ENTRADA_CEDI) y lo escribe en ddmrp.sugerencias_cedi; sin el, las tiendas en ddmrp.sugerencias_envio
+    let modo_cedi = arg("--modo").as_deref() == Some("cedi");
 
     let mut client = Client::connect(&url, NoTls)?;
     let fecha: String = match fecha_arg {
@@ -164,7 +256,7 @@ fn main() -> Result<()> {
     let factores = leer_factores(&mut client)?;
     let params = leer_parametros(&mut client)?;
 
-    let rows = client.query(SQL_ENTRADA, &[&fecha])?;
+    let rows = client.query(if modo_cedi { SQL_ENTRADA_CEDI } else { SQL_ENTRADA }, &[&fecha])?;
     let items: Vec<Entrada> = rows
         .iter()
         .map(|r| Entrada {
@@ -188,6 +280,10 @@ fn main() -> Result<()> {
         })
         .collect();
     if items.is_empty() {
+        if modo_cedi {   // sin CEDI configurado o sin datos: no es un error de la corrida
+            println!("{{\"ok\":true,\"filas\":0,\"modo\":\"cedi\"}}");
+            return Ok(());
+        }
         bail!("no hay combinaciones bodega/producto para calcular (ventas_mensual / abast_bitacora vacias?)");
     }
 
@@ -200,11 +296,13 @@ fn main() -> Result<()> {
 
     // Escritura masiva via COPY (CSV); los ids son texto sin comas, se entrecomillan por seguridad.
     let q = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
-    let mut w = client.copy_in(
-        "COPY ddmrp.sugerencias_envio (ejecucion_id, fecha_calculo, empresa, bodega_id, producto_id, adu, iv, forecast, \
+    let tabla = if modo_cedi { "ddmrp.sugerencias_cedi" } else { "ddmrp.sugerencias_envio" };
+    let copia = format!(
+        "COPY {tabla} (ejecucion_id, fecha_calculo, empresa, bodega_id, producto_id, adu, iv, forecast, \
          lead_time, frecuencia, unidad_despacho, zrb, zrs, za, zv, tor, toy, tog, toy_aj, tog_aj, inventario, en_transito, \
          demanda_calificada, flujo_neto, pct_buffer, zona, vectorizacion, cantidad_sugerida, condenado, regla_objetivo) FROM STDIN WITH (FORMAT csv)",
-    )?;
+    );
+    let mut w = client.copy_in(copia.as_str())?;
     for (i, r) in res.iter().enumerate() {
         let z = &r.zonas;
         writeln!(
