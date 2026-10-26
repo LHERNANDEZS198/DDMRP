@@ -297,7 +297,7 @@ SENTENCIAS_BITACORA = [
        $$ LANGUAGE plpgsql""",
     """INSERT INTO ddmrp.perfil (perfil_id, nombre, descripcion, nivel, permisos, sistema) VALUES
          ('compras', 'Compras', 'Ve el CEDI (necesidades, sobrestock, clasificacion) y administra los maestros de compras', 'edicion',
-          '{ver_control,ver_alertas,ver_compras,cargar_maestros_compras}', true)
+          '{ver_control,ver_alertas,ver_compras,cargar_maestros_compras,gestionar_compras}', true)
        ON CONFLICT (perfil_id) DO NOTHING""",
     "DROP TRIGGER IF EXISTS trg_bitacora_nombre ON ddmrp.abast_bitacora",
     "CREATE TRIGGER trg_bitacora_nombre AFTER INSERT OR UPDATE OF descripcion ON ddmrp.abast_bitacora FOR EACH ROW EXECUTE FUNCTION ddmrp.fn_bitacora_nombre()",
@@ -339,6 +339,18 @@ SENTENCIAS_COMPRAS = [
          ('pedido_minimo_bloquea', 0, 'Proveedores bajo su pedido minimo: 0 = se muestran con alerta (no se bloquean); 1 = se bloquean y no se muestran'),
          ('poca_historia_meses', 3, 'Un item con menos de estos meses con venta (ultimos 12) se marca «poca historia»: solo es una alerta, no bloquea')
        ON CONFLICT DO NOTHING""",
+    # cantidad a pedir que compras edito en «Necesidades de compra»: vive aparte del calculo, asi que sobrevive a las corridas del motor y se conserva hasta que se monte la OC
+    """CREATE TABLE IF NOT EXISTS ddmrp.compras_cantidad (
+         empresa TEXT NOT NULL, producto_id TEXT NOT NULL, cantidad NUMERIC(14,3) NOT NULL CHECK (cantidad >= 0), nota TEXT,
+         usuario TEXT, actualizado TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (empresa, producto_id))""",
+    # marcas de migraciones de una sola vez (p.ej. dar un permiso nuevo a un perfil de sistema que ya existia sin pisarlo despues)
+    "CREATE TABLE IF NOT EXISTS ddmrp.migracion_marca (clave TEXT PRIMARY KEY, fecha TIMESTAMPTZ NOT NULL DEFAULT now())",
+    """DO $$ BEGIN
+         IF NOT EXISTS (SELECT 1 FROM ddmrp.migracion_marca WHERE clave = 'perfil_compras_gestionar') THEN
+           UPDATE ddmrp.perfil SET permisos = array_append(permisos, 'gestionar_compras') WHERE perfil_id = 'compras' AND NOT ('gestionar_compras' = ANY(permisos));
+           INSERT INTO ddmrp.migracion_marca (clave) VALUES ('perfil_compras_gestionar');
+         END IF;
+       END $$""",
     # proveedor de compra: el de la COTIZACION vigente del item (lo que importa a compras) y, si no hay cotizacion, el del item de Siesa (respaldo). Aqui se guarda
     # el proveedor que trae el item en Siesa (informativo) y de donde salio el proveedor efectivo (proveedor_id/sucursal): 'cotizacion' o 'item'
     "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS proveedor_item TEXT",

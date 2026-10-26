@@ -855,6 +855,41 @@ def refrescar_cedi() -> dict:
         raw.close()
 
 
+def refrescar_oc_cedi() -> dict:
+    """Vuelve a leer de Siesa SOLO las ordenes de compra abiertas hacia los CEDI (su saldo por recibir es el transito del buffer del CEDI) y reemplaza esas filas de
+    ddmrp.transitos. Es lo que necesita «recalcular necesidades de compra» sin correr el ETL completo. Si Siesa falla, queda lo que habia."""
+    res: dict = {}
+    if not settings.siesa_host:
+        return {"aviso": "Siesa no configurado"}
+    raw = pg.raw_connection()
+    try:
+        with raw.cursor() as cur:
+            cur.execute("SELECT empresa, bodega_id FROM ddmrp.maestro_cedi")
+            cedis: dict[str, list[str]] = {}
+            for emp, b in cur.fetchall():
+                cedis.setdefault(emp, []).append(b)
+            oc_dias = _param(cur, "oc_dias_historia")
+            desde_oc = date.today() - timedelta(days=int(min(max(oc_dias, 30), 1500)) if oc_dias else 365)
+            solo = _solo_activos(cur)
+            for empresa, db in (("05", settings.siesa_db), ("21", settings.siesa_db_s)):
+                bods = cedis.get(empresa, [])
+                if not db or not bods:
+                    continue
+                eng = siesa_engine(db)
+                filtrar, _ = _filtrar_activos(solo, eng)
+                filas = list(_stream(eng, _con_estado(SQL_OC_ABIERTAS, filtrar), {"cia": settings.siesa_cia, "bodegas": bods, "desde_oc": desde_oc}, expanding="bodegas"))
+                cur.execute("DELETE FROM ddmrp.transitos WHERE empresa = %s AND bodega_id = ANY(%s) AND documento LIKE 'OC-%%'", (empresa, bods))
+                res[f"oc_abiertas_{empresa}"] = _volcar(cur, ((empresa,) + r for r in filas), "ddmrp.transitos",
+                                                         ["empresa", "producto_id", "bodega_id", "documento", "cantidad"], reemplazar=False)
+        raw.commit()
+    except Exception:
+        raw.rollback()
+        raise
+    finally:
+        raw.close()
+    return res
+
+
 def _param(cur, clave: str):
     cur.execute("SELECT valor FROM ddmrp.parametro WHERE clave = %s", (clave,))
     f = cur.fetchone()

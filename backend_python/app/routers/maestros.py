@@ -53,6 +53,7 @@ MAESTROS = {
         editable={"nombre": "txt", "leadtime": "num", "email_para": "txt", "email_cc": "txt", "activo": "int", "redondeo": "txt", "pedido_minimo": "num",
                   "contacto": "txt", "telefono": "txt", "notas": "txt"},
         bodega=None, producto=None, global_=True, grupo="compras",
+        buscar=("proveedor_id", "nombre"),      # el cuadro de busqueda mira el NIT Y el nombre
         emails=("email_para", "email_cc"),      # varios correos separados por ; (o coma): se validan y se normalizan
         booleanas=("activo",),                  # 1 / 0 / si / no
         valores={"redondeo": ("arriba", "cercano", "abajo")},   # como se redondea la cantidad al multiplo de pedido
@@ -328,6 +329,8 @@ def _filtros_maestro(nombre: str, d: dict, bodega_id: str | None, q: str | None,
             w += f" AND (t.{prod} ILIKE :q OR mi.descripcion ILIKE :q)"
         elif nombre == "items":
             w += " AND (t.producto_id ILIKE :q OR t.descripcion ILIKE :q)"
+        elif d.get("buscar"):   # el maestro declara en que columnas se busca (p.ej. proveedores: NIT y nombre)
+            w += " AND (" + " OR ".join(f"CAST(t.{c} AS text) ILIKE :q" for c in d["buscar"]) + ")"
         else:
             clave = next((k for k in d["llave"] if k != "empresa"), d["llave"][0])
             w += f" AND CAST(t.{clave} AS text) ILIKE :q"

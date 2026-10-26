@@ -206,8 +206,11 @@ export function GuiaNecesidades({ abierta, cerrar, cfg }: { abierta: boolean; ce
 
       <H>5 · Cómo usar la pantalla</H>
       <L items={[
-        <>Las <b>pestañas</b> son tres vistas de lo mismo: por proveedor, detalle por ítem y sin proveedor. Haz clic en el nombre de un proveedor para ver sus ítems.</>,
-        <>En el detalle, haz clic en el <b>inventario</b> o en el <b>ADU</b> de un ítem para abrir Control DDMRP con ese ítem en todas las tiendas más el CEDI: saldo, rotación y zona de cada una.</>,
+        <>Las <b>pestañas</b> son tres vistas de lo mismo: por proveedor (con su lead time, pedido mínimo y estado), detalle por ítem y sin proveedor. Clic en el nombre de un proveedor para ver sus ítems.</>,
+        <><b>Enlaces:</b> el <b>NIT</b> abre el proveedor en su maestro (lead time, correos, redondeo); el <b>SKU</b> abre el ítem en el maestro de ítems de compras; el <b>inventario</b> o el <b>ADU</b> abren Control DDMRP con ese ítem en todas las tiendas más el CEDI (saldo, rotación y zona de cada una). Todos se abren en una pestaña nueva, para no perder lo que llevas.</>,
+        <><b>Editar la cantidad:</b> doble clic en “A pedir” (necesita permiso de gestión de compras). Se guarda aparte del cálculo: <b>se conserva aunque corra el motor</b> y vuelva a calcular, hasta que se monte la OC. Dejarla vacía, o igual a la calculada, la devuelve al cálculo. Los ítems editados quedan resaltados y se avisa si la cantidad no es múltiplo de la unidad de pedido o es más del doble de lo que pide el buffer.</>,
+        <><b>Recalcular necesidades:</b> vuelve a calcular solo el buffer del CEDI con el inventario y las órdenes de compra de ahora, sin correr el motor completo (no toca las tiendas ni los despachos). Tus cantidades editadas se mantienen.</>,
+        <><b>OC a montar:</b> elige con la casilla del NIT todos los ítems de un proveedor, con la del SKU un ítem, o combina ambas. “Revisar y enviar OC” muestra una orden por proveedor y empresa con valores y alertas. El envío a aprobación se conecta en el siguiente paso.</>,
         <>Las columnas <b>SKU y nombre</b> quedan fijas; arrastra otra columna hasta la raya para fijarla también.</>,
         <>El <b>Excel</b> trae lo filtrado y la hoja “Cálculo CEDI”: todo el cálculo en fórmulas vivas (ventas de los últimos meses → ADU → zonas → necesidad → a pedir → valor e IVA) y la hoja “Parametros” para probar escenarios.</>,
       ]} />

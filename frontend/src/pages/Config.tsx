@@ -15,6 +15,7 @@ import { useYo } from '../Yo'
 import { confirmar, confirmarEscribiendo, esc } from '../alertas'
 import PegarGrilla, { ColPegar } from '../PegarGrilla'
 import { useEmpresa } from '../Empresa'
+import { useSearchParams } from 'react-router-dom'
 
 type Filtros = { tienda: boolean; item: boolean; lab: boolean; texto: boolean; empresa?: boolean; empresa_opc?: boolean; mes?: boolean }
 type Tienda = { bodega_id: string; nombre: string | null; empresa: string | null }
@@ -38,7 +39,9 @@ const resumen = (r: any) =>
 export default function Config({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
   const { puede } = useYo(); const pCarga = puede(grupo === 'compras' ? 'cargar_maestros_compras' : 'cargar_maestros'); const pSync = grupo === 'ddmrp' && puede('sincronizar_siesa')
   const [defs, setDefs] = useState<Def[]>([])
-  const inicial = grupo === 'compras' ? 'items-compras' : 'bitacora'
+  // ?maestro=proveedores&q=900123456 (enlaces desde Necesidades de compra): abre ese maestro ya filtrado por el texto
+  const [sp] = useSearchParams(); const maestroUrl = sp.get('maestro') ?? '', qUrl = sp.get('q') ?? ''
+  const inicial = maestroUrl || (grupo === 'compras' ? 'items-compras' : 'bitacora')
   const [sel, setSel] = useState(inicial)
   const [rows, setRows] = useState<any[]>([])
   const [cargando, setCargando] = useState(true)
@@ -46,7 +49,7 @@ export default function Config({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras
   // Filtros de la pantalla. Se resuelven en el SERVIDOR (el maestro puede tener cientos de miles de filas y la pantalla solo trae un pedazo),
   // y son los mismos para la descarga a Excel y para "Eliminar todo lo filtrado". Van atados al maestro con que se escribieron
   const VACIO = { tienda: [] as string[], texto: '', lab: [] as string[], cat: [] as string[], abas: [] as string[], mes: '', emp: '', col: '', op: 'eq', val: '' }
-  const [fRaw, setFRaw] = useState({ sel: inicial, ...VACIO })
+  const [fRaw, setFRaw] = useState({ sel: inicial, ...VACIO, texto: qUrl })
   const f = fRaw.sel === sel ? fRaw : { sel, ...VACIO }
   const setF = (c: Partial<typeof VACIO>) => setFRaw({ ...f, ...c, sel })
   const colActiva = !!(f.col && (f.op === 'vacio' || f.op === 'lleno' || f.val.trim()))
@@ -126,7 +129,15 @@ export default function Config({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras
         headerTooltip: 'Tarifa estimada del grupo impositivo del item; Siesa calcula el IVA real al crear la OC' }
       return { ...base, width: ['proveedor', 'cotizacion_vigencia', 'ultimo_costo_fecha'].includes(c.k) ? 130 : 180 }
     })
-    return [...llave, ...desc, ...ed2, ...lect, ...costo, ...est, ...extra]
+    const todas = [...llave, ...desc, ...ed2, ...lect, ...costo, ...est, ...extra]
+    if (def.clave === 'proveedores') {   // NIT y nombre fijos a la izquierda; la empresa y la sucursal van después
+      const g = (f: string) => todas.find(c => c.field === f) as ColDef
+      const nit: ColDef = { ...g('proveedor_id'), headerName: 'NIT', width: 130, pinned: 'left', checkboxSelection: pCarga && !def.sin_reemplazo, headerCheckboxSelection: pCarga && !def.sin_reemplazo }
+      const nom: ColDef = { ...g('nombre'), headerName: 'Proveedor', width: 280, pinned: 'left' }
+      const resto: ColDef[] = todas.filter(c => c.field !== 'proveedor_id' && c.field !== 'nombre').map(c => ({ ...c, pinned: undefined, checkboxSelection: undefined, headerCheckboxSelection: undefined }))
+      return [nit, nom, ...resto]
+    }
+    return todas
   }, [def, rowKeys, pCarga, orden.col, orden.desc])
 
   const onChange = async (e: CellValueChangedEvent) => {

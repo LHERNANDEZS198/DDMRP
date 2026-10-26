@@ -42,6 +42,10 @@ Estados: ✅ listo · 🟡 hecho, sin validar en producción · ⬜ pendiente ·
   - 🟡 Navbar: «Necesidades de compra» es un botón propio (como la matriz de despacho); menú «Config» con Motor, Reglas de pedido, Usuarios, Log y Diagnóstico
   - 🟡 Pantalla: SKU y nombre fijos (se pueden fijar más arrastrando), clic en proveedor → sus ítems, clic en inventario/ADU → Control (ítem en todas las tiendas + CEDI), tooltips en todas las columnas/KPI/filtros, modal «¿Cómo funciona?»
   - 🟡 Excel: hoja «Cálculo CEDI» con todo el cálculo en fórmulas (ventas de los últimos meses → ADU → zonas → necesidad → a pedir → valor e IVA) + hoja «Parametros», como la Auditoría
+  - 🟡 Cantidad a pedir editable (permiso `gestionar_compras`): se guarda aparte del cálculo (`compras_cantidad`) y SOBREVIVE a las corridas del motor hasta que se monte la OC; alertas si no es múltiplo o supera el doble del buffer
+  - 🟡 Botón «Recalcular necesidades» (sin correr el motor completo ni dar acceso a él): inventario fresco del CEDI + OC abiertas + buffer del CEDI; las cantidades editadas se conservan
+  - 🟡 Elegir las OC a montar: casilla por proveedor (NIT) y/o por ítem (SKU); «Revisar y enviar OC» muestra una orden por proveedor-empresa (el envío queda desactivado hasta conectar el BPM). La elección NO se guarda al recargar
+  - 🟡 Lead time del proveedor en la vista por proveedor; NIT → maestro de proveedores; SKU → maestro de ítems de compras
 - 🟡 5. Vista con filtros multi-proveedor, resumen por proveedor, lista «Sin proveedor» y pedido mínimo (alerta o bloqueo, configurable). ⬜ Generación de borradores (BPM)
 - ⬜ 6. Estado de OC (grupo asignado, días esperando) + conciliación con el BPM y Siesa
 - 🟡 7. Excel por maestro: proveedores e items de compras ya suben y bajan por Excel; ⬜ resto de maestros nuevos

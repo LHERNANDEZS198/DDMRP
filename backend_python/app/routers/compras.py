@@ -3,13 +3,16 @@ SE COMPRAN en esa empresa (maestro «Criterios comprables») y que tienen algo q
 y los agrupa por proveedor. No crea ni envia nada: es lo que compras valida antes de armar ordenes."""
 import math
 from datetime import date, datetime
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
+from pydantic import BaseModel
 from sqlalchemy import text
 from .. import excel
 from ..activos import solo_activos
 from ..auditoria_xlsx import construir, PARAMS
+from ..bitacora import evento, usuario_de
 from ..db import pg
+from ..orchestrator import recalcular_compras
 from ..security import usuario_actual, filtro_sql_permisos, requiere
 
 router = APIRouter(prefix="/compras", tags=["compras"], dependencies=[Depends(requiere("ver_compras"))])
@@ -52,7 +55,8 @@ def _mes_hace(meses: int) -> str:
 
 def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite: int = 5000) -> dict:
     w, p = filtro_sql_permisos(user, "s.bodega_id", "mi.categoria")
-    cond = [f"s.ejecucion_id = {ULTIMA}", "NOT s.condenado", "s.cantidad_sugerida > 0", solo_activos("s"), COMPRABLE, w]
+    # entran los que piden algo Y los que compras ya edito (la cantidad editada se conserva aunque el motor ya no pida nada)
+    cond = [f"s.ejecucion_id = {ULTIMA}", "NOT s.condenado", "(s.cantidad_sugerida > 0 OR cm.cantidad IS NOT NULL)", solo_activos("s"), COMPRABLE, w]
     if _csv(empresa):
         cond.append("s.empresa = ANY(:f_emp)"); p["f_emp"] = _csv(empresa)
     if _csv(categorias):
@@ -79,9 +83,11 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
              COALESCE(ic.cotizacion, ic.cotizacion_siesa, ic.ultimo_costo)::float8 AS costo,
              CASE WHEN ic.cotizacion IS NOT NULL THEN 'Manual' WHEN ic.cotizacion_siesa IS NOT NULL THEN 'Cotización' WHEN ic.ultimo_costo IS NOT NULL THEN 'Última compra' END AS origen_costo,
              CASE WHEN ic.cotizacion IS NOT NULL THEN NULL WHEN ic.cotizacion_siesa IS NOT NULL THEN ic.cotizacion_fecha ELSE ic.ultimo_costo_fecha END AS costo_fecha,
-             ic.iva_tasa::float8 AS iva_tasa, COALESCE(h.meses, 0) AS meses_venta
+             ic.iva_tasa::float8 AS iva_tasa, COALESCE(h.meses, 0) AS meses_venta, pv.leadtime::float8 AS leadtime_proveedor,
+             cm.cantidad::float8 AS qty_manual, cm.nota AS qty_nota, cm.usuario AS qty_usuario, cm.actualizado AS qty_fecha
       FROM ddmrp.sugerencias_cedi s
       JOIN ddmrp.item_compra ic ON ic.empresa = s.empresa AND ic.producto_id = s.producto_id
+      LEFT JOIN ddmrp.compras_cantidad cm ON cm.empresa = s.empresa AND cm.producto_id = s.producto_id
       LEFT JOIN ddmrp.proveedor pv ON pv.empresa = ic.empresa AND pv.proveedor_id = ic.proveedor_id AND pv.sucursal = ic.sucursal
       LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = s.producto_id
       LEFT JOIN ddmrp.laboratorio lb ON lb.codigo = mi.categoria
@@ -98,13 +104,16 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
         sin_cond = " AND ".join(cond + ["ic.proveedor_id IS NULL"])
         sin = [dict(r) for r in c.execute(text(f"{base} WHERE {sin_cond} ORDER BY s.pct_buffer NULLS FIRST, s.producto_id LIMIT 1000"), p).mappings()]
         n_sin = c.execute(text(f"SELECT count(*) FROM ddmrp.sugerencias_cedi s JOIN ddmrp.item_compra ic ON ic.empresa = s.empresa AND ic.producto_id = s.producto_id "
+                               f"LEFT JOIN ddmrp.compras_cantidad cm ON cm.empresa = s.empresa AND cm.producto_id = s.producto_id "
                                f"LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = s.producto_id WHERE {sin_cond}"), {k: v for k, v in p.items() if k != "mes12"}).scalar()
     truncado = len(filas) > limite
     filas = filas[:limite]
     poca = cfg.get("poca_historia_meses", 3.0)
     grupos: dict[tuple, dict] = {}
     for f in filas:
-        f["qty_pedir"] = _redondear(f["qty_buffer"], f["unidad_pedido"], f["redondeo"])
+        f["qty_calculada"] = _redondear(f["qty_buffer"], f["unidad_pedido"], f["redondeo"])
+        f["editada"] = f["qty_manual"] is not None
+        f["qty_pedir"] = f["qty_manual"] if f["editada"] else f["qty_calculada"]   # lo que compras edito manda sobre el calculo
         costo = f["costo"]
         f["valor"] = f["qty_pedir"] * costo if costo is not None else None
         f["iva"] = f["valor"] * f["iva_tasa"] / 100 if f["valor"] is not None and f["iva_tasa"] is not None else None
@@ -115,13 +124,19 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
         if costo is None: alertas.append("Sin cotización")
         if f["meses_venta"] < poca: alertas.append(f"Poca historia ({f['meses_venta']} m)")
         if not f["prov_activo"]: alertas.append("Proveedor inactivo")
-        if f["qty_pedir"] <= 0: alertas.append("Redondeo a 0")
+        if f["editada"]:
+            alertas.append(f"Cantidad editada (el buffer pedía {round(f['qty_buffer']):,})".replace(",", "."))
+            u = f["unidad_pedido"]
+            if u > 1 and abs(f["qty_manual"] / u - round(f["qty_manual"] / u)) > 1e-9: alertas.append("No es múltiplo de la unidad de pedido")
+            if f["qty_manual"] > 2 * max(f["qty_buffer"], 1): alertas.append("Más del doble de lo que pide el buffer")
+        elif f["qty_pedir"] <= 0: alertas.append("Redondeo a 0")
         f["alertas"] = "; ".join(alertas)
         k = (f["empresa"], f["proveedor_id"], f["sucursal"])
         g = grupos.setdefault(k, {"empresa": f["empresa"], "proveedor_id": f["proveedor_id"], "sucursal": f["sucursal"], "proveedor_nombre": f["proveedor_nombre"],
                                   "activo": bool(f["prov_activo"]), "redondeo": f["redondeo"], "pedido_minimo": f["pedido_minimo"],
-                                  "items": 0, "unidades": 0.0, "valor": 0.0, "iva": 0.0, "total": 0.0, "sin_costo": 0, "poca_historia": 0})
+                                  "leadtime": f["leadtime_proveedor"], "items": 0, "unidades": 0.0, "valor": 0.0, "iva": 0.0, "total": 0.0, "sin_costo": 0, "poca_historia": 0, "editadas": 0})
         g["items"] += 1; g["unidades"] += f["qty_pedir"]
+        if f["editada"]: g["editadas"] += 1
         if f["valor"] is None: g["sin_costo"] += 1
         else: g["valor"] += f["valor"]; g["iva"] += f["iva"] or 0; g["total"] += f["total"]
         if f["meses_venta"] < poca: g["poca_historia"] += 1
@@ -140,7 +155,7 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
     provs.sort(key=lambda g: -g["total"])
     tot = {"proveedores": len(provs), "items": len(filas), "unidades": sum(f["qty_pedir"] for f in filas), "valor": sum(g["valor"] for g in provs),
            "iva": sum(g["iva"] for g in provs), "total": sum(g["total"] for g in provs), "sin_costo": sum(1 for f in filas if f["costo"] is None),
-           "poca_historia": sum(1 for f in filas if f["meses_venta"] < poca), "bajo_minimo": sum(1 for g in provs if g["bajo_minimo"]), "bloqueados": len(bloqueados)}
+           "poca_historia": sum(1 for f in filas if f["meses_venta"] < poca), "editadas": sum(1 for f in filas if f["editada"]), "bajo_minimo": sum(1 for g in provs if g["bajo_minimo"]), "bloqueados": len(bloqueados)}
     aviso = None if ej else "Aún no hay una corrida del motor con el buffer del CEDI: corre el motor."
     return {"config": cfg, "ejecucion": dict(ej) if ej else None, "aviso": aviso, "filas": filas, "proveedores": provs, "bloqueados": bloqueados,
             "sin_proveedor": {"total": n_sin, "filas": sin}, "totales": tot, "truncado": truncado}
@@ -154,6 +169,43 @@ def necesidades(empresa: str | None = None, proveedores: str | None = None, cate
     return _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limit)
 
 
+class CantidadIn(BaseModel):
+    empresa: str
+    producto_id: str
+    cantidad: float | None = None    # None = quitar la edicion (vuelve al calculo)
+    nota: str | None = None
+
+
+@router.put("/cantidad")
+def guardar_cantidad(b: CantidadIn, user=Depends(requiere("gestionar_compras"))):
+    """Guarda la cantidad a pedir que compras edito para un item (o la quita). Vive aparte del calculo: sobrevive a las corridas del motor y se conserva hasta que se monte la OC."""
+    if b.cantidad is not None and not (b.cantidad >= 0 and b.cantidad < 1e9):
+        raise HTTPException(400, "La cantidad debe ser un número mayor o igual a 0")
+    with pg.begin() as c:
+        if not c.execute(text("SELECT 1 FROM ddmrp.item_compra WHERE empresa = :e AND producto_id = :p"), {"e": b.empresa, "p": b.producto_id}).first():
+            raise HTTPException(404, "Ese ítem no existe en los maestros de compras de esa empresa")
+        if b.cantidad is None:
+            c.execute(text("DELETE FROM ddmrp.compras_cantidad WHERE empresa = :e AND producto_id = :p"), {"e": b.empresa, "p": b.producto_id})
+        else:
+            c.execute(text("""INSERT INTO ddmrp.compras_cantidad (empresa, producto_id, cantidad, nota, usuario, actualizado) VALUES (:e, :p, :q, :n, :u, now())
+                              ON CONFLICT (empresa, producto_id) DO UPDATE SET cantidad = EXCLUDED.cantidad, nota = COALESCE(EXCLUDED.nota, ddmrp.compras_cantidad.nota),
+                                                                              usuario = EXCLUDED.usuario, actualizado = now()"""),
+                      {"e": b.empresa, "p": b.producto_id, "q": b.cantidad, "n": (b.nota or "").strip() or None, "u": usuario_de(user)})
+    evento("compras", usuario_de(user), f"Cantidad a pedir de {b.empresa}/{b.producto_id}: " + ("restablecida al cálculo" if b.cantidad is None else f"{b.cantidad:g}"),
+           {"empresa": b.empresa, "producto_id": b.producto_id, "cantidad": b.cantidad})
+    return {"ok": True}
+
+
+@router.post("/recalcular")
+def recalcular(user=Depends(requiere("gestionar_compras"))):
+    """Recalcula las necesidades de compra SIN correr el motor completo: inventario fresco y OC abiertas del CEDI + buffer del CEDI. No toca las tiendas ni los despachos;
+    las cantidades editadas se conservan."""
+    try:
+        return recalcular_compras("manual", usuario_de(user))
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+
+
 @router.get("/necesidades/excel")
 def necesidades_excel(empresa: str | None = None, proveedores: str | None = None, categorias: str | None = None, labs: str | None = None, zonas: str | None = None,
                       q: str | None = None, user=Depends(usuario_actual)):
@@ -164,7 +216,7 @@ def necesidades_excel(empresa: str | None = None, proveedores: str | None = None
     excel.hoja(wb, "Por proveedor", [
         {"t": "NIT", "k": "proveedor_id", "w": 13}, {"t": "Proveedor", "k": "proveedor_nombre", "w": 36}, {"t": "Empresa", "k": "empresa", "w": 9}, {"t": "Sucursal", "k": "sucursal", "w": 9},
         {"t": "Ítems", "k": "items", "f": "int", "w": 8}, {"t": "Unidades", "k": "unidades", "f": "int", "w": 11}, {"t": "Valor sin IVA", "k": "valor", "f": "cop", "w": 15},
-        {"t": "IVA estimado", "k": "iva", "f": "cop", "w": 14}, {"t": "Total", "k": "total", "f": "cop", "w": 15}, {"t": "Pedido mínimo", "k": "pedido_minimo", "f": "cop", "w": 14},
+        {"t": "IVA estimado", "k": "iva", "f": "cop", "w": 14}, {"t": "Total", "k": "total", "f": "cop", "w": 15}, {"t": "Lead time (d)", "k": "leadtime", "f": "int", "w": 10}, {"t": "Pedido mínimo", "k": "pedido_minimo", "f": "cop", "w": 14},
         {"t": "Ítems sin cotización", "k": "sin_costo", "f": "int", "w": 12}, {"t": "Poca historia", "k": "poca_historia", "f": "int", "w": 11},
         {"t": "Redondeo", "k": "redondeo", "w": 10}, {"t": "Estado", "k": "estado", "w": 30}], r["proveedores"], fijar=2)
     excel.hoja(wb, "Detalle", [
@@ -174,6 +226,7 @@ def necesidades_excel(empresa: str | None = None, proveedores: str | None = None
         {"t": "Inventario", "k": "inventario", "f": "int", "w": 11}, {"t": "Tránsito", "k": "en_transito", "f": "int", "w": 10}, {"t": "Flujo neto", "k": "flujo_neto", "f": "int", "w": 11},
         {"t": "TOG aj.", "k": "tog_aj", "f": "int", "w": 10}, {"t": "Cobertura (días)", "k": "cobertura_dias", "f": "dec1", "w": 11},
         {"t": "Pide el buffer", "k": "qty_buffer", "f": "int", "w": 11}, {"t": "Unidad de pedido", "k": "unidad_pedido", "f": "dec2", "w": 10}, {"t": "A pedir", "k": "qty_pedir", "f": "int", "w": 10},
+        {"t": "Calculada", "k": "qty_calculada", "f": "int", "w": 10}, {"t": "Editada por compras", "k": "qty_manual", "f": "int", "w": 11},
         {"t": "Costo", "k": "costo", "f": "dec2", "w": 12}, {"t": "Origen del costo", "k": "origen_costo", "w": 14}, {"t": "Costo vigente desde", "k": "costo_fecha", "w": 14},
         {"t": "Valor sin IVA", "k": "valor", "f": "cop", "w": 14}, {"t": "IVA % (est.)", "k": "iva_tasa", "f": "dec1", "w": 9}, {"t": "Total", "k": "total", "f": "cop", "w": 14}, {"t": "Alertas", "k": "alertas", "w": 34}], r["filas"], fijar=2)
     excel.hoja(wb, "Sin proveedor", [
@@ -189,6 +242,7 @@ def necesidades_excel(empresa: str | None = None, proveedores: str | None = None
         ("Poca historia", f"menos de {cfg.get('poca_historia_meses', 3):g} meses con venta (solo alerta)"),
         ("Ítems / unidades / valor / total", f"{t['items']} / {t['unidades']:,.0f} / ${t['valor']:,.0f} / ${t['total']:,.0f}"),
         ("Hoja «Cálculo CEDI»", "El cálculo completo como fórmulas de Excel (hasta 10.000 ítems, los más críticos): ventas por mes → ADU → zonas → necesidad → a pedir → valor e IVA. Mira «Cómo leerlo»."),
+        ("Cantidades editadas", f"{t['editadas']} ítems: en «Detalle», «A pedir» es la cantidad que compras editó y «Calculada» la del sistema. En «Cálculo CEDI», A PEDIR es siempre el cálculo."),
         ("Nota", "Los ítems sin cotización quedan con valor vacío y no suman a los totales. El IVA es una tarifa estimada: Siesa lo calcula al crear la OC.")])
     if r["ejecucion"] and r["filas"]:
         _hoja_calculo(wb, r)

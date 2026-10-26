@@ -166,6 +166,44 @@ def _ejecutar_motor(fecha: date | None = None) -> dict:
         raise
 
 
+def recalcular_compras(origen: str = "manual", usuario: str | None = None) -> dict:
+    """Recalcula SOLO el buffer del CEDI (lo que usa Necesidades de compra) sin correr el motor completo: inventario fresco del CEDI y ordenes de compra abiertas de Siesa,
+    y el motor Rust en modo CEDI sobre la ultima corrida. No toca las tiendas, el reparto ni la matriz de despacho. Las cantidades editadas por compras se conservan."""
+    with progreso.tarea("Compras", "Necesidades de compra recalculadas"), bitacora.registrar("compras", origen, usuario) as r:
+        r.resumen = res = _recalcular_compras()
+        return res
+
+
+def _recalcular_compras() -> dict:
+    from .etl.replicacion import refrescar_oc_cedi
+    with pg.connect() as c:
+        ej = c.execute(text("SELECT id FROM ddmrp.ejecucion_motor WHERE estado = 'ok' ORDER BY id DESC LIMIT 1")).first()
+    if not ej:
+        raise RuntimeError("Aún no hay una corrida del motor: pídele a quien tenga el permiso que la corra una vez.")
+    eid = ej[0]
+    progreso.avance("Leyendo el inventario fresco del CEDI…")
+    cedi = refrescar_cedi()
+    progreso.avance("Leyendo las órdenes de compra abiertas de Siesa…")
+    try:
+        oc = refrescar_oc_cedi()
+    except Exception as e:   # sin las OC el tránsito queda como estaba: se avisa pero se sigue
+        log.exception("No se pudieron refrescar las OC abiertas")
+        oc = {"error": str(e)[:200]}
+    progreso.avance("Recalculando el buffer del CEDI…")
+    tmp = -eid   # se calcula aparte (id negativo) y solo si sale bien se cambia por el anterior: un fallo del motor no deja a compras sin buffer
+    with pg.begin() as c:
+        c.execute(text("DELETE FROM ddmrp.sugerencias_cedi WHERE ejecucion_id = :t"), {"t": tmp})
+    cm = calcular_cedi(tmp, date.today())
+    if not cm.get("ok", True) or "error" in cm:
+        with pg.begin() as c:
+            c.execute(text("DELETE FROM ddmrp.sugerencias_cedi WHERE ejecucion_id = :t"), {"t": tmp})
+        raise RuntimeError("No se pudo recalcular el buffer del CEDI (queda el anterior): " + str(cm.get("error", ""))[:300])
+    with pg.begin() as c:
+        c.execute(text("DELETE FROM ddmrp.sugerencias_cedi WHERE ejecucion_id = :e"), {"e": eid})
+        c.execute(text("UPDATE ddmrp.sugerencias_cedi SET ejecucion_id = :e WHERE ejecucion_id = :t"), {"e": eid, "t": tmp})
+    return {"ejecucion_id": eid, "cedi": cedi, "oc": oc, "cedi_motor": cm}
+
+
 def pipeline_nocturno(origen: str = "auto", usuario: str | None = None):
     """Programado (origen 'auto') o lanzado a mano desde la pantalla (origen 'manual')."""
     try:

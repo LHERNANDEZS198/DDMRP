@@ -97,6 +97,7 @@ PERMISOS = [
     ("descargar_planos", "Descargar planos de Siesa", "Despacho"),
     ("ver_compras", "Ver los informes y maestros de compras (CEDI, proveedores, órdenes de compra)", "Compras"),
     ("cargar_maestros_compras", "Cargar / editar / eliminar en los maestros de compras", "Compras"),
+    ("gestionar_compras", "Editar las cantidades a pedir, recalcular las necesidades de compra y enviar órdenes de compra", "Compras"),
     ("ver_maestros", "Ver y descargar los maestros", "Configurar"),
     ("cargar_maestros", "Cargar / editar / eliminar en los maestros", "Configurar"),
     ("editar_reglas", "Cambiar las reglas de pedido", "Configurar"),
