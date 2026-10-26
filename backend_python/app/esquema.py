@@ -327,6 +327,19 @@ SENTENCIAS_COMPRAS = [
     "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS cotizacion_siesa NUMERIC(16,4)",
     "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS cotizacion_fecha DATE",
     "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS iva_tasa NUMERIC(8,4)",
+    # cotizacion vigente de OTRO proveedor (cuando la del proveedor del item no existe): sirve para revisar items cuyo proveedor en el item de Siesa no es el de la cotizacion
+    "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS cotizacion_otro_nit TEXT",
+    "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS cotizacion_otro_costo NUMERIC(16,4)",
+    # que categorias (criterio del plan 001) se COMPRAN en cada empresa. Funat (05): terceros y maquila se compran, Productos Funat no (es produccion propia).
+    # Stores (21): todo se compra. Una categoria sin fila se trata como compra.
+    """CREATE TABLE IF NOT EXISTS ddmrp.categoria_compra (
+         empresa TEXT NOT NULL, plan_id TEXT NOT NULL DEFAULT '001', criterio_id TEXT NOT NULL, nombre TEXT,
+         se_compra SMALLINT DEFAULT 1 CHECK (se_compra IS NULL OR se_compra IN (0, 1)),   -- vacio se trata como compra
+         PRIMARY KEY (empresa, plan_id, criterio_id))""",
+    """INSERT INTO ddmrp.categoria_compra (empresa, plan_id, criterio_id, nombre, se_compra) VALUES
+         ('05', '001', '0001', 'Productos Funat', 0), ('05', '001', '0002', 'Productos de terceros', 1), ('05', '001', '0003', 'Maquila Funat', 1),
+         ('21', '001', '0001', 'Productos Funat', 1), ('21', '001', '0002', 'Productos de terceros', 1), ('21', '001', '0003', 'Maquila Funat', 1)
+       ON CONFLICT DO NOTHING""",
 ]
 
 

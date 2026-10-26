@@ -22,8 +22,8 @@ class Settings(BaseSettings):
     siesa_cia: int = 1        # f120_id_cia
     siesa_grupo_bodegas_tienda: str = "025"   # grupo de bodegas (t152) que son tiendas
     # Items que se importan: los que tengan alguno de estos criterios ("plan:criterio", coma). 001 = CATEGORIA: 0001 productos Funat,
-    # 0002 de terceros. De cada item se traen TODOS sus criterios. Vacio = todos los items.
-    siesa_criterios_items: str = "001:0001,001:0002"
+    # 0002 de terceros, 0003 maquila Funat. De cada item se traen TODOS sus criterios. Vacio = todos los items.
+    siesa_criterios_items: str = "001:0001,001:0002,001:0003"
     siesa_plan_laboratorio: str = "006"   # plan de criterios de items que define el laboratorio
     # Estado del item en Siesa: columna de la EXTENSION del item (t121_mc_items_extensiones.f121_ind_estado). 1 activo; 0 inactivo y 2 bloqueado
     # segun el diccionario de Siesa (confirmalo con docs/sql/estado_items.sql). Si la columna no se puede leer, el ETL avisa y sigue SIN filtrar.

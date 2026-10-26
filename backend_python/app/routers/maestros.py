@@ -20,7 +20,7 @@ CAST = {"num": "numeric", "int": "smallint", "txt": "text"}
 # tipo de las columnas llave que no son texto
 TIPO_LLAVE = {"dia": "int"}
 # columnas llave cuyo valor numerico de Excel pierde ceros a la izquierda -> se rellenan
-ANCHO = {"producto_id": 6, "empresa": 2, "sucursal": 3}
+ANCHO = {"producto_id": 6, "empresa": 2, "sucursal": 3, "plan_id": 3, "criterio_id": 4}
 
 MAESTROS = {
     "bitacora": dict(
@@ -56,6 +56,11 @@ MAESTROS = {
         emails=("email_para", "email_cc"),      # varios correos separados por ; (o coma): se validan y se normalizan
         booleanas=("activo",),                  # 1 / 0 / si / no
         conservar=("activo",)),                 # celda vacia en la carga = no cambia
+    "criterios-comprables": dict(
+        label="Criterios comprables: que categorias se compran en cada empresa", tabla="ddmrp.categoria_compra",
+        llave=["empresa", "plan_id", "criterio_id"], editable={"nombre": "txt", "se_compra": "int"},
+        bodega=None, producto=None, global_=True, grupo="compras",
+        booleanas=("se_compra",), conservar=("nombre", "se_compra")),
     "items-compras": dict(
         label="Items de compras: cotizacion, unidad de pedido y unidad de empaque", tabla="ddmrp.item_compra",
         llave=["empresa", "producto_id"], editable={"cotizacion": "num", "unidad_pedido": "num", "unidad_empaque": "num"},
@@ -63,9 +68,10 @@ MAESTROS = {
         solo_existentes=True,                   # los items vienen de Siesa: la carga solo actualiza, nunca crea
         sin_reemplazo=True, sin_eliminar=True,  # y aqui no se borra nada (ni filas sueltas, ni vaciar, ni reemplazar)
         conservar=("cotizacion", "unidad_pedido", "unidad_empaque"),   # celda vacia = no cambia
-        lectura=[("laboratorio", "Laboratorio"), ("linea", "Línea"), ("exhibicion", "Exhibición"), ("costo", "Costo promedio"),
+        lectura=[("laboratorio", "Laboratorio"), ("categoria", "Categoría"), ("linea", "Línea"), ("exhibicion", "Exhibición"), ("costo", "Costo promedio"),
                  ("cotizacion_siesa", "Cotización Siesa"), ("cotizacion_vigencia", "Vigente desde"), ("costo_compra", "Costo a usar"),
-                 ("iva_tasa", "IVA % (estimado)"), ("proveedor", "Proveedor (NIT)"), ("proveedor_nombre", "Nombre del proveedor")]),
+                 ("iva_tasa", "IVA % (estimado)"), ("proveedor", "Proveedor (NIT)"), ("proveedor_nombre", "Nombre del proveedor"),
+                 ("cotizacion_otro", "Cotiza otro proveedor (NIT)"), ("costo_otro", "Costo de ese proveedor"), ("abastecimiento", "Abastecimiento")]),
     "pronostico": dict(
         label="Pronostico (unidades/mes)", tabla="ddmrp.pronostico",
         llave=["empresa", "bodega_id", "producto_id"], editable={"pronostico": "num"},
@@ -158,7 +164,11 @@ AYUDA = {
     "items-compras": "Los items vienen de Siesa (no se crean ni se borran aqui): referencia, nombre, laboratorio, linea, exhibicion, costo promedio, proveedor, cotizacion de Siesa, IVA y el costo a usar son de solo lectura. "
                      "La cotizacion de Siesa es la vigente del proveedor del item (costo bruto, con el descuento del primer rango de cantidad) y se actualiza al traer los items; el IVA es una tarifa ESTIMADA: Siesa lo calcula al crear la OC. "
                      "Compras carga a mano la cotizacion (solo si quiere pisar la de Siesa: el costo a usar es la manual y, si no hay, la de Siesa), la unidad de pedido (multiplo en que se pide, por defecto 1) y la unidad de empaque (unidades por caja, por defecto 1). "
+                     "Categoria = criterio del plan 001 de Siesa (0001 Productos Funat, 0002 Productos de terceros, 0003 Maquila Funat). Abastecimiento: Compra; Produccion propia (la categoria no se compra en esa empresa: maestro Criterios comprables); "
+                     "Sin proveedor; o Revisar proveedor (el proveedor del item en Siesa no tiene cotizacion vigente pero OTRO proveedor si: hay que corregir el proveedor del item o la cotizacion; el costo de ese otro proveedor se muestra aparte y NO se usa solo). "
                      "Por Excel: baja el archivo, llena esas tres columnas y subelo; celda vacia = no cambia. Solo se ven los items activos de su empresa.",
+    "criterios-comprables": "Que categorias (criterio del plan 001 de Siesa) se COMPRAN en cada empresa: 1 = se compra, 0 = produccion propia (no genera OC). Funat (05): terceros y maquila se compran y Productos Funat no; Stores (21): todo se compra. "
+                            "Una categoria que no aparece aqui se trata como compra. El codigo del criterio va como texto de 4 digitos (ej. 0003).",
     "leadtime-cedi": "Dias que tarda en llegar un item al CEDI (compra o maquila; la produccion propia no se modela). La fila con producto * es el general de la empresa (30 dias); "
                      "una fila con un item lo sobrescribe y, sin fila de item, manda el lead time del proveedor del item (maestro Proveedores). Alimenta el buffer del CEDI (Informes > Ver solo CEDI): se aplica en la siguiente corrida del motor.",
     "demanda-calificada": "Pedidos abiertos o picos conocidos por tienda y referencia. Se restan del flujo neto cuando la regla 'Restar demanda calificada' está en Sí.",
@@ -206,15 +216,38 @@ def _crit_plan(patron: str) -> str:
             f"WHERE ic.producto_id = t.producto_id AND cp.nombre ILIKE '{patron}' LIMIT 1)")
 
 
+# Categoria de compras = criterio del plan 001 de Siesa (0001 Productos Funat, 0002 Productos de terceros, 0003 Maquila Funat).
+_CATID_SQL = "(SELECT ic.criterio_id FROM ddmrp.item_criterio ic WHERE ic.producto_id = t.producto_id AND ic.plan_id = '001' LIMIT 1)"
+_CAT_SQL = ("(SELECT CASE WHEN cr.nombre IS NULL THEN ic.criterio_id ELSE ic.criterio_id || ' · ' || cr.nombre END FROM ddmrp.item_criterio ic "
+            "LEFT JOIN ddmrp.criterio cr ON cr.plan_id = ic.plan_id AND cr.criterio_id = ic.criterio_id WHERE ic.producto_id = t.producto_id AND ic.plan_id = '001' LIMIT 1)")
+# Abastecimiento: Produccion propia (la categoria no se compra en esa empresa, maestro «Criterios comprables»), Sin proveedor, Revisar proveedor (el proveedor del item
+# no tiene cotizacion vigente pero otro proveedor si: item mal asignado en Siesa) o Compra.
+_ABAS_SQL = (f"CASE WHEN COALESCE((SELECT cc.se_compra FROM ddmrp.categoria_compra cc WHERE cc.empresa = t.empresa AND cc.plan_id = '001' AND cc.criterio_id = {_CATID_SQL}), 1) = 0 "
+             "THEN 'Producción propia' WHEN t.proveedor_id IS NULL THEN 'Sin proveedor' "
+             "WHEN t.cotizacion_siesa IS NULL AND t.cotizacion_otro_nit IS NOT NULL THEN 'Revisar proveedor' ELSE 'Compra' END")
+
+
+def _filtro_lectura(categoria: str | None, abastecimiento: str | None) -> tuple[str, dict]:
+    """Filtros de las columnas calculadas de items-compras (listas separadas por coma; categoria = codigos de criterio: 0001, 0002, 0003)."""
+    w, p = "", {}
+    for clave, expr, vals in (("categoria", _CATID_SQL, categoria), ("abastecimiento", _ABAS_SQL, abastecimiento)):
+        lista = [x.strip() for x in (vals or "").split(",") if x.strip()]
+        if lista:
+            w += f" AND ({expr}) = ANY(:fl_{clave})"; p[f"fl_{clave}"] = lista
+    return w, p
+
+
 def _lectura_compras() -> tuple[str, str, list[str]]:
     """(joins, columnas, encabezados) de solo lectura del maestro items-compras. El nombre sale del maestro de items (alias mi, ya unido).
     LINEA y EXHIBICION son planes de criterios de Siesa: se buscan por el nombre del plan."""
     join = (" LEFT JOIN ddmrp.laboratorio lb ON lb.codigo = mi.categoria LEFT JOIN ddmrp.costo_item ci ON ci.producto_id = t.producto_id"
             " LEFT JOIN ddmrp.proveedor pv ON pv.empresa = t.empresa AND pv.proveedor_id = t.proveedor_id AND pv.sucursal = t.sucursal")
-    sel = (", COALESCE(lb.nombre, mi.categoria) AS laboratorio, " + _crit_plan("L_NEA%") + " AS linea, " + _crit_plan("EXHIBIC%") + " AS exhibicion, "
+    sel = (", CASE WHEN lb.nombre IS NULL THEN mi.categoria ELSE mi.categoria || ' · ' || lb.nombre END AS laboratorio, " + _CAT_SQL + " AS categoria, "
+           + _crit_plan("L_NEA%") + " AS linea, " + _crit_plan("EXHIBIC%") + " AS exhibicion, "
            "ci.costo::float8 AS costo, t.cotizacion_siesa::float8 AS cotizacion_siesa, t.cotizacion_fecha AS cotizacion_vigencia, "
-           "COALESCE(t.cotizacion, t.cotizacion_siesa)::float8 AS costo_compra, t.iva_tasa::float8 AS iva_tasa, t.proveedor_id AS proveedor, pv.nombre AS proveedor_nombre")
-    return join, sel, ["descripcion", "laboratorio", "linea", "exhibicion", "costo", "cotizacion_siesa", "cotizacion_vigencia", "costo_compra", "iva_tasa", "proveedor", "proveedor_nombre"]
+           "COALESCE(t.cotizacion, t.cotizacion_siesa)::float8 AS costo_compra, t.iva_tasa::float8 AS iva_tasa, t.proveedor_id AS proveedor, pv.nombre AS proveedor_nombre, "
+           "t.cotizacion_otro_nit AS cotizacion_otro, t.cotizacion_otro_costo::float8 AS costo_otro, " + _ABAS_SQL + " AS abastecimiento")
+    return join, sel, ["descripcion", "laboratorio", "categoria", "linea", "exhibicion", "costo", "cotizacion_siesa", "cotizacion_vigencia", "costo_compra", "iva_tasa", "proveedor", "proveedor_nombre", "cotizacion_otro", "costo_otro", "abastecimiento"]
 
 
 def _es_admin(user) -> bool:
@@ -344,6 +377,7 @@ def _filtros_maestro(nombre: str, d: dict, bodega_id: str | None, q: str | None,
 def leer(nombre: str, response: Response, bodega_id: str | None = None, producto_id: str | None = None, q: str | None = None,
          lab: str | None = None, empresa: str | None = None, mes: str | None = None, estado: str | None = None, limit: int = 20000,
          col: str | None = None, op: str | None = None, val: str | None = None, orden: str | None = None, desc: bool = False,
+         categoria: str | None = None, abastecimiento: str | None = None,
          user=Depends(requiere("ver_maestros", "cargar_maestros", "ver_compras", "cargar_maestros_compras"))):
     d = _def_para(nombre, user, False)
     cols = d["llave"] + [c for c in d["editable"] if c not in d["llave"]]
@@ -364,6 +398,7 @@ def leer(nombre: str, response: Response, bodega_id: str | None = None, producto
     if d.get("lectura"):   # items-compras: solo items vigentes (en el maestro de su empresa) y activos, con sus columnas de solo lectura
         j, s_, _ = _lectura_compras(); join += j; sel += s_
         w += " AND EXISTS (SELECT 1 FROM ddmrp.item_empresa ie WHERE ie.empresa = t.empresa AND ie.producto_id = t.producto_id) AND " + solo_activos("t")
+        fw, fp = _filtro_lectura(categoria, abastecimiento); w += fw; p.update(fp)
     if producto_id and d.get("producto"):
         w += f" AND t.{d['producto']} = :pr"; p["pr"] = producto_id
     wf, pf = _filtros_maestro(nombre, d, bodega_id, q, lab, empresa, mes, estado, col, op, val)
@@ -767,6 +802,7 @@ async def subir_excel(nombre: str, archivo: UploadFile = File(...), modo: str = 
 def bajar_excel(nombre: str, bodega_id: str | None = None, q: str | None = None, lab: str | None = None,
                 empresa: str | None = None, mes: str | None = None, estado: str | None = None,
                 col: str | None = None, op: str | None = None, val: str | None = None,
+                categoria: str | None = None, abastecimiento: str | None = None,
                 user=Depends(requiere("ver_maestros", "cargar_maestros", "ver_compras", "cargar_maestros_compras"))):
     """Descarga lo que el usuario puede ver, con los mismos encabezados que acepta la carga (sirve de plantilla).
     Maestros por tienda: la tienda va con su codigo y su nombre (la empresa se deduce). Solo trae las filas que ya estan en el maestro:
@@ -794,6 +830,7 @@ def bajar_excel(nombre: str, bodega_id: str | None = None, q: str | None = None,
     if d.get("lectura"):    # items-compras: columnas informativas (la carga las ignora), mismos items que la pantalla
         j, s_, cab_l = _lectura_compras(); join += j; sel += ", mi.descripcion AS descripcion" + s_; cab = cab + cab_l
         wf += " AND EXISTS (SELECT 1 FROM ddmrp.item_empresa ie WHERE ie.empresa = t.empresa AND ie.producto_id = t.producto_id) AND " + solo_activos("t")
+        fw, fp = _filtro_lectura(categoria, abastecimiento); wf += fw; pf.update(fp)
     if nombre == "items":   # costo promedio: columna informativa (la carga la ignora)
         join += " LEFT JOIN ddmrp.costo_item ci ON ci.producto_id = t.producto_id"
         sel += ", ci.costo::float8 AS costo, " + "(SELECT CASE ix2.estado WHEN 1 THEN \'Activo\' WHEN 0 THEN \'Inactivo\' WHEN 2 THEN \'Bloqueado\' END FROM ddmrp.item_estado ix2 WHERE ix2.empresa = :emp AND ix2.producto_id = t.producto_id) AS estado"; cab = cab + ["costo", "estado"]

@@ -45,12 +45,12 @@ export default function Config({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras
   const [total, setTotal] = useState(0)
   // Filtros de la pantalla. Se resuelven en el SERVIDOR (el maestro puede tener cientos de miles de filas y la pantalla solo trae un pedazo),
   // y son los mismos para la descarga a Excel y para "Eliminar todo lo filtrado". Van atados al maestro con que se escribieron
-  const VACIO = { tienda: [] as string[], texto: '', lab: [] as string[], mes: '', emp: '', col: '', op: 'eq', val: '' }
+  const VACIO = { tienda: [] as string[], texto: '', lab: [] as string[], cat: [] as string[], abas: [] as string[], mes: '', emp: '', col: '', op: 'eq', val: '' }
   const [fRaw, setFRaw] = useState({ sel: inicial, ...VACIO })
   const f = fRaw.sel === sel ? fRaw : { sel, ...VACIO }
   const setF = (c: Partial<typeof VACIO>) => setFRaw({ ...f, ...c, sel })
   const colActiva = !!(f.col && (f.op === 'vacio' || f.op === 'lleno' || f.val.trim()))
-  const hayFiltro = !!(f.tienda.length || f.texto || f.lab.length || f.mes || colActiva)
+  const hayFiltro = !!(f.tienda.length || f.texto || f.lab.length || f.cat.length || f.abas.length || f.mes || colActiva)
   const [ordenRaw, setOrdenRaw] = useState({ sel: '', col: '', desc: false })   // orden pedido al servidor (columna de la tabla)
   const orden = ordenRaw.sel === sel ? ordenRaw : { sel, col: '', desc: false }
   const filtros = () => {
@@ -58,6 +58,8 @@ export default function Config({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras
     if (f.tienda.length) p.set('bodega_id', f.tienda.join(','))
     if (f.texto.trim()) p.set('q', f.texto.trim())
     if (f.lab.length) p.set('lab', f.lab.join(','))
+    if (f.cat.length) p.set('categoria', f.cat.join(','))
+    if (f.abas.length) p.set('abastecimiento', f.abas.join(','))
     if (def?.filtros.mes && f.mes) p.set('mes', f.mes)
     if (def?.filtros.empresa) { p.set('empresa', empresa); p.set('estado', estado) } else if (def?.filtros.empresa_opc && empG) p.set('empresa', empG)
     if (colActiva) { p.set('col', f.col); p.set('op', f.op); if (f.val.trim()) p.set('val', f.val.trim()) }
@@ -68,6 +70,7 @@ export default function Config({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras
   const [estado, setEstado] = useState('activo')   // items: estado en Siesa
   const { una: empG } = useEmpresa(); const empresa = empG || '05'   // items: se trabaja una empresa a la vez
   const [agregar, setAgregar] = useState(false)
+  const [colAbierta, setColAbierta] = useState(false)   // con la lista de columnas abierta el tooltip se apaga: tapaba las primeras opciones
   const [nueva, setNueva] = useState<Record<string, string>>({})
   const [msg, setMsg] = useState('')
   const [pegar, setPegar] = useState(false)
@@ -117,7 +120,7 @@ export default function Config({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras
     // columnas de solo lectura que declara el maestro (p.ej. items de compras: laboratorio, línea, exhibición, costo, proveedor)
     const lect: ColDef[] = (def.lectura ?? []).map((c): ColDef => {
       const base = { field: c.k, headerName: c.t, headerTooltip: 'Solo lectura (viene de Siesa)' }
-      if (['costo', 'cotizacion_siesa', 'costo_compra'].includes(c.k))
+      if (['costo', 'cotizacion_siesa', 'costo_compra', 'costo_otro'].includes(c.k))
         return { ...base, type: 'numericColumn', width: 130, valueFormatter: (p: any) => p.value == null ? '' : '$' + Math.round(p.value).toLocaleString('es-CO') }
       if (c.k === 'iva_tasa') return { ...base, type: 'numericColumn', width: 120, valueFormatter: (p: any) => p.value == null ? '' : Number(p.value).toLocaleString('es-CO', { maximumFractionDigits: 2 }) + '%',
         headerTooltip: 'Tarifa estimada del grupo impositivo del item; Siesa calcula el IVA real al crear la OC' }
@@ -295,13 +298,20 @@ export default function Config({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras
           {def.filtros.lab && <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 220, flex: '1 1 220px', maxWidth: 400 }} value={f.lab} options={opc.laboratorios.map(l => l.codigo)}
             getOptionLabel={(c: string) => { const l = opc.laboratorios.find(x => x.codigo === c); return l?.nombre ? `${c} · ${l.nombre}` : c }}
             onChange={(_, v) => setF({ lab: v })} renderInput={p => <TextField {...p} label="Laboratorio" />} />}
+          {def.clave === 'items-compras' && <>
+            <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 200, flex: '0 1 240px' }} value={f.cat} options={['0001', '0002', '0003']}
+              getOptionLabel={(c: string) => ({ '0001': '0001 · Productos Funat', '0002': '0002 · Productos de terceros', '0003': '0003 · Maquila Funat' } as Record<string, string>)[c] ?? c}
+              onChange={(_, v) => setF({ cat: v })} renderInput={p => <TextField {...p} label="Categoría" />} />
+            <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 220, flex: '0 1 280px' }} value={f.abas} options={['Compra', 'Producción propia', 'Sin proveedor', 'Revisar proveedor']}
+              onChange={(_, v) => setF({ abas: v })} renderInput={p => <TextField {...p} label="Abastecimiento" />} />
+          </>}
           {def.filtros.empresa && <TextField select size="small" label="Estado en Siesa" value={estado} onChange={e => setEstado(e.target.value)} sx={{ width: 160 }}>
             <MenuItem value="activo">Activos</MenuItem><MenuItem value="inactivo">Inactivos</MenuItem><MenuItem value="bloqueado">Bloqueados</MenuItem><MenuItem value="todos">Todos</MenuItem></TextField>}
           {def.filtros.mes && <TextField size="small" type="month" label="Mes" value={f.mes} onChange={e => setF({ mes: e.target.value })} slotProps={{ inputLabel: { shrink: true } }} sx={{ width: 170 }} />}
-          <Tooltip title="Filtra por el valor de una columna, en el servidor (sirve con cientos de miles de filas). Ej.: cota_maxima mayor que 1">
+          <Tooltip disableInteractive title={colAbierta ? '' : 'Filtra por el valor de una columna, en el servidor (sirve con cientos de miles de filas). Ej.: cota_maxima mayor que 1'}>
             <Box sx={{ display: 'flex', gap: .5, alignItems: 'center' }}>
               <TextField select size="small" label="Columna" value={f.col} onChange={e => setF({ col: e.target.value, op: colTexto(e.target.value) ? 'contiene' : 'eq', val: '' })} sx={{ width: 150 }}
-                slotProps={{ select: { displayEmpty: true }, inputLabel: { shrink: true } }}>
+                slotProps={{ select: { displayEmpty: true, open: colAbierta, onOpen: () => setColAbierta(true), onClose: () => setColAbierta(false) }, inputLabel: { shrink: true } }}>
                 <MenuItem value="">(ninguna)</MenuItem>{columnasFiltro.map(c => <MenuItem key={c} value={c}>{c}</MenuItem>)}</TextField>
               {f.col && <TextField select size="small" label="Condición" value={f.op} onChange={e => setF({ op: e.target.value })} sx={{ width: 150 }}>
                 {OPERADORES.filter(o => !o.solo || (o.solo === 'txt') === colTexto(f.col)).map(o => <MenuItem key={o.v} value={o.v}>{o.t}</MenuItem>)}</TextField>}

@@ -12,7 +12,7 @@ Estados: ✅ listo · 🟡 hecho, sin validar en producción · ⬜ pendiente ·
 - ⬜ Retroprueba: validar la necesidad del CEDI contra lo que compras realmente pidió
 - ⬜ Ítems con poca historia → revisión manual; picos atípicos como demanda calificada o recortados; excluir días con quiebre en PT001
 - ⬜ Se pide si flujo neto ≤ TOY hasta TOG, redondeado a múltiplo de compra y respetando MOQ
-- ⬜ Filtro de comprables (plan 001: 0002 Productos de terceros sí, 0001 Productos Funat no; maquila = compra) — editable
+- 🟡 Filtro de comprables = «Criterios comprables» (falta usarlo al calcular la necesidad)
 - ⬜ Lead time desde el tiempo de entrega de la cotización (f212_tiempo_entrega; en los ejemplos siempre 8): validar con compras que sea real antes de usarlo como capa del lead time
 - ✅ Descuentos por rango de cantidad: no se usan hoy en Siesa (no aplica; si algún día se usan, retomar)
 - ✅ Varias cotizaciones vigentes del mismo proveedor: no hay (sección E vacía y 047114 da 1 fila, igual que Siesa); el ETL toma, como Siesa, la de mayor fecha de activación por combinación, solo UND y COP
@@ -20,13 +20,15 @@ Estados: ✅ listo · 🟡 hecho, sin validar en producción · ⬜ pendiente ·
 - ✅ Cotizaciones en USD: se ignoran (decidido); el ETL solo toma COP
 - ⬜ Impuesto al consumo: queda FUERA del costo (decidido)
 - ⬜ Ítems sin proveedor en Siesa (todos los estados, incluye inactivos): 737 de 7.587 de terceros (0002) y 1.501 de 4.271 de Productos Funat (0001); compras debe asignarlos en Siesa para que entren a la necesidad
-- ⏸ Decidir: ítems cuyo proveedor es Laboratorios Funat (NIT 811000340, 3.295 ítems) = producción propia, no generan OC (maquila con otro proveedor sí se compra)
+- 🟡 Qué se compra: por CATEGORÍA (plan 001) y empresa, en el maestro «Criterios comprables»: Funat (05) compra Terceros (0002) y Maquila (0003), NO Productos Funat (0001); Stores (21) compra todo. (Se descartó la marca «propio» del proveedor: hay maquilas con Laboratorios Funat como proveedor en el ítem)
+- ✅ Servidor: el `.env` de producción ya incluye `001:0003` en `SIESA_CRITERIOS_ITEMS` (la maquila entra al maestro y al ETL); el valor por defecto del código y `.env.example` quedaron igual
+- ⬜ Maquila: revisar que el proveedor del ítem sea el de su cotización (`docs/sql/proveedor_vs_cotizacion.sql`); el maestro de ítems de compras marca «Revisar proveedor» y muestra el costo del otro proveedor sin usarlo
 - ⬜ Zonas con factores parametrizables (prioridad ítem > proveedor > ABC > general)
 
 ## DDMRP (pendientes de la lista original)
 - ✅ 1. Menú de compras y permisos (`ver_compras`, `cargar_maestros_compras`, perfil Compras, «Maestros» con desplegable)
-- 🟡 2. Maestros: **proveedores** (NIT, sucursal, lead time, correos para/cc, activo, pedido mínimo, contacto, teléfono, notas) · **items de compras** (cotización, unidad de pedido y de empaque; sin crear ni borrar) · lead time del CEDI
-- ⬜ 2b. Maestros que faltan: empaque/MOQ por proveedor-ítem si hace falta, criterios comprables, tiendas de compra directa, `item_compra_destino` (etapa 2), factores de zona
+- 🟡 2. Maestros: **criterios comprables** · **proveedores** (NIT, sucursal, lead time, correos para/cc, activo, pedido mínimo, contacto, teléfono, notas) · **items de compras** (cotización, unidad de pedido y de empaque; sin crear ni borrar) · lead time del CEDI
+- ⬜ 2b. Maestros que faltan: empaque/MOQ por proveedor-ítem si hace falta, tiendas de compra directa, `item_compra_destino` (etapa 2), factores de zona
 - 🟡 3. Proveedor por ítem desde Siesa: ✅ columnas confirmadas (`f120_rowid_tercero_prov`, `f120_id_sucursal_prov`), sin proveedores huérfanos; falta correr el ETL y ver `items_con_proveedor` · ✅ costo de la cotización validado · 🟡 IVA por ítem (falta validar la tarifa)
 - ⬜ 4. Necesidad a nivel CEDI como informe de compras (lo calculado ya existe; falta la vista de «qué pedir»)
 - ⬜ 5. Vista de necesidades con filtros multi-proveedor y generación de borradores

@@ -543,7 +543,8 @@ def _cotizaciones_de_siesa(cur, eng, empresa: str, por_item: dict) -> dict:
         out["aviso_cotizacion"] = ("No se pudieron leer las cotizaciones (t212): " + str(e).splitlines()[0])[:300]
         filas = None
     if filas is not None:
-        mejor: dict[str, tuple] = {}     # referencia -> (activacion, -costo, costo)
+        mejor: dict[str, tuple] = {}     # referencia -> (activacion, -costo, costo): cotizacion del PROVEEDOR del item
+        otros: dict[str, tuple] = {}     # referencia -> (activacion, -costo, costo, nit): la mas reciente de OTRO proveedor (para revisar items mal asignados)
         otra_moneda = otra_um = 0
         um_ok = settings.siesa_um_compra.strip().upper()
         for ref, nit, suc, mon, um, act, precio, dv, dp in filas:
@@ -554,26 +555,31 @@ def _cotizaciones_de_siesa(cur, eng, empresa: str, por_item: dict) -> dict:
                 otra_um += 1
                 continue
             ref = ref.strip()
-            if por_item:   # el proveedor del item es conocido: solo vale la cotizacion de SU proveedor y sucursal
+            costo = float(precio or 0) - (float(dv) if dv else float(precio or 0) * float(dp or 0) / 100)
+            clave = (act, -costo)
+            destino = mejor
+            if por_item:   # el proveedor del item es conocido: solo vale la cotizacion de SU proveedor y sucursal; las de otros se guardan aparte para revisarlas
                 p = por_item.get(ref)
                 s = (suc or "001").strip()
                 if not p or (nit or "").strip() != p[0] or (s.zfill(3) if s.isdigit() else s) != p[1]:
-                    continue
-            costo = float(precio or 0) - (float(dv) if dv else float(precio or 0) * float(dp or 0) / 100)
-            clave = (act, -costo)
-            if ref not in mejor or clave > mejor[ref][:2]:
-                mejor[ref] = (act, -costo, costo)
-        cur.execute("CREATE TEMP TABLE IF NOT EXISTS stg_cot (producto_id text, costo numeric, fecha date)")
+                    destino = otros
+            if ref not in destino or clave > destino[ref][:2]:
+                destino[ref] = (act, -costo, costo) if destino is mejor else (act, -costo, costo, (nit or "").strip())
+        cur.execute("CREATE TEMP TABLE IF NOT EXISTS stg_cot (producto_id text, costo numeric, fecha date, otro_nit text, otro_costo numeric)")
         cur.execute("TRUNCATE stg_cot")
+        solo_otro = [r for r in otros if r not in mejor]
         with cur.copy("COPY stg_cot FROM STDIN") as cp:
             for ref, (act, _, costo) in mejor.items():
-                cp.write_row((ref, round(costo, 4), act.date() if hasattr(act, "date") else act))
-        cur.execute("""UPDATE ddmrp.item_compra ic SET cotizacion_siesa = s.costo, cotizacion_fecha = s.fecha FROM stg_cot s
-                       WHERE ic.empresa = %s AND ic.producto_id = s.producto_id""", (empresa,))
-        cur.execute("""UPDATE ddmrp.item_compra ic SET cotizacion_siesa = NULL, cotizacion_fecha = NULL
-                       WHERE ic.empresa = %s AND ic.cotizacion_siesa IS NOT NULL AND NOT EXISTS (SELECT 1 FROM stg_cot s WHERE s.producto_id = ic.producto_id)""", (empresa,))
+                cp.write_row((ref, round(costo, 4), act.date() if hasattr(act, "date") else act, None, None))
+            for ref in solo_otro:
+                cp.write_row((ref, None, None, otros[ref][3], round(otros[ref][2], 4)))
+        cur.execute("""UPDATE ddmrp.item_compra ic SET cotizacion_siesa = s.costo, cotizacion_fecha = s.fecha, cotizacion_otro_nit = s.otro_nit, cotizacion_otro_costo = s.otro_costo
+                       FROM stg_cot s WHERE ic.empresa = %s AND ic.producto_id = s.producto_id""", (empresa,))
+        cur.execute("""UPDATE ddmrp.item_compra ic SET cotizacion_siesa = NULL, cotizacion_fecha = NULL, cotizacion_otro_nit = NULL, cotizacion_otro_costo = NULL
+                       WHERE ic.empresa = %s AND (ic.cotizacion_siesa IS NOT NULL OR ic.cotizacion_otro_nit IS NOT NULL)
+                         AND NOT EXISTS (SELECT 1 FROM stg_cot s WHERE s.producto_id = ic.producto_id)""", (empresa,))
         cur.execute("DROP TABLE stg_cot")
-        out.update(items_con_cotizacion=len(mejor), cotizaciones_en_otra_moneda=otra_moneda, cotizaciones_en_otra_um=otra_um)
+        out.update(items_con_cotizacion=len(mejor), items_cotizan_otro_proveedor=len(solo_otro), cotizaciones_en_otra_moneda=otra_moneda, cotizaciones_en_otra_um=otra_um)
         if not por_item:
             out["aviso_cotizacion_sin_proveedor"] = "No se conoce el proveedor de los items: se uso la cotizacion vigente mas reciente de cualquier proveedor."
     try:
