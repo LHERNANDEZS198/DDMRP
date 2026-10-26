@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     # (Reglas > Revisar un inventario ayuda a ubicar la tabla). Con SIESA_COSTO_TABLA vacia se lee de t400 (costo de la bodega).
     siesa_costo_tabla: str = "t132_mc_items_instalacion"
     siesa_costo_columna: str = "f132_costo_prom_uni"
+    # Proveedor del item (pantalla Items de Siesa, pestaña Generales: «Proveedor» + «Sucursal»): columnas de t120_mc_items. El item tiene UN solo proveedor.
+    # Los nombres son los habituales del diccionario de Siesa pero NO estan confirmados: corre docs/sql/proveedor_item.sql y, si son otros, cambialos aqui
+    # (SIESA_ITEM_PROVEEDOR_COL / SIESA_ITEM_PROVEEDOR_SUC_COL). Si no se pueden leer, el ETL avisa y sigue sin proveedores.
+    siesa_item_proveedor_col: str = "f120_rowid_tercero_prov"     # rowid del tercero (t200.f200_rowid)
+    siesa_item_proveedor_suc_col: str = "f120_id_sucursal_prov"   # sucursal del proveedor (ej. 001)
     siesa_user: str = ""
     siesa_password: str = ""
 

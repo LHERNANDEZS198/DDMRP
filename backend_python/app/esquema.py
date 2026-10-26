@@ -304,8 +304,29 @@ SENTENCIAS_BITACORA = [
 ]
 
 
+# Compras: proveedores (se completan con lo que llega de Siesa y compras agrega lead time, correos...) y datos de compra de cada item.
+SENTENCIAS_COMPRAS = [
+    """CREATE TABLE IF NOT EXISTS ddmrp.proveedor (
+         empresa TEXT NOT NULL, proveedor_id TEXT NOT NULL, sucursal TEXT NOT NULL DEFAULT '001',   -- proveedor_id = NIT (f200_id del tercero en Siesa)
+         nombre TEXT, leadtime NUMERIC(8,2) CHECK (leadtime IS NULL OR leadtime >= 0),                -- dias; vacio = se usa el general del CEDI
+         email_para TEXT, email_cc TEXT,                                                              -- varios correos separados por ;
+         activo SMALLINT DEFAULT 1 CHECK (activo IN (0, 1)),                                           -- vacio se trata como activo
+         pedido_minimo NUMERIC(16,2) CHECK (pedido_minimo IS NULL OR pedido_minimo >= 0),            -- valor minimo de una OC a este proveedor
+         contacto TEXT, telefono TEXT, notas TEXT, origen TEXT NOT NULL DEFAULT 'manual',            -- origen: siesa (llego del maestro de items) o manual
+         PRIMARY KEY (empresa, proveedor_id, sucursal))""",
+    """CREATE TABLE IF NOT EXISTS ddmrp.item_compra (
+         empresa TEXT NOT NULL, producto_id TEXT NOT NULL,
+         proveedor_id TEXT, sucursal TEXT,                                          -- los pone el ETL desde el item de Siesa (un solo proveedor por item)
+         cotizacion NUMERIC(16,4) CHECK (cotizacion IS NULL OR cotizacion >= 0),    -- costo de la cotizacion vigente (se carga a mano o por Excel)
+         unidad_pedido NUMERIC(12,2) DEFAULT 1 CHECK (unidad_pedido IS NULL OR unidad_pedido > 0),     -- multiplo en que se pide al proveedor
+         unidad_empaque NUMERIC(12,2) DEFAULT 1 CHECK (unidad_empaque IS NULL OR unidad_empaque > 0),  -- unidades por caja / empaque
+         PRIMARY KEY (empresa, producto_id))""",
+    "INSERT INTO ddmrp.item_compra (empresa, producto_id) SELECT empresa, producto_id FROM ddmrp.item_empresa ON CONFLICT DO NOTHING",
+]
+
+
 def esquema_cedi() -> None:
-    for s in SENTENCIAS_CEDI + SENTENCIAS_BITACORA:
+    for s in SENTENCIAS_CEDI + SENTENCIAS_BITACORA + SENTENCIAS_COMPRAS:
         try:
             with pg.begin() as c:
                 c.execute(text(s))

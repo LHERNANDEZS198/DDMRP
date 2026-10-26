@@ -19,7 +19,7 @@ import { useEmpresa } from '../Empresa'
 type Filtros = { tienda: boolean; item: boolean; lab: boolean; texto: boolean; empresa?: boolean; empresa_opc?: boolean; mes?: boolean }
 type Tienda = { bodega_id: string; nombre: string | null; empresa: string | null }
 type Lab = { codigo: string; nombre: string | null }
-type Def = { grupo?: string; ayuda: string; filtros: Filtros; todas?: boolean; clave: string; label: string; llave: string[]; editable: string[]; tipos: Record<string, string>; sin_reemplazo: boolean; puede_vaciar?: boolean }
+type Def = { grupo?: string; solo_existentes?: boolean; lectura?: { k: string; t: string }[]; ayuda: string; filtros: Filtros; todas?: boolean; clave: string; label: string; llave: string[]; editable: string[]; tipos: Record<string, string>; sin_reemplazo: boolean; puede_vaciar?: boolean }
 
 
 const OPERADORES: { v: string; t: string; solo?: 'txt' | 'num' }[] = [
@@ -38,7 +38,7 @@ const resumen = (r: any) =>
 export default function Config({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
   const { puede } = useYo(); const pCarga = puede(grupo === 'compras' ? 'cargar_maestros_compras' : 'cargar_maestros'); const pSync = grupo === 'ddmrp' && puede('sincronizar_siesa')
   const [defs, setDefs] = useState<Def[]>([])
-  const inicial = grupo === 'compras' ? 'leadtime-cedi' : 'bitacora'
+  const inicial = grupo === 'compras' ? 'items-compras' : 'bitacora'
   const [sel, setSel] = useState(inicial)
   const [rows, setRows] = useState<any[]>([])
   const [cargando, setCargando] = useState(true)
@@ -107,14 +107,18 @@ export default function Config({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras
       ? { field: k, editable: pCarga, sort: srt(k) }
       : { field: k, editable: pCarga, type: 'numericColumn', sort: srt(k) })
     // items: una columna por plan de criterios (el nombre del plan es el encabezado, el criterio es el valor)
-    const conocidas = new Set([...def.llave, ...def.editable, 'descripcion', 'bodega_nombre', 'costo', 'estado'])
+    const conocidas = new Set([...def.llave, ...def.editable, 'descripcion', 'bodega_nombre', 'costo', 'estado', ...(def.lectura ?? []).map(c => c.k)])
     const extra: ColDef[] = def.clave === 'items' && rows[0]
       ? Object.keys(rows[0]).filter(k => !conocidas.has(k)).map(k => ({ field: k, headerName: k, width: 190 })) : []
     const ed2 = def.clave === 'bitacora' ? ed.map(c => c.field === 'descripcion' ? { ...c, headerName: 'Tienda (nombre)', width: 240 } : c) : def.clave === 'items' ? ed.map(c => c.field === 'categoria' ? { ...c, headerName: 'Laboratorio (código)', width: 150 } : c.field === 'descripcion' ? { ...c, width: 300 } : c) : ed
     const costo: ColDef[] = def.clave === 'items' ? [{ field: 'costo', headerName: 'Costo promedio', type: 'numericColumn', width: 140,
       valueFormatter: p => p.value == null ? '' : '$' + Math.round(p.value).toLocaleString('es-CO'), headerTooltip: 'Costo promedio por instalación (lo trae el ETL desde Siesa). Solo lectura.' }] : []
     const est: ColDef[] = def.clave === 'items' ? [{ field: 'estado', headerName: 'Estado Siesa', width: 120, headerTooltip: 'Estado del item en Siesa (extensión del item). Solo lectura; sin dato = activo.' }] : []
-    return [...llave, ...desc, ...ed2, ...costo, ...est, ...extra]
+    // columnas de solo lectura que declara el maestro (p.ej. items de compras: laboratorio, línea, exhibición, costo, proveedor)
+    const lect: ColDef[] = (def.lectura ?? []).map(c => c.k === 'costo'
+      ? { field: c.k, headerName: c.t, type: 'numericColumn', width: 130, valueFormatter: (p: any) => p.value == null ? '' : '$' + Math.round(p.value).toLocaleString('es-CO'), headerTooltip: 'Solo lectura (viene de Siesa)' }
+      : { field: c.k, headerName: c.t, width: c.k === 'proveedor' ? 130 : 180, headerTooltip: 'Solo lectura (viene de Siesa)' })
+    return [...llave, ...desc, ...ed2, ...lect, ...costo, ...est, ...extra]
   }, [def, rowKeys, pCarga, orden.col, orden.desc])
 
   const onChange = async (e: CellValueChangedEvent) => {
@@ -259,7 +263,7 @@ export default function Config({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras
         <Button variant="contained" startIcon={<Upload />} onClick={() => fileRef.current?.click()}>Subir Excel / CSV</Button>
         <input ref={fileRef} type="file" accept=".xlsx,.csv,.txt" hidden onChange={e => subirArchivo(e.target.files?.[0])} />
         <Button startIcon={<ContentPaste />} onClick={() => setPegar(!pegar)}>Pegar desde Excel</Button>
-        <Button startIcon={<AddCircleOutline />} onClick={() => { setNueva({}); setAgregar(true) }}>Agregar fila</Button>
+        {!def?.solo_existentes && <Button startIcon={<AddCircleOutline />} onClick={() => { setNueva({}); setAgregar(true) }}>Agregar fila</Button>}
         {def && !def.sin_reemplazo && <Button color="error" startIcon={<DeleteOutline />} onClick={eliminar}>Eliminar seleccionadas</Button>}
         {def?.puede_vaciar && <Tooltip title="Borra TODAS las filas que cumplen los filtros de abajo (sin filtros: el maestro completo), no solo las que ves. Sirve para limpiar y volver a subir.">
           <span><Button color="error" variant="outlined" startIcon={<DeleteSweep />} onClick={vaciar} disabled={!total}>{hayFiltro ? `Eliminar todo lo filtrado (${total.toLocaleString('es-CO')})` : 'Vaciar maestro'}</Button></span></Tooltip>}</>}

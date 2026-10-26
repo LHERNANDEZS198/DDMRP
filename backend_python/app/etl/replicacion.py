@@ -71,6 +71,15 @@ WHERE rn = 1"""
 
 SQL_CO = "SELECT RTRIM(f150_id), RTRIM(f150_id_co) FROM t150_mc_bodegas WHERE f150_id_cia = :cia AND f150_id IN :bodegas"
 
+def _sql_item_proveedor() -> str:
+    """Proveedor de cada item (pestaña Generales del item en Siesa): referencia, NIT (f200_id del tercero), sucursal y razon social. UN proveedor por item."""
+    col, suc = settings.siesa_item_proveedor_col, settings.siesa_item_proveedor_suc_col
+    return f"""SELECT RTRIM(i.f120_referencia), RTRIM(t.f200_id), RTRIM(CONVERT(varchar(10), i.{suc})), MAX(RTRIM(t.f200_razon_social))
+FROM t120_mc_items i JOIN t200_mm_terceros t ON t.f200_rowid = i.{col}
+WHERE i.f120_id_cia = :cia AND i.{col} IS NOT NULL AND i.f120_referencia IS NOT NULL AND RTRIM(i.f120_referencia) <> ''
+GROUP BY RTRIM(i.f120_referencia), RTRIM(t.f200_id), RTRIM(CONVERT(varchar(10), i.{suc}))"""
+
+
 def _sql_items(con_estado: bool) -> str:
     """Referencia, descripcion y, si la columna de estado existe, cuantas extensiones (t121) de esa referencia estan activas y cuantas
     bloqueadas (una referencia puede tener varias extensiones: es activa si alguna lo es)."""
@@ -441,6 +450,46 @@ def _sincronizar_bodegas_ahora() -> int:
         raw.close()
 
 
+def _proveedores_de_siesa(cur, eng, empresa: str) -> dict:
+    """Proveedor de cada item (manda Siesa) y proveedores nuevos en ddmrp.proveedor. De los proveedores que ya existen NO se toca nada (lead time, correos,
+    activo... los pone compras). Lo devuelto sirve para validar que el proveedor esta llegando: cuantos items lo traen y cuantos no."""
+    try:   # lo que falle del ORIGEN (p.ej. la columna no existe) no tumba la sincronizacion de items
+        filas = list(_stream(eng, _sql_item_proveedor(), {"cia": settings.siesa_cia}))
+    except Exception as e:
+        if isinstance(e, psycopg.Error):
+            raise
+        log.warning("Proveedor del item no leido (revisa SIESA_ITEM_PROVEEDOR_COL / _SUC_COL con docs/sql/proveedor_item.sql): %s", e)
+        return {"aviso_proveedor": ("No se pudo leer el proveedor del item: revisa SIESA_ITEM_PROVEEDOR_COL y SIESA_ITEM_PROVEEDOR_SUC_COL con docs/sql/proveedor_item.sql. " + str(e).splitlines()[0])[:300]}
+    por_item: dict[str, tuple] = {}
+    for ref, nit, suc, nombre in filas:
+        if not ref or not nit:
+            continue
+        s = (suc or "001").strip()
+        por_item[ref.strip()] = (nit.strip(), s.zfill(3) if s.isdigit() else s, (nombre or "").strip() or None)
+    cur.execute("INSERT INTO ddmrp.item_compra (empresa, producto_id) SELECT %s, producto_id FROM ddmrp.item_empresa WHERE empresa = %s ON CONFLICT DO NOTHING", (empresa, empresa))
+    cur.execute("CREATE TEMP TABLE IF NOT EXISTS stg_prov (producto_id text, proveedor_id text, sucursal text, nombre text)")
+    cur.execute("TRUNCATE stg_prov")
+    with cur.copy("COPY stg_prov FROM STDIN") as cp:
+        for ref, (nit, suc, nom) in por_item.items():
+            cp.write_row((ref, nit, suc, nom))
+    cur.execute("""INSERT INTO ddmrp.proveedor (empresa, proveedor_id, sucursal, nombre, origen)
+                   SELECT DISTINCT ON (s.proveedor_id, s.sucursal) %s, s.proveedor_id, s.sucursal, s.nombre, 'siesa'
+                   FROM stg_prov s JOIN ddmrp.item_empresa ie ON ie.empresa = %s AND ie.producto_id = s.producto_id
+                   ORDER BY s.proveedor_id, s.sucursal
+                   ON CONFLICT (empresa, proveedor_id, sucursal) DO NOTHING""", (empresa, empresa))
+    nuevos = cur.rowcount or 0
+    cur.execute("""UPDATE ddmrp.item_compra ic SET proveedor_id = s.proveedor_id, sucursal = s.sucursal FROM stg_prov s
+                   WHERE ic.empresa = %s AND ic.producto_id = s.producto_id
+                     AND (ic.proveedor_id IS DISTINCT FROM s.proveedor_id OR ic.sucursal IS DISTINCT FROM s.sucursal)""", (empresa,))
+    cur.execute("""UPDATE ddmrp.item_compra ic SET proveedor_id = NULL, sucursal = NULL
+                   WHERE ic.empresa = %s AND ic.proveedor_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM stg_prov s WHERE s.producto_id = ic.producto_id)""", (empresa,))
+    cur.execute("DROP TABLE stg_prov")
+    cur.execute("""SELECT count(*) FILTER (WHERE ic.proveedor_id IS NOT NULL), count(*) FILTER (WHERE ic.proveedor_id IS NULL)
+                   FROM ddmrp.item_compra ic JOIN ddmrp.item_empresa ie ON ie.empresa = ic.empresa AND ie.producto_id = ic.producto_id WHERE ic.empresa = %s""", (empresa,))
+    con, sin = cur.fetchone()
+    return {"items_con_proveedor": con, "items_sin_proveedor": sin, "proveedores_nuevos": nuevos}
+
+
 def _items_de_siesa(cur, eng, primera: bool = True, empresa: str | None = None) -> dict:
     """Descripcion, laboratorio (plan 006) y TODOS los criterios de items de una base de Siesa.
     Primero se lee todo del origen y solo despues se escribe, para que un fallo de Siesa no deje la tabla a medias.
@@ -516,6 +565,8 @@ def _items_de_siesa(cur, eng, primera: bool = True, empresa: str | None = None) 
     for pid, cid, nom in nombres_crit:
         cur.execute("INSERT INTO ddmrp.criterio (plan_id, criterio_id, nombre) VALUES (%s, %s, %s) "
                     "ON CONFLICT (plan_id, criterio_id) DO UPDATE SET nombre = EXCLUDED.nombre", (pid, cid, nom))
+    if empresa:
+        extra.update(_proveedores_de_siesa(cur, eng, empresa))
     return {"items": len(items), "eliminados": borrados, "con_laboratorio": len(labs), "criterios": len(crit), "planes": len({c[1] for c in crit}), **extra}
 
 

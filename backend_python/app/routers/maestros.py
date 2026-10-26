@@ -1,6 +1,6 @@
 """Maestros editables desde la UI (lead time, cotas, unidad de despacho, vectorizacion, pronostico, promociones,
 factores y parametros del modelo). Todo el SQL sale de esta lista blanca: el cliente nunca elige tablas ni columnas."""
-import csv, io, unicodedata
+import csv, io, re, unicodedata
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from openpyxl import Workbook, load_workbook
@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from ..db import pg
 from .. import bitacora
+from ..activos import solo_activos
 from ..security import usuario_actual, filtro_sql_permisos, exigir, asignaciones, nivel_efectivo, NIVELES, requiere, permisos
 
 router = APIRouter(prefix="/maestros", tags=["maestros"])
@@ -19,7 +20,7 @@ CAST = {"num": "numeric", "int": "smallint", "txt": "text"}
 # tipo de las columnas llave que no son texto
 TIPO_LLAVE = {"dia": "int"}
 # columnas llave cuyo valor numerico de Excel pierde ceros a la izquierda -> se rellenan
-ANCHO = {"producto_id": 6, "empresa": 2}
+ANCHO = {"producto_id": 6, "empresa": 2, "sucursal": 3}
 
 MAESTROS = {
     "bitacora": dict(
@@ -46,6 +47,24 @@ MAESTROS = {
         label="Lead time del CEDI (dias): general (*) o por item", tabla="ddmrp.abast_leadtime_cedi",
         llave=["empresa", "producto_id"], editable={"leadtime": "num"},
         bodega=None, producto="producto_id", global_=True, grupo="compras"),
+    "proveedores": dict(
+        label="Proveedores: lead time, correos, estado y pedido minimo", tabla="ddmrp.proveedor",
+        llave=["empresa", "proveedor_id", "sucursal"],
+        editable={"nombre": "txt", "leadtime": "num", "email_para": "txt", "email_cc": "txt", "activo": "int", "pedido_minimo": "num",
+                  "contacto": "txt", "telefono": "txt", "notas": "txt"},
+        bodega=None, producto=None, global_=True, grupo="compras",
+        emails=("email_para", "email_cc"),      # varios correos separados por ; (o coma): se validan y se normalizan
+        booleanas=("activo",),                  # 1 / 0 / si / no
+        conservar=("activo",)),                 # celda vacia en la carga = no cambia
+    "items-compras": dict(
+        label="Items de compras: cotizacion, unidad de pedido y unidad de empaque", tabla="ddmrp.item_compra",
+        llave=["empresa", "producto_id"], editable={"cotizacion": "num", "unidad_pedido": "num", "unidad_empaque": "num"},
+        bodega=None, producto="producto_id", global_=True, grupo="compras",
+        solo_existentes=True,                   # los items vienen de Siesa: la carga solo actualiza, nunca crea
+        sin_reemplazo=True, sin_eliminar=True,  # y aqui no se borra nada (ni filas sueltas, ni vaciar, ni reemplazar)
+        conservar=("cotizacion", "unidad_pedido", "unidad_empaque"),   # celda vacia = no cambia
+        lectura=[("laboratorio", "Laboratorio"), ("linea", "Línea"), ("exhibicion", "Exhibición"), ("costo", "Costo promedio"),
+                 ("proveedor", "Proveedor (NIT)"), ("proveedor_nombre", "Nombre del proveedor")]),
     "pronostico": dict(
         label="Pronostico (unidades/mes)", tabla="ddmrp.pronostico",
         llave=["empresa", "bodega_id", "producto_id"], editable={"pronostico": "num"},
@@ -103,7 +122,7 @@ MAESTROS = {
 }
 
 
-SIN_VACIAR = {"items", "factores", "parametros"}   # se llenan desde Siesa o son del modelo: no se vacian desde la pantalla
+SIN_VACIAR = {"items", "factores", "parametros", "items-compras"}   # se llenan desde Siesa o son del modelo: no se vacian desde la pantalla
 OPS = {"eq": "=", "ne": "<>", "gt": ">", "lt": "<", "ge": ">=", "le": "<="}
 
 AYUDA = {
@@ -132,8 +151,14 @@ AYUDA = {
                  "El ETL detecta los pares solo (origen auto) cuando el original existe en Siesa; aquí puedes agregar o corregir uno a mano (origen manual, no lo pisa el ETL). Se aplica con la regla 'Items REC se suman a su original'. Para despachar, el stock debe estar físicamente bajo el SKU original en Siesa.",
     "cedis": "CEDIs (bodegas desde donde se despacha a las tiendas), uno por empresa y código de bodega, ej. empresa 05 PT001. La bitácora dice qué CEDI abastece a cada tienda. "
              "Hoy el motor reparte el inventario de un solo CEDI por empresa (el primero de esta lista); la columna CEDI de la bitácora deja listo el modelo para cuando haya más de uno.",
+    "proveedores": "Los proveedores llegan solos del maestro de items de Siesa (cada vez que se traen los items entran los nuevos, con su NIT y nombre) y aqui compras completa lo suyo: lead time en dias "
+                   "(prioridad al calcular el CEDI: el del item en «Lead time del CEDI», luego el del proveedor, luego el general), correos (varios separados por ;), activo (1/0 o si/no; vacio = activo), "
+                   "pedido minimo (valor), contacto, telefono y notas. Lo que ya escribiste no se pisa al sincronizar. La llave es empresa + NIT + sucursal.",
+    "items-compras": "Los items vienen de Siesa (no se crean ni se borran aqui): referencia, nombre, laboratorio, linea, exhibicion, costo promedio y proveedor son de solo lectura. "
+                     "Compras carga la cotizacion (costo vigente), la unidad de pedido (multiplo en que se pide, por defecto 1) y la unidad de empaque (unidades por caja, por defecto 1). "
+                     "Por Excel: baja el archivo, llena esas tres columnas y subelo; celda vacia = no cambia. Solo se ven los items activos de su empresa.",
     "leadtime-cedi": "Dias que tarda en llegar un item al CEDI (compra o maquila; la produccion propia no se modela). La fila con producto * es el general de la empresa (30 dias); "
-                     "una fila con un item lo sobrescribe. Alimenta el buffer del CEDI (Informes > Ver solo CEDI): se aplica en la siguiente corrida del motor.",
+                     "una fila con un item lo sobrescribe y, sin fila de item, manda el lead time del proveedor del item (maestro Proveedores). Alimenta el buffer del CEDI (Informes > Ver solo CEDI): se aplica en la siguiente corrida del motor.",
     "demanda-calificada": "Pedidos abiertos o picos conocidos por tienda y referencia. Se restan del flujo neto cuando la regla 'Restar demanda calificada' está en Sí.",
     "pronostico": "Venta mensual esperada (unidades/mes) por tienda y referencia. Sirve sobre todo para tiendas, referencias o laboratorios NUEVOS: si la combinacion tiene menos meses de venta que la regla 'Pronostico directo en casos nuevos' (por defecto 3), el motor usa este valor tal cual, aunque no haya historial. Con mas historial el pronostico solo ajusta: el motor lo lleva entre 1 y 2 veces el ADU de referencia (nunca baja el historial). Para campanas o promociones usa Promocion y las cotas.",
     "ventas-mensual": "Unidades vendidas por mes, tienda y referencia: base de la venta diaria (ADU) y de la variabilidad. Se traen de Siesa con 'Traer ventas por mes' o se cargan por Excel.",
@@ -172,6 +197,23 @@ def _def_para(nombre: str, user, escritura: bool = False) -> dict:
     return d
 
 
+def _crit_plan(patron: str) -> str:
+    """Nombre del criterio del item (de Siesa) en el plan cuyo nombre empieza por `patron` (LIKE, sin mayusculas)."""
+    return ("(SELECT cr.nombre FROM ddmrp.item_criterio ic JOIN ddmrp.criterio_plan cp ON cp.plan_id = ic.plan_id "
+            "LEFT JOIN ddmrp.criterio cr ON cr.plan_id = ic.plan_id AND cr.criterio_id = ic.criterio_id "
+            f"WHERE ic.producto_id = t.producto_id AND cp.nombre ILIKE '{patron}' LIMIT 1)")
+
+
+def _lectura_compras() -> tuple[str, str, list[str]]:
+    """(joins, columnas, encabezados) de solo lectura del maestro items-compras. El nombre sale del maestro de items (alias mi, ya unido).
+    LINEA y EXHIBICION son planes de criterios de Siesa: se buscan por el nombre del plan."""
+    join = (" LEFT JOIN ddmrp.laboratorio lb ON lb.codigo = mi.categoria LEFT JOIN ddmrp.costo_item ci ON ci.producto_id = t.producto_id"
+            " LEFT JOIN ddmrp.proveedor pv ON pv.empresa = t.empresa AND pv.proveedor_id = t.proveedor_id AND pv.sucursal = t.sucursal")
+    sel = (", COALESCE(lb.nombre, mi.categoria) AS laboratorio, " + _crit_plan("L_NEA%") + " AS linea, " + _crit_plan("EXHIBIC%") + " AS exhibicion, "
+           "ci.costo::float8 AS costo, t.proveedor_id AS proveedor, pv.nombre AS proveedor_nombre")
+    return join, sel, ["descripcion", "laboratorio", "linea", "exhibicion", "costo", "proveedor", "proveedor_nombre"]
+
+
 def _es_admin(user) -> bool:
     return any(a["es_admin"] for a in asignaciones(user["id"]))
 
@@ -201,6 +243,7 @@ def listar_maestros(user=Depends(requiere("ver_maestros", "cargar_maestros", "ve
     mios = permisos(user["id"])
     return [{"clave": k, "grupo": _grupo(v), "label": v["label"], "llave": v["llave"], "editable": list(v["editable"]),
              "tipos": v["editable"], "sin_reemplazo": bool(v.get("sin_reemplazo")), "todas": bool(v.get("todas")),
+             "solo_existentes": bool(v.get("solo_existentes")), "lectura": [{"k": a, "t": b} for a, b in v.get("lectura", [])],
              "ayuda": AYUDA.get(k, ""),
              "puede_vaciar": not v.get("sin_reemplazo") and k not in SIN_VACIAR,
              "filtros": {"tienda": bool(v.get("bodega")), "item": bool(v.get("producto")) or k == "items",
@@ -315,6 +358,9 @@ def leer(nombre: str, response: Response, bodega_id: str | None = None, producto
         sel += ", mi.descripcion"
     if nombre == "criterios-filtros":
         sel += ", t.nombre AS descripcion"
+    if d.get("lectura"):   # items-compras: solo items vigentes (en el maestro de su empresa) y activos, con sus columnas de solo lectura
+        j, s_, _ = _lectura_compras(); join += j; sel += s_
+        w += " AND EXISTS (SELECT 1 FROM ddmrp.item_empresa ie WHERE ie.empresa = t.empresa AND ie.producto_id = t.producto_id) AND " + solo_activos("t")
     if producto_id and d.get("producto"):
         w += f" AND t.{d['producto']} = :pr"; p["pr"] = producto_id
     wf, pf = _filtros_maestro(nombre, d, bodega_id, q, lab, empresa, mes, estado, col, op, val)
@@ -443,6 +489,25 @@ BOD_COD = ("bodega_id", "bodega", "codigo_bodega", "cod_bodega")
 BOD_NOM = ("bodega_nombre", "nombre_bodega", "tienda", "nombre")
 
 
+_SI = {"1", "si", "sí", "s", "true", "x", "activo"}
+_NO = {"0", "no", "n", "false", "inactivo"}
+_EMAIL = re.compile(r"^[^@\s;,]+@[^@\s;,]+\.[^@\s;,]+$")
+
+
+def _emails(t: str) -> str:
+    """Varios correos separados por ; o coma (o espacios): se validan uno a uno y quedan en minusculas, sin repetidos, separados por '; '."""
+    vistos: list[str] = []
+    for x in re.split(r"[;,\s]+", str(t).strip()):
+        if not x:
+            continue
+        x = x.lower()
+        if not _EMAIL.match(x):
+            raise ValueError(f"correo invalido: {x!r}")
+        if x not in vistos:
+            vistos.append(x)
+    return "; ".join(vistos)
+
+
 def _norm(t) -> str:
     t = unicodedata.normalize("NFKD", str(t or "")).encode("ascii", "ignore").decode().lower()
     return " ".join(t.split())
@@ -540,9 +605,18 @@ def _preparar(d: dict, filas: list[dict], omitir: bool = False, malas_out: list 
                 if cond_nxp and c == "vectorizacion":
                     fila_base[c] = 0
                     continue
+                if c in d.get("booleanas", ()):   # activo: 1 / 0 / si / no (vacio = None: no cambia)
+                    v = f.get(c)
+                    v = "" if v is None else (str(int(v)) if isinstance(v, float) and v.is_integer() else str(v)).strip().lower()
+                    if v not in _SI | _NO | {""}:
+                        raise ValueError(f"{f.get(c)!r} no es valido para {c}: usa 1/0 o si/no")
+                    fila_base[c] = None if v == "" else (1 if v in _SI else 0)
+                    continue
                 fila_base[c] = _valor_num(f.get(c), t) if t in ("num", "int") else (str(f[c]).strip() if f.get(c) not in (None, "") else None)
                 if c == "cedi" and fila_base[c]:
                     fila_base[c] = fila_base[c].upper()
+                if c in d.get("emails", ()) and fila_base[c]:
+                    fila_base[c] = _emails(fila_base[c])
                 if d.get("fraccion") and fila_base[c] is not None and not 0 <= fila_base[c] <= 1:
                     raise ValueError(f"{f.get(c)!r} no es un porcentaje valido: escribe 20% (o 0.2)")
             if d.get("valida_cedi") and fila_base.get("cedi"):
@@ -714,6 +788,9 @@ def bajar_excel(nombre: str, bodega_id: str | None = None, q: str | None = None,
         cab = [bod] + ([] if d.get("nombre_en_tabla") else ["bodega_nombre"]) + (["empresa"] if con_emp else []) + [c for c in cols_t if c != bod] + list(d["editable"])
     else:
         cab = cols_t + list(d["editable"])
+    if d.get("lectura"):    # items-compras: columnas informativas (la carga las ignora), mismos items que la pantalla
+        j, s_, cab_l = _lectura_compras(); join += j; sel += ", mi.descripcion AS descripcion" + s_; cab = cab + cab_l
+        wf += " AND EXISTS (SELECT 1 FROM ddmrp.item_empresa ie WHERE ie.empresa = t.empresa AND ie.producto_id = t.producto_id) AND " + solo_activos("t")
     if nombre == "items":   # costo promedio: columna informativa (la carga la ignora)
         join += " LEFT JOIN ddmrp.costo_item ci ON ci.producto_id = t.producto_id"
         sel += ", ci.costo::float8 AS costo, " + "(SELECT CASE ix2.estado WHEN 1 THEN \'Activo\' WHEN 0 THEN \'Inactivo\' WHEN 2 THEN \'Bloqueado\' END FROM ddmrp.item_estado ix2 WHERE ix2.empresa = :emp AND ix2.producto_id = t.producto_id) AS estado"; cab = cab + ["costo", "estado"]
@@ -762,7 +839,7 @@ def eliminar(nombre: str, body: Eliminar, user=Depends(requiere("cargar_maestros
     """Borra filas por su llave (p.ej. quitar una tienda de un DIA), de a miles en una sola sentencia. No aplica a factores ni parametros.
     Para borrar todo lo que cumple un filtro (sin pasar por la seleccion de la pantalla) esta /vaciar."""
     d = _def_para(nombre, user, True)
-    if d.get("sin_reemplazo") or nombre == "factores":
+    if d.get("sin_reemplazo") or d.get("sin_eliminar") or nombre == "factores":
         raise HTTPException(400, "Este maestro no admite eliminar filas")
     if len(body.llaves) > MAX_ELIMINAR:
         raise HTTPException(400, f"Maximo {MAX_ELIMINAR:,} filas por eliminacion: para mas usa 'Eliminar todo lo filtrado'")
