@@ -63,7 +63,9 @@ def _campo(nombre: str, tam: int, tipo, valor) -> str:
         if not s.isdigit() or len(s) > tam:
             raise ValueError(f"{nombre}: '{valor}' no es un número de máximo {tam} dígitos")
         return s.zfill(tam)
-    s = _ascii(valor)
+    # & < > " rompen el plano: viaja dentro de un XML escapado dos veces y Siesa NO deshace el escape interno (&amp; = 5 car. en vez de 1 -> corre toda la linea).
+    # Cada reemplazo es de 1 caracter para no mover posiciones.
+    s = _ascii(valor).replace("&", "y").replace("<", "(").replace(">", ")").replace('"', "'")
     if len(s) > tam:
         if nombre in ("f420_notas", "f421_notas", "f421_detalle"):
             return s[:tam]
