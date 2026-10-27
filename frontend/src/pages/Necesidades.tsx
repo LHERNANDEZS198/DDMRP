@@ -6,6 +6,7 @@ import Download from '@mui/icons-material/Download'
 import HelpOutline from '@mui/icons-material/HelpOutline'
 import Refresh from '@mui/icons-material/Refresh'
 import SendIcon from '@mui/icons-material/Send'
+import { useSearchParams } from 'react-router-dom'
 import { api, bajar, conProgreso } from '../api'
 import { useYo } from '../Yo'
 import { useEmpresa } from '../Empresa'
@@ -80,7 +81,8 @@ export default function Necesidades() {
   const [cargando, setCargando] = useState(true); const [err, setErr] = useState(''); const [msg, setMsg] = useState('')
   const [tab, setTab] = useState(0); const [guia, setGuia] = useState(false); const [ocAbierta, setOcAbierta] = useState(false)
   const [provs, setProvs] = useState<string[]>([]); const [cats, setCats] = useState<string[]>([]); const [zonas, setZonas] = useState<string[]>([])
-  const [labs, setLabs] = useState<string[]>([]); const [qd, setQd] = useState(''); const [q, setQ] = useState('')
+  const [sp] = useSearchParams(); const qUrl = sp.get('q') ?? ''      // enlace desde el BPM: /compras/necesidades?q=<item>
+  const [labs, setLabs] = useState<string[]>([]); const [qd, setQd] = useState(qUrl); const [q, setQ] = useState(qUrl)
   const [opcLabs, setOpcLabs] = useState<{ codigo: string; nombre?: string }[]>([])
   const [bajando, setBajando] = useState(false); const [recalculando, setRecalculando] = useState(false)
   const [sel, setSel] = useState<Set<string>>(new Set())      // ítems elegidos para la OC (por proveedor o uno a uno)

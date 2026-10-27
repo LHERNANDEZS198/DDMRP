@@ -13,6 +13,7 @@ from .. import siesa_oc
 from ..bitacora import evento
 from ..config import settings
 from ..db import pg
+from .compras import ULTIMA
 from .oc import _al_dia, _cerrar_creada, _lineas_de, _oc_dict, _marcar
 
 
@@ -84,10 +85,23 @@ def detalle(oc_id: int):
                            "unidades::float8 AS unidades, siesa_consecutivo, mensaje, creado_por, requiere_revision, motivo_revision FROM ddmrp.orden_compra WHERE id = :i"), {"i": oc_id}).mappings().first()
         if not r:
             raise HTTPException(404, "No existe esa OC")
-        lineas = [dict(x) for x in c.execute(text("SELECT nro, producto_id, descripcion, cantidad::float8 AS cantidad, costo::float8 AS costo, iva_tasa::float8 AS iva_tasa, "
-                                                  "cantidad_original::float8 AS cantidad_original, costo_original::float8 AS costo_original, fecha_entrega::text AS fecha_entrega "
-                                                  "FROM ddmrp.orden_compra_linea WHERE oc_id = :i ORDER BY nro"), {"i": oc_id}).mappings()]
-    return dict(r) | {"lineas": lineas}
+        lineas = [dict(x) for x in c.execute(text(f"""
+            SELECT l.nro, l.producto_id, l.descripcion, l.cantidad::float8 AS cantidad, l.costo::float8 AS costo, l.iva_tasa::float8 AS iva_tasa,
+                   l.cantidad_original::float8 AS cantidad_original, l.costo_original::float8 AS costo_original, l.fecha_entrega::text AS fecha_entrega,
+                   COALESCE(l.cantidad_calculada, l.cantidad_original, l.cantidad)::float8 AS cantidad_sugerida,
+                   COALESCE(l.costo_calculado, l.costo_original, l.costo)::float8 AS costo_cotizado,
+                   COALESCE(mi.categoria, '') AS lab_cod, COALESCE(lb.nombre, '') AS lab_nombre,
+                   z.zona, z.inventario::float8 AS saldo_cedi, z.en_transito::float8 AS en_transito
+            FROM ddmrp.orden_compra_linea l
+            LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = l.producto_id
+            LEFT JOIN ddmrp.laboratorio lb ON lb.codigo = mi.categoria
+            LEFT JOIN LATERAL (SELECT s.zona::text AS zona, s.inventario, s.en_transito FROM ddmrp.sugerencias_cedi s
+                               WHERE s.ejecucion_id = {ULTIMA} AND s.empresa = :e AND s.producto_id = l.producto_id LIMIT 1) z ON true
+            WHERE l.oc_id = :i ORDER BY l.nro"""), {"i": oc_id, "e": r["empresa"]}).mappings()]
+        creado = c.execute(text("SELECT ((creado AT TIME ZONE 'UTC') - interval '5 hours')::date::text FROM ddmrp.orden_compra WHERE id = :i"), {"i": oc_id}).scalar()
+    entregas = [l["fecha_entrega"] for l in lineas if l.get("fecha_entrega")]
+    extra = {"fecha_montaje": creado, "fecha_necesidad": max(entregas) if entregas else None, "fecha_necesidad_min": min(entregas) if entregas else None}
+    return dict(r) | extra | {"lineas": lineas}
 
 
 def _n(v) -> str:

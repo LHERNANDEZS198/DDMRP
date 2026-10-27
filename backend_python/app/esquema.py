@@ -419,6 +419,8 @@ SENTENCIAS_COMPRAS = [
          cantidad NUMERIC(16,3) NOT NULL, costo NUMERIC(16,4) NOT NULL, iva_tasa NUMERIC(6,2), origen_costo TEXT, fecha_entrega DATE, PRIMARY KEY (oc_id, nro))""",
     "ALTER TABLE ddmrp.orden_compra_linea ADD COLUMN IF NOT EXISTS cantidad_original NUMERIC(16,3)",
     "ALTER TABLE ddmrp.orden_compra_linea ADD COLUMN IF NOT EXISTS costo_original NUMERIC(16,4)",
+    "ALTER TABLE ddmrp.orden_compra_linea ADD COLUMN IF NOT EXISTS cantidad_calculada NUMERIC(16,3)",   # lo que calculo el motor al montar la OC (para que el aprobador vea que cambio compras)
+    "ALTER TABLE ddmrp.orden_compra_linea ADD COLUMN IF NOT EXISTS costo_calculado NUMERIC(16,4)",      # la cotizacion al montar la OC
 ]
 
 

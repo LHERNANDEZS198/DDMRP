@@ -286,8 +286,9 @@ def enviar(b: EnviarIn, user=Depends(requiere("gestionar_compras"))):
                                "rr": bool(g["motivos"]), "mr": "; ".join(g["motivos"])[:1000] or None}).scalar()
             c.execute(text("UPDATE ddmrp.orden_compra SET referencia = :r WHERE id = :i"), {"r": siesa_oc.referencia(oc_id), "i": oc_id})
             for n, l in enumerate(g["lineas"], start=1):
-                c.execute(text("INSERT INTO ddmrp.orden_compra_linea (oc_id, nro, producto_id, descripcion, cantidad, costo, iva_tasa, origen_costo, fecha_entrega) VALUES (:i,:n,:p,:d,:q,:c,:t,:o,:f)"),
-                          {"i": oc_id, "n": n, "p": l["producto_id"], "d": l["descripcion"], "q": l["cantidad"], "c": l["costo"], "t": l["iva_tasa"], "o": l["origen_costo"], "f": l["fecha_entrega"]})
+                c.execute(text("INSERT INTO ddmrp.orden_compra_linea (oc_id, nro, producto_id, descripcion, cantidad, costo, iva_tasa, origen_costo, fecha_entrega, cantidad_calculada, costo_calculado) VALUES (:i,:n,:p,:d,:q,:c,:t,:o,:f,:qc,:cc)"),
+                          {"i": oc_id, "n": n, "p": l["producto_id"], "d": l["descripcion"], "q": l["cantidad"], "c": l["costo"], "t": l["iva_tasa"], "o": l["origen_costo"], "f": l["fecha_entrega"],
+                           "qc": l.get("qty_calculada"), "cc": l.get("costo_ref")})
         if i:
             time.sleep(1.5)          # espaciado entre creaciones: Siesa no se lleva bien con rafagas
         salida.append(res | {"oc_id": oc_id, "referencia": siesa_oc.referencia(oc_id)} | _despachar(oc_id, usuario))
