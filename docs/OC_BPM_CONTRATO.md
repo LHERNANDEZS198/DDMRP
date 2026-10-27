@@ -34,3 +34,8 @@ Editar cantidades/costos en la revisión (hoy solo aprobar/rechazar), PDF y corr
 Siesa exige que la fecha del documento sea la del sistema. Una OC puede aprobarse días después de enviarse, así que justo antes de crearla el BPM llama
 `POST /api/bpm/oc/{id}/plano/vigente` (mismo `X-OC-Secret`): DDMRP corre las fechas de entrega los mismos días que pasaron, arma el plano con la fecha de HOY (hora de Colombia, UTC-5) y lo devuelve.
 Si DDMRP no responde, el BPM NO envía el plano viejo: el paso falla y se reintenta.
+
+## Detalle de la OC para el BPM
+- `GET /api/bpm/oc/{id}` → la OC con sus líneas (cantidad/costo actuales y originales si se editó) y `motivo_revision`: lo que el BPM muestra al aprobador y usa para armar los datos del PDF.
+- `POST /api/bpm/oc/{id}/plano` → el aprobador editó cantidades/costos (nota obligatoria si cambia un costo): DDMRP guarda, conserva lo original y rearma el plano.
+El PDF de la OC NO lo genera DDMRP: lo genera el BPM con su infraestructura de plantillas (docx → PDF) en el fin del proceso.

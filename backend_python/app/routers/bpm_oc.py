@@ -75,6 +75,20 @@ class PlanoIn(BaseModel):
     nota: str | None = None            # obligatoria si cambia algun costo (regla del flujo de aprobacion)
 
 
+@router.get("/{oc_id}")
+def detalle(oc_id: int):
+    """La OC con sus lineas (y lo original si se edito): lo que el BPM muestra al aprobador."""
+    with pg.connect() as c:
+        r = c.execute(text("SELECT id, empresa, proveedor_id, proveedor_nombre, sucursal, cond_pago, comprador, estado, referencia, valor::float8 AS valor, iva::float8 AS iva, total::float8 AS total, items, "
+                           "unidades::float8 AS unidades, siesa_consecutivo, mensaje, creado_por, requiere_revision, motivo_revision FROM ddmrp.orden_compra WHERE id = :i"), {"i": oc_id}).mappings().first()
+        if not r:
+            raise HTTPException(404, "No existe esa OC")
+        lineas = [dict(x) for x in c.execute(text("SELECT nro, producto_id, descripcion, cantidad::float8 AS cantidad, costo::float8 AS costo, iva_tasa::float8 AS iva_tasa, "
+                                                  "cantidad_original::float8 AS cantidad_original, costo_original::float8 AS costo_original, fecha_entrega::text AS fecha_entrega "
+                                                  "FROM ddmrp.orden_compra_linea WHERE oc_id = :i ORDER BY nro"), {"i": oc_id}).mappings()]
+    return dict(r) | {"lineas": lineas}
+
+
 @router.post("/{oc_id}/plano/vigente")
 def plano_vigente(oc_id: int):
     """Plano de la OC tal como esta, pero con la fecha de HOY (documento y entregas). El BPM lo pide justo antes de crear en Siesa: una OC aprobada dias despues

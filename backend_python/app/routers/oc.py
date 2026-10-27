@@ -217,9 +217,13 @@ def _enviar_bpm(oc_id: int, usuario: str | None) -> dict:
     except ValueError as ex:
         _marcar(oc_id, "error", str(ex)); return {"estado": "error", "mensaje": str(ex)}
     revision = bool(r["requiere_revision"]) if r["requiere_revision"] is not None else True      # sin dato (OC vieja) = se revisa
+    with pg.connect() as c:    # correos del proveedor (maestro de proveedores; varios separados por ;): el BPM los usa en el correo de fin de proceso si OC_EMAIL_PROVEEDOR=1
+        em = c.execute(text("SELECT email_para, email_cc FROM ddmrp.proveedor WHERE empresa = :e AND proveedor_id = :p AND sucursal = :s"),
+                       {"e": r["empresa"], "p": r["proveedor_id"], "s": r["sucursal"]}).first()
+    emails_proveedor = ";".join(x for x in ((em[0] or "") if em else "", (em[1] or "") if em else "") if x.strip())
     carga = {"id_externo": oc_id, "empresa": r["empresa"], "referencia": r["referencia"], "plano": plano, "proveedor_id": r["proveedor_id"], "sucursal": r["sucursal"],
              "proveedor_nombre": r["proveedor_nombre"], "cond_pago": r["cond_pago"], "comprador": r["comprador"], "creado_por": r["creado_por"], "valor": float(r["valor"] or 0),
-             "iva": float(r["iva"] or 0), "total": float(r["total"] or 0), "items": r["items"], "requiere_revision": revision, "motivo_revision": r["motivo_revision"],
+             "iva": float(r["iva"] or 0), "total": float(r["total"] or 0), "items": r["items"], "requiere_revision": revision, "motivo_revision": r["motivo_revision"], "emails_proveedor": emails_proveedor,
              "lineas": [{"producto_id": l["producto_id"], "descripcion": l["descripcion"], "cantidad": l["cantidad"], "costo": l["costo"], "fecha_entrega": str(l["fecha_entrega"])} for l in lineas]}
     req = urllib.request.Request(settings.bpm_url.rstrip("/") + "/api/internal/oc", data=json.dumps(carga).encode(), method="POST",
                                  headers={"Content-Type": "application/json", "X-OC-Secret": settings.bpm_secret})
