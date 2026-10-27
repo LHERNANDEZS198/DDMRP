@@ -122,7 +122,8 @@ def _motivos_revision(g: dict, cfg: dict) -> list[str]:
 
 def _oc_dict(r) -> dict:
     return {"id": r["id"], "empresa": r["empresa"], "proveedor_id": r["proveedor_id"], "sucursal": r["sucursal"], "cond_pago": r["cond_pago"],
-            "comprador": r["comprador"], "fecha": r.get("fecha") or siesa_oc.hoy()}
+            "comprador": r["comprador"], "fecha": r.get("fecha") or siesa_oc.hoy(),
+            "referencia": r.get("referencia")}      # la YA guardada manda: cambiar el formato de referencia no puede mover una OC existente (el anti-duplicados es por referencia)
 
 
 def _al_dia(oc_id: int) -> None:

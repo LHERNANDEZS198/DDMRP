@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     siesa_ws_conexion_s: str = ""        # sin esto Stores no puede enviar
     siesa_ws_cia_s: str = ""             # vacio = la misma cia de la 05
     siesa_ws_timeout: int = 180
-    oc_referencia_prefijo: str = "DDMRP"   # f420_num_docto_referencia = prefijo + id de la OC con ceros (maximo 15 caracteres en total)
+    oc_referencia_prefijo: str = "DDMRP"   # f420_num_docto_referencia = prefijo + id de la OC con ceros (maximo 15 caracteres en total; 5 digitos minimo: DDMRP00007)
     oc_co: str = "000"                   # centro de operacion del documento y de los movimientos
     oc_tipo_docto: str = "OCM"
     oc_motivo: str = "01"

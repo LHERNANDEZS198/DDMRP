@@ -5,7 +5,7 @@ DDMRP arma el **plano de Siesa** (dueño del layout 0420/0421 v5 y de la referen
 Secreto compartido: `BPM_SECRET` (DDMRP) = `OC_API_SECRET` (BPM), cabecera `X-OC-Secret` en ambos sentidos. Si falta en cualquiera de los dos, todo se rechaza (401).
 
 ## 1. DDMRP → BPM: `POST {BPM_URL}/api/internal/oc`  → 202 `{ok, instance_id}`
-Cuerpo: `id_externo` (id de `ddmrp.orden_compra`), `empresa` (05|21), `referencia` (`DDMRP00000123`), `plano` (texto completo), `proveedor_id`, `sucursal`, `proveedor_nombre`, `cond_pago`, `comprador`, `creado_por`, `valor`, `iva`, `total`, `items`, `requiere_revision` (bool; lo decide DDMRP con la «Configuración de compras»: umbral de total y desvíos por línea) y `motivo_revision` (texto), `lineas[]` (`producto_id`, `descripcion`, `cantidad`, `costo`, `fecha_entrega`).
+Cuerpo: `id_externo` (id de `ddmrp.orden_compra`), `empresa` (05|21), `referencia` (`DDMRP00123`), `plano` (texto completo), `proveedor_id`, `sucursal`, `proveedor_nombre`, `cond_pago`, `comprador`, `creado_por`, `valor`, `iva`, `total`, `items`, `requiere_revision` (bool; lo decide DDMRP con la «Configuración de compras»: umbral de total y desvíos por línea) y `motivo_revision` (texto), `lineas[]` (`producto_id`, `descripcion`, `cantidad`, `costo`, `fecha_entrega`).
 Idempotente por `referencia`: reenviar no crea otra instancia. 4xx/5xx/timeout ⇒ DDMRP deja la OC en `error` (nada se creó en Siesa) y se puede reenviar.
 `GET {BPM_URL}/api/internal/oc/{id_externo}` → estado en el BPM.
 
