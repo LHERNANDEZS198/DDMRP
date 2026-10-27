@@ -156,6 +156,7 @@ SENTENCIAS = [
          bodegas     TEXT[] NOT NULL DEFAULT '{}',
          categorias  TEXT[] NOT NULL DEFAULT '{}',
          actualizado TIMESTAMPTZ NOT NULL DEFAULT now())""",
+    "ALTER TABLE ddmrp.usuario ADD COLUMN IF NOT EXISTS email TEXT",   # correo del usuario: viaja con sus OC al BPM (avisos de OC creada, rechazada, fallas de Siesa)
     "ALTER TABLE ddmrp.usuario ADD COLUMN IF NOT EXISTS empresas TEXT[] NOT NULL DEFAULT '{}'",   # empresas que puede ver (05 Funat, 21 Stores); vacio = ambas
     """INSERT INTO ddmrp.perfil (perfil_id, nombre, descripcion, nivel, permisos, sistema) VALUES
          ('administrador', 'Administrador', 'Todo, incluido administrar usuarios', 'aprobacion', '{admin}', true),
@@ -410,6 +411,7 @@ SENTENCIAS_COMPRAS = [
     "ALTER TABLE ddmrp.orden_compra ADD COLUMN IF NOT EXISTS requiere_revision BOOLEAN",
     "ALTER TABLE ddmrp.orden_compra ADD COLUMN IF NOT EXISTS motivo_revision TEXT",
     "ALTER TABLE ddmrp.orden_compra ADD COLUMN IF NOT EXISTS fecha_plano DATE",   # dia (Colombia) en que se armo el plano por ultima vez: de ahi se corren las fechas de entrega
+    "ALTER TABLE ddmrp.orden_compra ADD COLUMN IF NOT EXISTS creado_por_email TEXT",   # correo de quien monto la OC (se copia al montarla)
     "ALTER TABLE ddmrp.orden_compra ADD COLUMN IF NOT EXISTS grupo TEXT",
     "ALTER TABLE ddmrp.orden_compra ADD COLUMN IF NOT EXISTS tomada_por TEXT",
     "ALTER TABLE ddmrp.orden_compra ADD COLUMN IF NOT EXISTS estado_bpm_fecha TIMESTAMPTZ",

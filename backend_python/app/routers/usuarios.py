@@ -134,13 +134,14 @@ def borrar_perfil(perfil_id: str, user=Depends(usuario_actual)):
 @router.get("")
 def usuarios():
     with pg.connect() as c:
-        r = c.execute(text("SELECT u.usuario_id, u.nombre, u.perfil_id, p.nombre AS perfil, u.activo, u.bodegas, u.categorias, u.empresas "
+        r = c.execute(text("SELECT u.usuario_id, u.nombre, u.email, u.perfil_id, p.nombre AS perfil, u.activo, u.bodegas, u.categorias, u.empresas "
                            "FROM ddmrp.usuario u LEFT JOIN ddmrp.perfil p ON p.perfil_id = u.perfil_id WHERE u.usuario_id NOT LIKE 'prueba:%' ORDER BY u.activo DESC, u.usuario_id")).mappings().all()
     return [{**dict(x), "bootstrap": _bootstrap(x["usuario_id"])} for x in r]
 
 
 class UsuarioIn(BaseModel):
     nombre: str = ""
+    email: str = ""              # correo para los avisos de sus ordenes de compra (BPM); varios separados por ;
     perfil_id: str
     activo: bool = True
     bodegas: list[str] = []      # vacio = todas las tiendas
@@ -190,6 +191,10 @@ def guardar_usuario(usuario_id: str, b: UsuarioIn, user=Depends(usuario_actual))
     emps = [x for x in dict.fromkeys(b.empresas) if x in EMPRESAS]
     if len(emps) == len(EMPRESAS):
         emps = []         # las dos = sin restriccion
+    correos = [x.strip() for x in re.split(r"[;,\s]+", b.email or "") if x.strip()]
+    if any(not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", x) for x in correos):
+        raise HTTPException(400, "El correo no es válido (varios se separan con ;)")
+    email = ";".join(correos) or None
     with pg.begin() as c:
         p = c.execute(text("SELECT permisos FROM ddmrp.perfil WHERE perfil_id = :p"), {"p": b.perfil_id}).first()
         if not p:
@@ -198,11 +203,11 @@ def guardar_usuario(usuario_id: str, b: UsuarioIn, user=Depends(usuario_actual))
             if not b.activo or not ({"admin", "admin_usuarios"} & set(p[0])):
                 raise HTTPException(400, "No puedes desactivarte ni quitarte el acceso a Usuarios tu mismo")
         ant = c.execute(text("SELECT perfil_id || ' ' || activo FROM ddmrp.usuario WHERE usuario_id = :u"), {"u": usuario_id}).scalar()
-        c.execute(text("INSERT INTO ddmrp.usuario (usuario_id, nombre, perfil_id, activo, bodegas, categorias, empresas, actualizado) "
-                       "VALUES (:u, :n, :p, :a, :b, :k, :e, now()) ON CONFLICT (usuario_id) DO UPDATE SET nombre = EXCLUDED.nombre, "
+        c.execute(text("INSERT INTO ddmrp.usuario (usuario_id, nombre, email, perfil_id, activo, bodegas, categorias, empresas, actualizado) "
+                       "VALUES (:u, :n, :m, :p, :a, :b, :k, :e, now()) ON CONFLICT (usuario_id) DO UPDATE SET nombre = EXCLUDED.nombre, email = EXCLUDED.email, "
                        "perfil_id = EXCLUDED.perfil_id, activo = EXCLUDED.activo, bodegas = EXCLUDED.bodegas, "
                        "categorias = EXCLUDED.categorias, empresas = EXCLUDED.empresas, actualizado = now()"),
-                  {"u": usuario_id, "n": b.nombre.strip() or usuario_id, "p": b.perfil_id, "a": b.activo, "b": bodegas, "k": cats, "e": emps})
+                  {"u": usuario_id, "n": b.nombre.strip() or usuario_id, "m": email, "p": b.perfil_id, "a": b.activo, "b": bodegas, "k": cats, "e": emps})
         sincronizar_rbac(c, usuario_id)
         _audit(c, user, usuario_id, "usuario", ant, f"{b.perfil_id} {b.activo} t={len(bodegas) or 'todas'} l={len(cats) or 'todos'} e={','.join(emps) or 'ambas'}")
     olvidar(usuario_id)       # la baja o el cambio de perfil vale ya, sin esperar al cache

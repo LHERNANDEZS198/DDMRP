@@ -12,7 +12,7 @@ import { confirmar } from '../alertas'
 
 type Perm = { clave: string; label: string; grupo: string }
 type Perfil = { perfil_id: string; nombre: string; descripcion: string; nivel: string; permisos: string[]; sistema: boolean; usuarios: number }
-type Usr = { usuario_id: string; nombre: string; perfil_id: string; perfil: string; activo: boolean; bodegas: string[]; categorias: string[]; empresas?: string[]; bootstrap: boolean }
+type Usr = { usuario_id: string; nombre: string; email?: string | null; perfil_id: string; perfil: string; activo: boolean; bodegas: string[]; categorias: string[]; empresas?: string[]; bootstrap: boolean }
 type Op = { id: string; nombre: string }
 
 const NIVELES: Record<string, string> = {
@@ -53,7 +53,7 @@ function Usuarios({ perfiles, setMsg }: { perfiles: Perfil[]; setMsg: (s: string
   const guardar = async (u: Partial<Usr>, cerrar = true) => {
     try {
       await api('/usuarios/' + encodeURIComponent(u.usuario_id!.trim()), { method: 'PUT', body: JSON.stringify({
-        nombre: u.nombre ?? '', perfil_id: u.perfil_id, activo: u.activo ?? true, bodegas: u.bodegas ?? [], categorias: u.categorias ?? [], empresas: u.empresas ?? [] }) })
+        nombre: u.nombre ?? '', email: u.email ?? '', perfil_id: u.perfil_id, activo: u.activo ?? true, bodegas: u.bodegas ?? [], categorias: u.categorias ?? [], empresas: u.empresas ?? [] }) })
       setMsg(`Usuario ${u.usuario_id} guardado`); if (cerrar) setEd(null); cargar()
     } catch (e: any) { setMsg('Error: ' + e.message) }
   }
@@ -86,7 +86,7 @@ function Usuarios({ perfiles, setMsg }: { perfiles: Perfil[]; setMsg: (s: string
             {filas.map(u => (
               <TableRow key={u.usuario_id} hover sx={{ opacity: u.activo ? 1 : .5 }}>
                 <TableCell>{u.usuario_id}{u.bootstrap && <Chip size="small" label="ADMIN_BOOTSTRAP" sx={{ ml: 1 }} title="Entra siempre como administrador por la configuración del servidor" />}</TableCell>
-                <TableCell>{u.nombre}</TableCell>
+                <TableCell>{u.nombre}{u.email ? <Box component="span" sx={{ display: 'block', fontSize: 12, color: 'text.secondary' }}>{u.email}</Box> : null}</TableCell>
                 <TableCell><Chip size="small" label={u.perfil ?? 'sin perfil'} color={u.perfil_id === 'administrador' ? 'primary' : 'default'} /></TableCell>
                 <TableCell>{u.perfil_id === 'administrador' ? 'Todo' : alcance(u)}</TableCell>
                 <TableCell><Switch size="small" checked={u.activo} disabled={u.usuario_id === yo?.id}
@@ -141,6 +141,8 @@ function Usuarios({ perfiles, setMsg }: { perfiles: Perfil[]; setMsg: (s: string
                   helperText={relojOk ? 'Escribe el código o el nombre para buscarlo en reloj' : 'No pude consultar reloj: escribe el código y el nombre a mano'} />} />
             ) : null}
             <TextField size="small" label="Nombre" value={ed?.nombre ?? ''} onChange={e => setEd(x => ({ ...x!, nombre: e.target.value }))} />
+            <TextField size="small" label="Correo" type="email" value={ed?.email ?? ''} onChange={e => setEd(x => ({ ...x!, email: e.target.value }))}
+              helperText="Aquí le llegan los avisos de sus órdenes de compra (creada, rechazada, fallas de Siesa). Varios, separados por ;" />
             <TextField select size="small" label="Perfil" value={ed?.perfil_id ?? ''} onChange={e => setEd(x => ({ ...x!, perfil_id: e.target.value }))}
               helperText={perfilSel ? [perfilSel.descripcion, NIVELES[perfilSel.nivel]].filter(Boolean).join(' · ') : ''}>
               {perfiles.map(p => <MenuItem key={p.perfil_id} value={p.perfil_id}>{p.nombre}</MenuItem>)}
