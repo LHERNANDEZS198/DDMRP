@@ -27,15 +27,17 @@ Editar cantidades/costos en la revisión (hoy solo aprobar/rechazar), PDF y corr
 
 ## Seguridad
 - **DDMRP ⇄ BPM:** secreto compartido `OC_API_SECRET` / `BPM_SECRET`, solo en los `.env` (nunca en un BPMN ni en el repo).
-- **BPMN → Node (`/api/internal/oc/tarea/*`):** sin secreto. El Node acepta la llamada solo si (1) llega por la red interna de Docker (sin `X-Forwarded-For`/`X-Real-IP`), (2) la instancia existe, está activa y es de `orden_compra_process`, y (3) está justo en el paso correspondiente. El nginx de la UI además devuelve 404 a `/api/internal/oc/tarea/`.
+- **BPMN → Node (`/api/internal/oc/tarea/notificar` y `/api/internal/service-tasks/execute`):** sin secreto. El Node acepta la llamada solo si (1) llega por la red interna de Docker (sin `X-Forwarded-For`/`X-Real-IP`), (2) la instancia existe, está activa y es del proceso que dice (`orden_compra_process`); `notificar` además exige el paso correcto y `execute` exige una configuración ACTIVA para esa tarea. El nginx de la UI además devuelve 404 a `/api/internal/`.
+- **BPM → DDMRP (envío a Siesa):** la tarea genérica «Enviar XML a WS Siesa» del BPM (Admin → Servicios sistema) llama a DDMRP con `X-OC-Secret`; en la tarea se configura todo: origen del plano (URL, cabecera, secreto), web service de Siesa y rutas (lo vacío cae en las variables del servidor).
 - Pendiente aparte: `solicitud_mantenimiento_process` sigue con el secreto embebido en su BPMN (patrón anterior).
 
 ## Plano vigente (fecha de hoy)
-Siesa exige que la fecha del documento sea la del sistema. Una OC puede aprobarse días después de enviarse, así que justo antes de crearla el BPM llama
+Siesa exige que la fecha del documento sea la del sistema. Una OC puede aprobarse días después de enviarse, así que justo antes de enviarla a Siesa la tarea «Enviar XML a WS Siesa» llama
 `POST /api/bpm/oc/{id}/plano/vigente` (mismo `X-OC-Secret`): DDMRP corre las fechas de entrega los mismos días que pasaron, arma el plano con la fecha de HOY (hora de Colombia, UTC-5) y lo devuelve.
 Si DDMRP no responde, el BPM NO envía el plano viejo: el paso falla y se reintenta.
 
 ## Detalle de la OC para el BPM
 - `GET /api/bpm/oc/{id}` → la OC con sus líneas (cantidad/costo actuales y originales si se editó) y `motivo_revision`: lo que el BPM muestra al aprobador y usa para armar los datos del PDF.
 - `POST /api/bpm/oc/{id}/plano` → el aprobador editó cantidades/costos (nota obligatoria si cambia un costo): DDMRP guarda, conserva lo original y rearma el plano.
-El PDF de la OC NO lo genera DDMRP: lo genera el BPM con su infraestructura de plantillas (docx → PDF) en el fin del proceso.
+- `GET /api/bpm/oc/{id}/documento` → datos de la OC ya formateados (es-CO) para la plantilla PDF: `referencia, proveedor, solicitante, fecha, fechaEntrega, fechaArchivo (AAAA-MM-DD), subtotal, iva, total, lineas[{referencia, descripcion, unidad, cantidad, valor_u, iva, subtotal}]`. El BPM los pide tras crear la OC y los deja en la respuesta del paso (`crearResp.*`). Lo configura la «ruta de datos» de la tarea.
+El PDF de la OC NO lo genera DDMRP: lo genera el BPM con su infraestructura de plantillas (docx → PDF) en el fin del proceso. El layout del documento (qué campos y cómo se formatean) vive aquí, no en el BPM.

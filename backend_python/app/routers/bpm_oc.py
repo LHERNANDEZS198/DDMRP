@@ -1,6 +1,7 @@
 """Endpoints que usa el BPM (no el navegador) para las ordenes de compra. Autenticacion: cabecera X-OC-Secret == BPM_SECRET (si no esta configurado, todo se rechaza).
   POST /api/bpm/oc/{id}/estado  -> callback de estado del BPM (en_revision, aprobada, rechazada, creada, error, incierta)
   POST /api/bpm/oc/{id}/plano/vigente -> plano con la fecha de HOY (el BPM lo pide justo antes de crear en Siesa)
+  GET  /api/bpm/oc/{id}/documento -> datos de la OC ya formateados (es-CO) para la plantilla PDF del fin de proceso del BPM (el BPM los pide tras crearla en Siesa; el layout del documento vive aqui)
   POST /api/bpm/oc/{id}/plano   -> el aprobador cambio cantidades/costos: DDMRP recalcula las lineas y devuelve el plano nuevo (el formato del plano vive SOLO aqui)
 Contrato completo: docs/OC_BPM_CONTRATO.md"""
 import hmac
@@ -87,6 +88,35 @@ def detalle(oc_id: int):
                                                   "cantidad_original::float8 AS cantidad_original, costo_original::float8 AS costo_original, fecha_entrega::text AS fecha_entrega "
                                                   "FROM ddmrp.orden_compra_linea WHERE oc_id = :i ORDER BY nro"), {"i": oc_id}).mappings()]
     return dict(r) | {"lineas": lineas}
+
+
+def _n(v) -> str:
+    """Numero en formato es-CO (1.234,50): la plantilla imprime el valor tal cual."""
+    return f"{float(v or 0):,.2f}".translate(str.maketrans(",.", ".,"))
+
+
+def _d(iso) -> str:
+    p = str(iso or "")[:10].split("-")
+    return f"{p[2]}/{p[1]}/{p[0]}" if len(p) == 3 and len(p[0]) == 4 else ""
+
+
+@router.get("/{oc_id}/documento")
+def documento(oc_id: int):
+    """Datos de la OC para la plantilla del PDF (docx con {etiquetas}): encabezado, totales y lineas, con la fecha de HOY (la de Siesa) y lo que edito el aprobador.
+    Los campos de fecha y numeros vienen formateados; fechaArchivo (AAAA-MM-DD) sirve para el nombre del archivo."""
+    d = detalle(oc_id)
+    hoy = siesa_oc.hoy()
+    iso = hoy.isoformat() if hasattr(hoy, "isoformat") else str(hoy)
+    entrega = max((str(l["fecha_entrega"]) for l in d["lineas"] if l.get("fecha_entrega")), default="")
+    return {
+        "referencia": d["referencia"],
+        "proveedor": f"{d['proveedor_id']}-{d['proveedor_nombre']}",
+        "solicitante": d.get("creado_por") or "",
+        "fecha": _d(iso), "fechaEntrega": _d(entrega), "fechaArchivo": iso[:10],
+        "subtotal": _n(d["valor"]), "iva": _n(d["iva"]), "total": _n(d["total"]),
+        "lineas": [{"referencia": l["producto_id"], "descripcion": l.get("descripcion") or "", "unidad": "UND", "cantidad": _n(l["cantidad"]),
+                    "valor_u": _n(l["costo"]), "iva": _n(l["iva_tasa"]), "subtotal": _n(l["cantidad"] * l["costo"])} for l in d["lineas"]],
+    }
 
 
 @router.post("/{oc_id}/plano/vigente")
