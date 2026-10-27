@@ -88,8 +88,10 @@ def detalle(oc_id: int):
         lineas = [dict(x) for x in c.execute(text(f"""
             SELECT l.nro, l.producto_id, l.descripcion, l.cantidad::float8 AS cantidad, l.costo::float8 AS costo, l.iva_tasa::float8 AS iva_tasa,
                    l.cantidad_original::float8 AS cantidad_original, l.costo_original::float8 AS costo_original, l.fecha_entrega::text AS fecha_entrega,
-                   COALESCE(l.cantidad_calculada, l.cantidad_original, l.cantidad)::float8 AS cantidad_sugerida,
-                   COALESCE(l.costo_calculado, l.costo_original, l.costo)::float8 AS costo_cotizado,
+                   l.cantidad_calculada::float8 AS cantidad_sugerida,                       -- lo que calculo el motor (NULL en OC anteriores a este dato)
+                   COALESCE(l.cantidad_original, l.cantidad)::float8 AS cantidad_comprador, -- lo que dejo compras al montar la OC
+                   l.costo_calculado::float8 AS costo_cotizado,
+                   COALESCE(l.costo_original, l.costo)::float8 AS costo_comprador,
                    COALESCE(mi.categoria, '') AS lab_cod, COALESCE(lb.nombre, '') AS lab_nombre,
                    z.zona, z.inventario::float8 AS saldo_cedi, z.en_transito::float8 AS en_transito
             FROM ddmrp.orden_compra_linea l
