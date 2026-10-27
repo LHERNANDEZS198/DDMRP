@@ -28,7 +28,7 @@ Editar cantidades/costos en la revisión (hoy solo aprobar/rechazar), PDF y corr
 ## Seguridad
 - **DDMRP ⇄ BPM:** secreto compartido `OC_API_SECRET` / `BPM_SECRET`, solo en los `.env` (nunca en un BPMN ni en el repo).
 - **BPMN → Node (`/api/internal/oc/tarea/notificar` y `/api/internal/service-tasks/execute`):** sin secreto. El Node acepta la llamada solo si (1) llega por la red interna de Docker (sin `X-Forwarded-For`/`X-Real-IP`), (2) la instancia existe, está activa y es del proceso que dice (`orden_compra_process`); `notificar` además exige el paso correcto y `execute` exige una configuración ACTIVA para esa tarea. El nginx de la UI además devuelve 404 a `/api/internal/`.
-- **BPM → DDMRP (envío a Siesa):** la tarea genérica «Enviar XML a WS Siesa» del BPM (Admin → Servicios sistema) llama a DDMRP con `X-OC-Secret`; en la tarea se configura todo: origen del plano (URL, cabecera, secreto), web service de Siesa y rutas (lo vacío cae en las variables del servidor).
+- **BPM → DDMRP (envío a Siesa):** la tarea genérica «Enviar XML a WS Siesa» del BPM (Admin → Servicios sistema) llama a DDMRP con `X-OC-Secret`; el origen es la CONEXIÓN `ddmrp` (Admin → Conexiones: URL, cabecera, secreto; lo vacío cae en `DDMRP_URL` y `OC_API_SECRET` del .env) y esa misma conexión valida las llamadas de DDMRP al BPM; el web service de Siesa se configura en la tarea.
 - Pendiente aparte: `solicitud_mantenimiento_process` sigue con el secreto embebido en su BPMN (patrón anterior).
 
 ## Plano vigente (fecha de hoy)

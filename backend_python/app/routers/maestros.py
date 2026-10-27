@@ -69,12 +69,13 @@ MAESTROS = {
         bodega=None, producto=None, global_=True, grupo="compras",
         booleanas=("se_compra",), conservar=("nombre", "se_compra")),
     "items-compras": dict(
-        label="Items de compras: cotizacion, unidad de pedido y unidad de empaque", tabla="ddmrp.item_compra",
-        llave=["empresa", "producto_id"], editable={"cotizacion": "num", "unidad_pedido": "num", "unidad_empaque": "num", "moq": "num"},
+        label="Items de compras: activo, cotizacion, unidad de pedido y unidad de empaque", tabla="ddmrp.item_compra",
+        llave=["empresa", "producto_id"], editable={"activo": "int", "cotizacion": "num", "unidad_pedido": "num", "unidad_empaque": "num", "moq": "num"},
         bodega=None, producto="producto_id", global_=True, grupo="compras",
         solo_existentes=True,                   # los items vienen de Siesa: la carga solo actualiza, nunca crea
         sin_reemplazo=True, sin_eliminar=True,  # y aqui no se borra nada (ni filas sueltas, ni vaciar, ni reemplazar)
-        conservar=("cotizacion", "unidad_pedido", "unidad_empaque", "moq"),   # celda vacia = no cambia
+        booleanas=("activo",),                  # 1 / 0 / si / no: 0 = el item no se compra (no sale en Necesidades)
+        conservar=("activo", "cotizacion", "unidad_pedido", "unidad_empaque", "moq"),   # celda vacia = no cambia
         lectura=[("laboratorio", "Laboratorio"), ("categoria", "Categoría"), ("linea", "Línea"), ("exhibicion", "Exhibición"), ("costo", "Costo promedio"),
                  ("cotizacion_siesa", "Cotización Siesa"), ("cotizacion_vigencia", "Vigente desde"), ("ultimo_costo", "Último costo de compra"),
                  ("ultimo_costo_fecha", "Fecha última compra"), ("costo_compra", "Costo a usar"), ("origen_costo", "Origen del costo"),
@@ -170,6 +171,7 @@ AYUDA = {
                    "(prioridad al calcular el CEDI: el del item en «Lead time del CEDI», luego el del proveedor, luego el general), frecuencia de compra en dias (cada cuanto se le compra; define el tamaño de la zona verde del CEDI: a mayor frecuencia, pedidos mas grandes; vacio = el general de «Configuracion de compras», 15 dias), redondeo (como se lleva la cantidad a pedir al multiplo de pedido del item: arriba [por defecto], cercano o abajo), correos (varios separados por ;), activo (1/0 o si/no; vacio = activo), "
                    "condicion de pago (codigo de Siesa, ej. C30: la lleva la OC; se pre-llena con la de la ultima OC del proveedor y NO se pisa lo que escribas; sin ella no se crea la OC), pedido minimo (valor), contacto, telefono y notas. Lo que ya escribiste no se pisa al sincronizar. La llave es empresa + NIT + sucursal.",
     "items-compras": "Los items vienen de Siesa (no se crean ni se borran aqui) y casi todas las columnas son de solo lectura. "
+                     "ACTIVO (1 / 0 / si / no): con 0 el item NO se compra: sale de Necesidades (vacio = activo; el ETL no lo pisa). Es independiente del estado del item en Siesa. "
                      "PROVEEDOR: es el de la COTIZACION vigente del item (si hay cotizaciones de varios proveedores, la de mayor fecha de activacion); solo si no hay cotizacion se usa el que trae el item en Siesa. "
                      "«Origen del proveedor» dice de donde salio y «Proveedor en el item» muestra el del item (suele estar desactualizado, sobre todo en maquila). "
                      "COSTO A USAR: la cotizacion manual; si no hay, la cotizacion de Siesa (costo bruto con el descuento del primer rango de cantidad); si tampoco, el ULTIMO COSTO DE COMPRA (precio de la ultima OC aprobada, parcial o cumplida); «Origen del costo» dice cual. "

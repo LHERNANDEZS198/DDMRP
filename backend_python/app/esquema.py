@@ -378,6 +378,7 @@ SENTENCIAS_COMPRAS = [
        END $$""",
     # proveedor de compra: el de la COTIZACION vigente del item (lo que importa a compras) y, si no hay cotizacion, el del item de Siesa (respaldo). Aqui se guarda
     # el proveedor que trae el item en Siesa (informativo) y de donde salio el proveedor efectivo (proveedor_id/sucursal): 'cotizacion' o 'item'
+    "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS activo SMALLINT DEFAULT 1 CHECK (activo IN (0, 1))",     # 0 = no se compra: sale de necesidades (vacio = activo)
     "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS proveedor_item TEXT",
     "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS sucursal_item TEXT",
     "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS proveedor_origen TEXT",

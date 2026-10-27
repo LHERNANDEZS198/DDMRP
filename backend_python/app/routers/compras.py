@@ -62,7 +62,7 @@ def _mes_hace(meses: int) -> str:
 def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite: int = 5000) -> dict:
     w, p = filtro_sql_permisos(user, "s.bodega_id", "mi.categoria")
     # entran los que piden algo Y los que compras ya edito (la cantidad editada se conserva aunque el motor ya no pida nada)
-    cond = [f"s.ejecucion_id = {ULTIMA}", "NOT s.condenado", "(s.cantidad_sugerida > 0 OR cm.cantidad IS NOT NULL)", solo_activos("s"), COMPRABLE, w]
+    cond = [f"s.ejecucion_id = {ULTIMA}", "NOT s.condenado", "(s.cantidad_sugerida > 0 OR cm.cantidad IS NOT NULL)", solo_activos("s"), COMPRABLE, "COALESCE(ic.activo, 1) <> 0", w]
     if _csv(empresa):
         cond.append("s.empresa = ANY(:f_emp)"); p["f_emp"] = _csv(empresa)
     if _csv(categorias):
