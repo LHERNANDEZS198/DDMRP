@@ -44,7 +44,7 @@ def _grupos(user, items: list[Sel]) -> tuple[list[dict], list[str]]:
     r = _necesidades(user, None, None, None, None, None, None, 20000)
     filas = {(f["empresa"], f["producto_id"]): f for f in r["filas"]}
     avisos = [f"{e}/{p}: ya no aparece en las necesidades (¿proveedor bloqueado por pedido mínimo o sin permiso?)" for (e, p) in sorted(pedido) if (e, p) not in filas]
-    hoy = date.today()
+    hoy = siesa_oc.hoy()
     dec = settings.oc_decimales_precio
     cfg = _cfg_revision()
     por: dict[tuple, dict] = {}
@@ -122,7 +122,18 @@ def _motivos_revision(g: dict, cfg: dict) -> list[str]:
 
 def _oc_dict(r) -> dict:
     return {"id": r["id"], "empresa": r["empresa"], "proveedor_id": r["proveedor_id"], "sucursal": r["sucursal"], "cond_pago": r["cond_pago"],
-            "comprador": r["comprador"], "fecha": r.get("fecha") or date.today()}
+            "comprador": r["comprador"], "fecha": r.get("fecha") or siesa_oc.hoy()}
+
+
+def _al_dia(oc_id: int) -> None:
+    """Lleva la OC a HOY antes de armar el plano: la fecha del documento la pone armar_plano con la fecha de hoy (Siesa la exige igual a la del sistema) y las fechas
+    de entrega de las lineas se corren los mismos dias que pasaron desde que se armo el plano (se conserva el lead time). Una OC aprobada dias despues sigue valida."""
+    with pg.begin() as c:
+        base = c.execute(text("SELECT COALESCE(fecha_plano, (creado AT TIME ZONE 'UTC' - interval '5 hours')::date) FROM ddmrp.orden_compra WHERE id = :i"), {"i": oc_id}).scalar()
+        dias = (siesa_oc.hoy() - base).days if base else 0
+        if dias > 0:
+            c.execute(text("UPDATE ddmrp.orden_compra_linea SET fecha_entrega = fecha_entrega + :d WHERE oc_id = :i"), {"d": dias, "i": oc_id})
+        c.execute(text("UPDATE ddmrp.orden_compra SET fecha_plano = :h WHERE id = :i"), {"h": siesa_oc.hoy(), "i": oc_id})
 
 
 def _lineas_de(c, oc_id: int) -> list[dict]:
@@ -155,12 +166,13 @@ def _cerrar_creada(oc_id: int, empresa: str, ref: str, mensaje: str, usuario: st
 
 
 def _enviar(oc_id: int, usuario: str | None) -> dict:
+    _al_dia(oc_id)
     with pg.connect() as c:
         r = c.execute(text("SELECT * FROM ddmrp.orden_compra WHERE id = :i"), {"i": oc_id}).mappings().first()
         if not r:
             raise HTTPException(404, "No existe esa OC")
         lineas = _lineas_de(c, oc_id)
-    oc = _oc_dict(dict(r) | {"fecha": date.today()})
+    oc = _oc_dict(dict(r) | {"fecha": siesa_oc.hoy()})
     ref = r["referencia"]
     try:   # 1) ¿ya existe en Siesa? (duplicados). Si no se puede consultar, NO se envia.
         e = siesa_oc.buscar_en_siesa(r["empresa"], ref)
@@ -195,10 +207,11 @@ def _enviar_bpm(oc_id: int, usuario: str | None) -> dict:
     if not (settings.bpm_url and settings.bpm_secret):
         msg = "Falta configurar el BPM (.env BPM_URL y BPM_SECRET)"
         _marcar(oc_id, "error", msg); return {"estado": "error", "mensaje": msg}
+    _al_dia(oc_id)
     with pg.connect() as c:
         r = c.execute(text("SELECT * FROM ddmrp.orden_compra WHERE id = :i"), {"i": oc_id}).mappings().first()
         lineas = _lineas_de(c, oc_id)
-    oc = _oc_dict(dict(r) | {"fecha": date.today()})
+    oc = _oc_dict(dict(r) | {"fecha": siesa_oc.hoy()})
     try:
         plano = siesa_oc.armar_plano(oc, [dict(l) for l in lineas])
     except ValueError as ex:
@@ -255,7 +268,7 @@ def enviar(b: EnviarIn, user=Depends(requiere("gestionar_compras"))):
             salida.append(res | {"estado": "no_enviada", "mensaje": falla}); continue
         if b.solo_plano:
             try:
-                oc = {"empresa": g["empresa"], "id": 0, "comprador": comprador, "proveedor_id": g["proveedor_id"], "sucursal": g["sucursal"], "cond_pago": g["cond_pago"], "fecha": date.today()}
+                oc = {"empresa": g["empresa"], "id": 0, "comprador": comprador, "proveedor_id": g["proveedor_id"], "sucursal": g["sucursal"], "cond_pago": g["cond_pago"], "fecha": siesa_oc.hoy()}
                 salida.append(res | {"estado": "plano", "mensaje": "Vista previa (nada se envió)", "plano": siesa_oc.armar_plano(oc, g["lineas"])})
             except ValueError as ex:
                 salida.append(res | {"estado": "no_enviada", "mensaje": str(ex)})

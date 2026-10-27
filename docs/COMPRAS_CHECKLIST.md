@@ -59,7 +59,7 @@ Estados: ✅ listo · 🟡 hecho, sin validar en producción · ⬜ pendiente ·
 - ⬜ 8 creador ≠ aprobador al tomar la tarea · 9 recordatorio y escalada · 10 callback de estado a DDMRP
 - ⬜ 11 edición de cantidades/costos con revalidación y auditoría · 12 cola con límite de concurrencia · 13 tarea async con reintentos y reconsulta
 
-- 🟡 Condición de pago (`f420_id_cond_pago`): columna en el maestro de proveedores, pre-llenada con la de la última OC del proveedor en Siesa (no pisa lo que escriba compras); sin ella no se creará la OC. ⏸ Decidir si es fija por proveedor o se negocia por OC (`docs/sql/oc_conector.sql`)
+- 🟡 Condición de pago (`f420_id_cond_pago`): columna en el maestro de proveedores, pre-llenada desde el maestro de proveedores de Siesa (t202) y, si no la tiene, con la de la última OC (no pisa lo que escriba compras); sin ella no se creará la OC. ⏸ Decidir si es fija por proveedor o se negocia por OC (`docs/sql/oc_conector.sql`)
 
 ## Datos que faltan por pasar
 - ✅ 1 ventas del CEDI (query de rotación PT001) · ✅ 3 OC abiertas

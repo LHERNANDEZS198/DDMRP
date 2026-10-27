@@ -144,6 +144,17 @@ WITH u AS (
 SELECT RTRIM(t.f200_id), u.cond FROM u JOIN t200_mm_terceros t ON t.f200_rowid = u.tercero WHERE u.rn = 1"""
 
 
+# Condicion de pago del MAESTRO de proveedores de Siesa (t202, por sucursal): es la fuente principal; la de la ultima OC (arriba) solo completa los que no la tienen.
+# Un nit con varias sucursales toma la de menor codigo de sucursal que la tenga.
+SQL_COND_PAGO_MAESTRO = """
+SELECT RTRIM(t.f200_id), x.cond FROM (
+  SELECT p.f202_rowid_tercero AS tercero, RTRIM(p.f202_id_cond_pago) AS cond,
+         ROW_NUMBER() OVER (PARTITION BY p.f202_rowid_tercero ORDER BY p.f202_id_sucursal) AS rn
+  FROM t202_mm_proveedores p
+  WHERE p.f202_id_cia = :cia AND p.f202_id_cond_pago IS NOT NULL AND RTRIM(p.f202_id_cond_pago) <> ''
+) x JOIN t200_mm_terceros t ON t.f200_rowid = x.tercero WHERE x.rn = 1"""
+
+
 def _sql_items(con_estado: bool) -> str:
     """Referencia, descripcion y, si la columna de estado existe, cuantas extensiones (t121) de esa referencia estan activas y cuantas
     bloqueadas (una referencia puede tener varias extensiones: es activa si alguna lo es)."""
@@ -676,28 +687,33 @@ def _ultimo_costo_de_siesa(cur, eng, empresa: str) -> dict:
 
 
 def _cond_pago_de_siesa(cur, eng, empresa: str) -> dict:
-    """Pre-llena la condicion de pago de los proveedores que aun no la tienen con la de su ultima OC en Siesa. Lo que compras escribio NO se pisa. Un fallo del origen no
-    tumba la sincronizacion. Devuelve cuantos proveedores con items quedan SIN condicion de pago (no se podra crear su OC)."""
-    try:
-        filas = list(_stream(eng, SQL_COND_PAGO, {"cia": settings.siesa_cia}))
-    except Exception as e:
-        if isinstance(e, psycopg.Error):
-            raise
-        log.warning("Condicion de pago de la ultima OC no leida: %s", e)
-        return {"aviso_cond_pago": ("No se pudo leer la condicion de pago de las OC: " + str(e).splitlines()[0])[:300]}
-    cur.execute("CREATE TEMP TABLE IF NOT EXISTS stg_cp (nit text, cond text)")
-    cur.execute("TRUNCATE stg_cp")
-    with cur.copy("COPY stg_cp FROM STDIN") as cp:
-        for nit, cond in filas:
-            if nit and cond:
-                cp.write_row((nit.strip(), cond.strip().upper()))
-    cur.execute("""UPDATE ddmrp.proveedor p SET cond_pago = s.cond FROM stg_cp s
-                   WHERE p.empresa = %s AND p.proveedor_id = s.nit AND (p.cond_pago IS NULL OR btrim(p.cond_pago) = '')""", (empresa,))
-    llenadas = cur.rowcount or 0
-    cur.execute("DROP TABLE stg_cp")
+    """Pre-llena la condicion de pago de los proveedores que aun no la tienen: primero la del maestro de proveedores de Siesa (t202) y, a los que sigan sin ella, la de su
+    ultima OC. Lo que compras escribio NO se pisa. Un fallo de un origen no tumba la sincronizacion (se avisa y se sigue con el otro). Devuelve cuantos proveedores con
+    items quedan SIN condicion de pago (no se podra crear su OC)."""
+    out: dict = {}
+    llenadas = 0
+    for etiqueta, sql in (("maestro", SQL_COND_PAGO_MAESTRO), ("ultima OC", SQL_COND_PAGO)):
+        try:
+            filas = list(_stream(eng, sql, {"cia": settings.siesa_cia}))
+        except Exception as e:
+            if isinstance(e, psycopg.Error):
+                raise
+            log.warning("Condicion de pago (%s) no leida: %s", etiqueta, e)
+            out["aviso_cond_pago_" + ("maestro" if etiqueta == "maestro" else "oc")] = ("No se pudo leer la condicion de pago (" + etiqueta + "): " + str(e).splitlines()[0])[:300]
+            continue
+        cur.execute("CREATE TEMP TABLE IF NOT EXISTS stg_cp (nit text, cond text)")
+        cur.execute("TRUNCATE stg_cp")
+        with cur.copy("COPY stg_cp FROM STDIN") as cp:
+            for nit, cond in filas:
+                if nit and cond:
+                    cp.write_row((nit.strip(), cond.strip().upper()))
+        cur.execute("""UPDATE ddmrp.proveedor p SET cond_pago = s.cond FROM stg_cp s
+                       WHERE p.empresa = %s AND p.proveedor_id = s.nit AND (p.cond_pago IS NULL OR btrim(p.cond_pago) = '')""", (empresa,))
+        llenadas += cur.rowcount or 0
+        cur.execute("DROP TABLE stg_cp")
     cur.execute("""SELECT count(*) FROM ddmrp.proveedor p WHERE p.empresa = %s AND (p.cond_pago IS NULL OR btrim(p.cond_pago) = '')
                    AND EXISTS (SELECT 1 FROM ddmrp.item_compra ic WHERE ic.empresa = p.empresa AND ic.proveedor_id = p.proveedor_id AND ic.sucursal = p.sucursal)""", (empresa,))
-    return {"cond_pago_llenadas": llenadas, "proveedores_sin_cond_pago": cur.fetchone()[0]}
+    return out | {"cond_pago_llenadas": llenadas, "proveedores_sin_cond_pago": cur.fetchone()[0]}
 
 
 def _items_de_siesa(cur, eng, primera: bool = True, empresa: str | None = None) -> dict:

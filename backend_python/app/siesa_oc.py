@@ -11,7 +11,7 @@ import re
 import unicodedata
 import urllib.error
 import urllib.request
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import text
 from .config import settings
 from .db import siesa_engine
@@ -215,6 +215,11 @@ def buscar_en_siesa(empresa: str, ref: str) -> dict | None:
                            "WHERE f420_id_cia = :cia AND RTRIM(f420_num_docto_referencia) = :ref AND f420_ind_estado <> 9 ORDER BY f420_rowid DESC"),
                       {"cia": settings.siesa_cia, "ref": ref}).mappings().first()
     return dict(r) if r else None
+
+
+def hoy() -> date:
+    """Fecha de hoy en Colombia (UTC-5, sin horario de verano). Siesa exige que la fecha del documento sea la del sistema; el servidor corre en UTC y de noche daria el dia siguiente."""
+    return datetime.now(timezone(timedelta(hours=-5))).date()
 
 
 def fecha_entrega(hoy: date, lead_time) -> date:

@@ -29,3 +29,8 @@ Editar cantidades/costos en la revisión (hoy solo aprobar/rechazar), PDF y corr
 - **DDMRP ⇄ BPM:** secreto compartido `OC_API_SECRET` / `BPM_SECRET`, solo en los `.env` (nunca en un BPMN ni en el repo).
 - **BPMN → Node (`/api/internal/oc/tarea/*`):** sin secreto. El Node acepta la llamada solo si (1) llega por la red interna de Docker (sin `X-Forwarded-For`/`X-Real-IP`), (2) la instancia existe, está activa y es de `orden_compra_process`, y (3) está justo en el paso correspondiente. El nginx de la UI además devuelve 404 a `/api/internal/oc/tarea/`.
 - Pendiente aparte: `solicitud_mantenimiento_process` sigue con el secreto embebido en su BPMN (patrón anterior).
+
+## Plano vigente (fecha de hoy)
+Siesa exige que la fecha del documento sea la del sistema. Una OC puede aprobarse días después de enviarse, así que justo antes de crearla el BPM llama
+`POST /api/bpm/oc/{id}/plano/vigente` (mismo `X-OC-Secret`): DDMRP corre las fechas de entrega los mismos días que pasaron, arma el plano con la fecha de HOY (hora de Colombia, UTC-5) y lo devuelve.
+Si DDMRP no responde, el BPM NO envía el plano viejo: el paso falla y se reintenta.

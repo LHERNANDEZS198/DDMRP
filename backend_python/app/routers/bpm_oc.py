@@ -1,5 +1,6 @@
 """Endpoints que usa el BPM (no el navegador) para las ordenes de compra. Autenticacion: cabecera X-OC-Secret == BPM_SECRET (si no esta configurado, todo se rechaza).
   POST /api/bpm/oc/{id}/estado  -> callback de estado del BPM (en_revision, aprobada, rechazada, creada, error, incierta)
+  POST /api/bpm/oc/{id}/plano/vigente -> plano con la fecha de HOY (el BPM lo pide justo antes de crear en Siesa)
   POST /api/bpm/oc/{id}/plano   -> el aprobador cambio cantidades/costos: DDMRP recalcula las lineas y devuelve el plano nuevo (el formato del plano vive SOLO aqui)
 Contrato completo: docs/OC_BPM_CONTRATO.md"""
 import hmac
@@ -11,7 +12,7 @@ from .. import siesa_oc
 from ..bitacora import evento
 from ..config import settings
 from ..db import pg
-from .oc import _cerrar_creada, _lineas_de, _oc_dict, _marcar
+from .oc import _al_dia, _cerrar_creada, _lineas_de, _oc_dict, _marcar
 
 
 def _secreto(x_oc_secret: str | None = Header(default=None)) -> None:
@@ -74,6 +75,25 @@ class PlanoIn(BaseModel):
     nota: str | None = None            # obligatoria si cambia algun costo (regla del flujo de aprobacion)
 
 
+@router.post("/{oc_id}/plano/vigente")
+def plano_vigente(oc_id: int):
+    """Plano de la OC tal como esta, pero con la fecha de HOY (documento y entregas). El BPM lo pide justo antes de crear en Siesa: una OC aprobada dias despues
+    del envio no puede ir con la fecha vieja (Siesa: «La fecha del documento debe ser igual a la fecha del sistema»)."""
+    with pg.connect() as c:
+        r = c.execute(text("SELECT * FROM ddmrp.orden_compra WHERE id = :i"), {"i": oc_id}).mappings().first()
+    if not r:
+        raise HTTPException(404, "No existe esa OC")
+    if r["estado"] == "creada":
+        raise HTTPException(409, "La OC ya está creada en Siesa")
+    _al_dia(oc_id)
+    with pg.connect() as c:
+        lineas = _lineas_de(c, oc_id)
+    pl = siesa_oc.armar_plano(_oc_dict(dict(r) | {"fecha": siesa_oc.hoy()}), [dict(l) for l in lineas])
+    with pg.begin() as c:
+        c.execute(text("UPDATE ddmrp.orden_compra SET plano = :p WHERE id = :i"), {"p": pl, "i": oc_id})
+    return {"plano": pl}
+
+
 @router.post("/{oc_id}/plano")
 def plano(oc_id: int, b: PlanoIn):
     """El aprobador edito la OC. Solo se pueden cambiar cantidad y costo de las lineas que ya tiene, o quitarlas (cantidad 0); no se agregan items.
@@ -120,7 +140,7 @@ def plano(oc_id: int, b: PlanoIn):
                    "m": "Editada en la revisión" + (f": {b.nota.strip()}" if (b.nota or "").strip() else "")})
     with pg.connect() as c:
         lineas = _lineas_de(c, oc_id)
-    pl = siesa_oc.armar_plano(_oc_dict(dict(r) | {"fecha": date.today()}), [dict(l) for l in lineas])
+    pl = siesa_oc.armar_plano(_oc_dict(dict(r) | {"fecha": siesa_oc.hoy()}), [dict(l) for l in lineas])
     with pg.begin() as c:
         c.execute(text("UPDATE ddmrp.orden_compra SET plano = :p WHERE id = :i"), {"p": pl, "i": oc_id})
     evento("compras", None, f"OC {r['referencia']} editada en la revisión", {"oc_id": oc_id, "nota": b.nota, "cambia_costo": cambia_costo})
