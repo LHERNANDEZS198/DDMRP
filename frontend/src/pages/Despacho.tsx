@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Tabla from '../Tabla'
+import AvisoInfo from '../AvisoInfo'
 import { ColDef, GridApi, ICellRendererParams } from 'ag-grid-community'
 import { Alert, Autocomplete, Box, Button, Checkbox, Chip, Collapse, FormControlLabel, IconButton, MenuItem, Paper, Stack, Table, TableBody, TableCell, TableHead, TableRow, TextField, Tooltip, Typography } from '@mui/material'
 import Insights from '@mui/icons-material/Insights'
@@ -143,6 +144,12 @@ export default function Despacho() {
         + (vista.length > TOPE_AUD ? ` (de ${vista.length.toLocaleString('es-CO')}: el Excel lleva las primeras ${TOPE_AUD.toLocaleString('es-CO')}, filtra más para el resto)` : ''))
     } catch (x: any) { setMsg('Error: ' + x.message) } finally { setBajandoAud(false) }
   }
+  const textoCedi: string = !cedi ? '' : (
+    cedi.regla === 0 ? 'El reparto del inventario del CEDI está apagado: se sugiere todo lo que pide el buffer.'
+            : cedi.productos === 0 ? `Sin inventario del CEDI (${cedi.bodega}): corre el ETL para traerlo. Mientras tanto no se limita lo sugerido.`
+            : `CEDI ${cedi.bodega}${empresa ? ` (empresa ${empresa})` : ''}: ${(cedi.por_empresa?.find((x: any) => x.empresa === empresa)?.con_stock ?? cedi.con_stock).toLocaleString()} items con stock (corte ${cedi.por_empresa?.find((x: any) => x.empresa === empresa)?.corte ?? cedi.corte}) · si no alcanza se reparte solo entre las tiendas de esa empresa: ${cedi.regla_nombre.toLowerCase()}`
+              + (cedi.limitadas ? ` · ${cedi.limitadas.toLocaleString()} combinaciones con menos de lo necesario` : '')
+              + (cedi.items_con_reserva ? ` · ${cedi.items_con_reserva} items con reserva` : ''))
   const aprobar = async () => {
     const sel = grid?.getSelectedRows() ?? []
     if (!sel.length) { setMsg('Selecciona filas'); return }
@@ -197,16 +204,14 @@ export default function Despacho() {
           {todas.filter(b => !tiendas.includes(b)).map(b => <MenuItem key={b} value={b}>{b}</MenuItem>)}
         </TextField>
         {filtrar && <Button size="small" onClick={() => { setDia(''); setFiltrar(false); setTiendas([]) }}>Ver todas</Button>}
+        <Box sx={{ flex: 1 }} />
+        {cedi?.activo && <AvisoInfo titulo="Estado del inventario del CEDI y regla de reparto">{textoCedi}</AvisoInfo>}
+        {cedi && cedi.dias_reparto?.length > 0 && <AvisoInfo titulo="Reparto del CEDI por DIAs">El inventario del CEDI se repartió solo entre las tiendas de los DIAs {cedi.dias_reparto.join(' + ')}; las demás tiendas muestran lo que pide su buffer sin limitar.</AvisoInfo>}
       </Paper>
-      {cedi && (
-        <Alert severity={cedi.activo ? 'info' : 'warning'} sx={{ py: 0 }}>
-          {cedi.regla === 0 ? 'El reparto del inventario del CEDI está apagado: se sugiere todo lo que pide el buffer.'
-            : cedi.productos === 0 ? `Sin inventario del CEDI (${cedi.bodega}): corre el ETL para traerlo. Mientras tanto no se limita lo sugerido.`
-            : `CEDI ${cedi.bodega}${empresa ? ` (empresa ${empresa})` : ''}: ${(cedi.por_empresa?.find((x: any) => x.empresa === empresa)?.con_stock ?? cedi.con_stock).toLocaleString()} items con stock (corte ${cedi.por_empresa?.find((x: any) => x.empresa === empresa)?.corte ?? cedi.corte}) · si no alcanza se reparte solo entre las tiendas de esa empresa: ${cedi.regla_nombre.toLowerCase()}`
-              + (cedi.limitadas ? ` · ${cedi.limitadas.toLocaleString()} combinaciones con menos de lo necesario` : '')
-              + (cedi.items_con_reserva ? ` · ${cedi.items_con_reserva} items con reserva` : '')}
+      {cedi && !cedi.activo && (
+        <Alert severity="warning" sx={{ py: 0 }}>
+          {textoCedi}
         </Alert>)}
-      {cedi && cedi.dias_reparto?.length > 0 && <Alert severity="info" sx={{ py: 0 }}>El inventario del CEDI se repartió solo entre las tiendas de los DIAs {cedi.dias_reparto.join(' + ')}; las demás tiendas muestran lo que pide su buffer sin limitar.</Alert>}
       {cedi && cedi.con_costos === 0 && <Alert severity="warning" sx={{ py: 0 }}>Aún no hay costos de Siesa: corre el ETL (o el pipeline) para traerlos. Mientras tanto el valor del despacho queda en $0 y no se aplica el mínimo por tienda.</Alert>}
       <Paper variant="outlined" sx={{ p: 1.5, display: 'flex', flexWrap: 'wrap', gap: 1.5, alignItems: 'center' }}>
         <TextField select size="small" label="Ver" value={ver} onChange={e => setVer(e.target.value as any)} sx={{ minWidth: 130 }}>

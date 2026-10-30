@@ -147,7 +147,7 @@ def construir(filas: list[dict], meses: list[str], params: dict, factores: list[
 
     idx = {c[0]: i + 1 for i, c in enumerate(cols)}
     C = lambda key, r: f"{L(idx[key])}{r}"
-    R0 = 4                                   # primera fila de datos
+    R0 = 3                                   # primera fila de datos (fila 1 = titulos, fila 2 = descripcion)
     hist = lambda r: f"{C('v0', r)}:{C(f'v{n - 1}', r)}"
     ult = lambda r: f"{C(f'v{n - k}', r)}:{C(f'v{n - 1}', r)}"
     p = PR
@@ -210,20 +210,20 @@ def construir(filas: list[dict], meses: list[str], params: dict, factores: list[
     tipo_font = {"e": AZUL, "f": NEGRO, "m": GRIS}
     tipo_fill = {"e": F_ENT, "f": F_FOR, "m": F_MOT}
     tipo_head = {"e": H_ENT, "f": H_FOR, "m": H_MOT}
-    grupo = {"e": "ENTRADAS (valores)", "f": "CÁLCULO (fórmulas)", "m": "LO QUE CALCULÓ EL MOTOR"}
 
     def hc(texto, tipo, bold=True, wrap=True, size=None):
         c = WriteOnlyCell(ws, value=texto)
         c.font = Font(bold=bold, color="FFFFFF", size=size or 10); c.fill = tipo_head[tipo]
         c.alignment = Alignment(wrap_text=wrap, vertical="center", horizontal="center")
         return c
-    # fila 1: grupos, fila 2: titulos, fila 3: descripcion
-    ws.append([hc(grupo[c[3]] if (i == 0 or cols[i - 1][3] != c[3]) else None, c[3]) for i, c in enumerate(cols)])
+    # fila 1: titulos, fila 2: descripcion (altura normal y sin ajuste de texto: se ve cortada y se lee completa al pararse en la celda).
+    # El color del encabezado distingue entradas (azul), calculo (verde) y motor (gris): ver la hoja «Cómo leerlo».
+    ws.row_dimensions[2].height = 15
     ws.append([hc(c[1], c[3]) for c in cols])
     desc_cells = []
     for c in cols:
         d = WriteOnlyCell(ws, value=c[2]); d.font = Font(italic=True, size=8, color="5F6368")
-        d.alignment = Alignment(wrap_text=True, vertical="top"); d.fill = tipo_fill[c[3]]; desc_cells.append(d)
+        d.alignment = Alignment(wrap_text=False, vertical="center"); d.fill = tipo_fill[c[3]]; desc_cells.append(d)
     ws.append(desc_cells)
 
     ventas_keys = [f"v{i}" for i in range(n)]
@@ -252,7 +252,7 @@ def construir(filas: list[dict], meses: list[str], params: dict, factores: list[
             if fmt: cell.number_format = fmt
             out.append(cell)
         ws.append(out)
-    ws.auto_filter.ref = f"A2:{L(len(cols))}{R0 + max(len(filas), 1) - 1}"
+    ws.auto_filter.ref = f"A1:{L(len(cols))}{R0 + max(len(filas), 1) - 1}"
 
     # ---- hoja Parametros ----
     wp = wb.create_sheet("Parametros")

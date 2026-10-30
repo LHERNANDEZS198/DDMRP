@@ -15,6 +15,7 @@ import { useYo } from '../Yo'
 import { confirmar, confirmarEscribiendo, esc } from '../alertas'
 import PegarGrilla, { ColPegar } from '../PegarGrilla'
 import { useEmpresa } from '../Empresa'
+import AvisoInfo from '../AvisoInfo'
 import { useSearchParams } from 'react-router-dom'
 
 type Filtros = { tienda: boolean; item: boolean; lab: boolean; texto: boolean; empresa?: boolean; empresa_opc?: boolean; mes?: boolean }
@@ -299,8 +300,8 @@ export default function Config({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras
           “Descargar Excel” te da la plantilla con los datos actuales. La tienda se identifica por código de Siesa (ej. SV021) y la empresa se deduce sola.
           Las referencias van como texto de 6 dígitos.{def.todas ? ' Para condenar el item en todas las tiendas deja la tienda vacía o escribe *.' : ''} Columnas a cargar:{' '}
           {def.editable.length ? def.editable.map(c => <Chip key={c} size="small" label={c} sx={{ mr: .5 }} />) : '(solo existencia de la fila)'}
+          {def.ayuda && <AvisoInfo titulo="Qué hace este maestro"><b>Qué hace este maestro:</b> {def.ayuda}</AvisoInfo>}
         </Typography>)}
-      {def?.ayuda && <Alert severity="info" icon={false} sx={{ py: 0.5 }}><b>Qué hace este maestro:</b> {def.ayuda}</Alert>}
       {def && (
         <Paper variant="outlined" sx={{ p: 1, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
           <Typography variant="body2" sx={{ fontWeight: 600 }}>Filtrar</Typography>

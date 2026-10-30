@@ -4,6 +4,7 @@ import { Autocomplete, Alert, Box, Button, Chip, MenuItem, Paper, TextField, Too
 import Tabla from '../Tabla'
 import { api, bajar } from '../api'
 import { useEmpresa } from '../Empresa'
+import AvisoInfo from '../AvisoInfo'
 
 const hoy = () => new Date().toISOString().slice(0, 10)
 const hace = (d: number) => new Date(Date.now() - d * 86400000).toISOString().slice(0, 10)
@@ -58,12 +59,12 @@ export default function Lanzamientos() {
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 1.5, minHeight: 600 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         <Typography variant="h6" sx={{ fontWeight: 700, flex: 1 }}>Lanzamientos y reingresos del CEDI</Typography>
-        <Button size="small" variant="outlined" disabled={bajando} onClick={excel}>{bajando ? 'Generando…' : 'Descargar Excel'}</Button>
-      </Box>
-      <Alert severity="info" sx={{ flexShrink: 0 }}>
+        <AvisoInfo titulo="Qué son lanzamientos y reingresos">
         El ETL compara la existencia del CEDI en cada corrida. <b>Lanzamiento</b> = el item aparece con existencia por primera vez; <b>Reingreso</b> = vuelve a tener existencia después de días sin stock (agotado, cartera, etc.).
         {d.historia_desde ? <> La historia empieza el {String(d.historia_desde).slice(0, 10)} (la primera lectura es la base y no genera eventos).</> : <> Aún no hay lectura base: corre el ETL; los eventos aparecen desde la segunda corrida.</>}
-      </Alert>
+        </AvisoInfo>
+        <Button size="small" variant="outlined" disabled={bajando} onClick={excel}>{bajando ? 'Generando…' : 'Descargar Excel'}</Button>
+      </Box>
       <Paper variant="outlined" sx={{ flexShrink: 0, p: 1.25, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
         <TextField size="small" type="date" label="Desde" value={desde} onChange={e => e.target.value && setDesde(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} />
         <TextField size="small" type="date" label="Hasta" value={hasta} onChange={e => e.target.value && setHasta(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} />
