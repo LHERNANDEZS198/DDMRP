@@ -1,9 +1,10 @@
 //! Motor DDMRP – modelo de la hoja "Modelo" (Descripcion y Formulas DDMRP.xlsx, fila 6).
 //!
 //! Resumen del modelo (columnas del Excel entre parentesis):
-//!  1. Bloque pronostico (BI..CB): con las ventas de 7 meses se calcula un ADU de referencia (BK).
-//!     El "Pronostico" (valor estatico que cargan los analistas) se compara contra ese ADU
-//!     y se ajusta a 30-60 dias de inventario (CA, CB) -> Forecast (Q).
+//!  1. Bloque pronostico (BI..CB): con las ventas de la ventana se calcula un ADU de referencia (BK) y, con ese ADU, un buffer
+//!     completo (zonas BP..BV, topes ajustados BW/BX). El "Pronostico" (BZ) es TOY aj + (TOG aj - TOY aj) / divisor (Excel: 3) y se
+//!     ajusta a 30-60 dias de inventario del ADU de referencia (CA, CB) -> Forecast (P/Q). NO viene del maestro de pronosticos
+//!     (salvo `pron_calculado = 0`, o tiendas/referencias nuevas con pocos meses de venta).
 //!  2. Bloque principal (R..AM): ADU (W) = promedio de los ultimos 4 meses + Q, mas su variabilidad.
 //!     Zonas: ZA, ZRB, ZRS, ZV; topes TOR, TOY, TOG; ajuste por cotas/promocion -> TOY y TOG ajustados.
 //!  3. Flujo neto = inventario + transito - demanda calificada; zona y cantidad sugerida
@@ -88,6 +89,8 @@ pub struct Parametros {
     pub meses_historia: usize, // meses de venta para BK/variabilidad (Excel: 7, incluye el mes en curso)
     pub meses_adu: usize,      // ultimos meses (+ forecast) que entran al ADU (Excel: 4)
     pub pron_meses_minimos: usize, // con menos meses de venta que esto, el pronostico se usa tal cual (0 = nunca; tienda/lab nuevo)
+    pub pron_calculado: bool,  // true: el pronostico (BZ) se calcula del propio historial (Excel BI..CB); false: valor estatico del maestro
+    pub pron_divisor: f64,     // BZ = TOY aj + (TOG aj - TOY aj) / divisor (Excel de ejemplo: 3)
 }
 
 impl Default for Parametros {
@@ -96,7 +99,7 @@ impl Default for Parametros {
             mult_cota_max_promo: 1.2, mult_cota_min_promo: 1.1, adu_bajo_min: 1.0, adu_bajo_max: 4.0,
             regla_disparo: 1, regla_objetivo: 1, regla_redondeo: 1,
             sumar_vectorizacion: true, incluir_transito: true, restar_demanda_calificada: true, cantidad_minima: 0.0,
-            meses_historia: 7, meses_adu: 4, pron_meses_minimos: 3,
+            meses_historia: 7, meses_adu: 4, pron_meses_minimos: 3, pron_calculado: true, pron_divisor: 3.0,
         }
     }
 }
@@ -117,6 +120,8 @@ pub struct Entrada {
     pub cota_max: f64,        // AX
     pub cota_min: f64,        // AY
     pub promo: i16,           // indicativo de promocion (AN): 0, 1, 2
+    pub aum_cota_max: f64,    // % de aumento de la cota max en promocion de ESTA referencia (AZ = AX x (1+x)); negativo = sin dato -> multiplicador global
+    pub aum_cota_min: f64,    // idem para la cota min (BA = AY x (1+x))
     pub vectorizacion: f64,   // derrame
     pub inventario: f64,
     pub en_transito: f64,
@@ -219,22 +224,53 @@ pub fn forecast_ajustado(pronostico: f64, bk: f64) -> f64 {
 
 /// ADU de referencia del bloque de pronostico (BK) con las ventas de la ventana.
 pub fn adu_referencia(ventas: &[f64]) -> f64 {
+    adu_y_variabilidad(ventas).0
+}
+
+/// (BK, BM): ADU de referencia y su indice de variabilidad (desviacion / promedio de la ventana).
+fn adu_y_variabilidad(ventas: &[f64]) -> (f64, f64) {
     let bi = promedio(ventas);
     let bm = div(desvest_m(ventas), bi);
-    roundup(bi + bi * bm)
+    (roundup(bi + bi * bm), bm)
+}
+
+/// Pronostico calculado (BZ del Excel): con el ADU de referencia (BK) se arma un buffer completo (BN..BV), se ajusta por promocion
+/// (BW/BX: sin promocion son TOY y TOG a secas; con promocion se aplican las cotas de promocion) y el pronostico es
+/// TOY aj + (TOG aj - TOY aj) / divisor, redondeado.
+impl Entrada {
+    /// Multiplicador de la cota maxima en promocion: 1 + % propio de la referencia; sin dato, el multiplicador global.
+    pub fn mult_max(&self, p: &Parametros) -> f64 { if self.aum_cota_max >= 0.0 { 1.0 + self.aum_cota_max } else { p.mult_cota_max_promo } }
+    pub fn mult_min(&self, p: &Parametros) -> f64 { if self.aum_cota_min >= 0.0 { 1.0 + self.aum_cota_min } else { p.mult_cota_min_promo } }
+}
+
+pub fn pronostico_calculado(bk: f64, bm: f64, e: &Entrada, promo: i16, f: &Factores, p: &Parametros) -> f64 {
+    let z = zonas(bk, bm, e.lead_time, e.frecuencia, e.unidad_despacho, f, p);
+    let (bw, bx) = if promo == 1 {
+        let bw = roundup(z.tog * (e.cota_max * e.mult_max(p)) + z.tor + z.za);
+        (bw, roundup(bw + z.zv + z.tog * (e.cota_min * e.mult_min(p))))
+    } else {
+        (z.toy, z.tog)
+    };
+    let d = if p.pron_divisor > 0.0 { p.pron_divisor } else { 3.0 };
+    round_xl((bx - bw) / d + bw)
 }
 
 pub fn calcular(e: &Entrada, f: &Factores, p: &Parametros) -> Resultado {
     // Bloque pronostico -> Q
     let n = p.meses_historia.clamp(2, e.ventas.len().max(2)).min(e.ventas.len());
     let hist = &e.ventas[e.ventas.len() - n..];
-    let bk = adu_referencia(hist);
+    let (bk, bm_ref) = adu_y_variabilidad(hist);
+    // Promocion: no aplica a bodegas TC / DM
+    let pref = e.bodega_id.get(..2).unwrap_or("");
+    let promo = if e.promo != 0 && (pref == "TC" || pref == "DM") { 0 } else { e.promo };
+    // pronostico del que parte el ajuste a 30-60 dias: el calculado del historial (Excel BI..BZ) o el valor estatico del maestro
+    let pron_base = if p.pron_calculado { pronostico_calculado(bk, bm_ref, e, promo, f, p) } else { e.pronostico };
     // meses con historia = desde la primera venta de la ventana hasta hoy (los meses en cero antes de abrir no cuentan)
     let meses_hist = hist.iter().position(|x| *x > 0.0).map_or(0, |i| hist.len() - i);
     let pron_directo = p.pron_meses_minimos > 0 && e.pronostico > 0.0 && meses_hist < p.pron_meses_minimos;
     // Pronostico ajustado: normalmente queda entre 1 y 2 veces el ADU de referencia (si no hay historial da 0). En un caso nuevo
     // (pocos meses de venta) el historial no es confiable: se usa el pronostico tal cual y solo se promedian los meses con venta.
-    let q = if pron_directo { e.pronostico } else { forecast_ajustado(e.pronostico, bk) };
+    let q = if pron_directo { e.pronostico } else { forecast_ajustado(pron_base, bk) };
 
     // Bloque principal: ultimos `meses_adu` meses (Excel: 4, M..P) + forecast
     let k = p.meses_adu.clamp(1, n);
@@ -247,13 +283,10 @@ pub fn calcular(e: &Entrada, f: &Factores, p: &Parametros) -> Resultado {
 
     let z = zonas(w, y, e.lead_time, e.frecuencia, e.unidad_despacho, f, p);
 
-    // Promocion: no aplica a bodegas TC / DM
-    let pref = e.bodega_id.get(..2).unwrap_or("");
-    let promo = if e.promo != 0 && (pref == "TC" || pref == "DM") { 0 } else { e.promo };
     let adu_bajo = w >= p.adu_bajo_min && w <= p.adu_bajo_max;
 
-    let az = e.cota_max * p.mult_cota_max_promo;
-    let ba = e.cota_min * p.mult_cota_min_promo;
+    let az = e.cota_max * e.mult_max(p);
+    let ba = e.cota_min * e.mult_min(p);
     let toy_aj = if adu_bajo && promo == 0 {
         z.toy
     } else if promo == 1 {
@@ -352,6 +385,9 @@ pub fn calcular_lote(items: &[Entrada], f: &Factores, p: &Parametros) -> Vec<Res
 mod tests {
     use super::*;
 
+    /// Parametros de las pruebas "a mano": el pronostico es el valor estatico del maestro (no el calculado del historial).
+    fn pdef() -> Parametros { let mut p = Parametros::default(); p.pron_calculado = false; p }
+
     fn factores() -> Factores {
         Factores {
             lt: vec![
@@ -380,6 +416,8 @@ mod tests {
             cota_max: 0.0,
             cota_min: 0.0,
             promo: 0,
+            aum_cota_max: -1.0,
+            aum_cota_min: -1.0,
             vectorizacion: 0.0,
             inventario: 0.0,
             en_transito: 0.0,
@@ -412,7 +450,7 @@ mod tests {
 
     #[test]
     fn pronostico_directo_en_caso_nuevo() {
-        let p = Parametros::default(); let f = factores();
+        let p = pdef(); let f = factores();
         // tienda nueva: sin ventas, pronostico 30/mes -> ADU = 30 (antes quedaba en 0)
         let mut e = base(); e.ventas = vec![0.0; 7]; e.pronostico = 30.0;
         assert_eq!(calcular(&e, &f, &p).adu, 30.0);
@@ -424,7 +462,7 @@ mod tests {
         let r = calcular(&e, &f, &p);
         assert!((r.forecast - 20.0).abs() < 1e-9, "{}", r.forecast);
         // regla apagada: tienda nueva vuelve a 0
-        let mut p0 = Parametros::default(); p0.pron_meses_minimos = 0;
+        let mut p0 = pdef(); p0.pron_meses_minimos = 0;
         let mut e = base(); e.ventas = vec![0.0; 7]; e.pronostico = 30.0;
         assert_eq!(calcular(&e, &f, &p0).adu, 0.0);
     }
@@ -449,7 +487,7 @@ mod tests {
         // valores [10,10,10,10,0] -> U=8, DesvEst=4.4721, Y=0.559, W=ceil(12.47)=13
         // ZA=ceil(3*13/30)=2 ; ZRB=round(2*0.61)=1 ; ZRS=round(1*0.41)=0 ; ZV=max(ceil(2*13/30)=1,1,1)=1
         let f = factores();
-        let r = calcular(&base(), &f, &Parametros::default());
+        let r = calcular(&base(), &f, &pdef());
         assert_eq!(r.adu, 13.0);
         assert_eq!(r.zonas.za, 2.0);
         assert_eq!(r.zonas.zrb, 1.0);
@@ -467,8 +505,19 @@ mod tests {
         let mut e = base();
         e.cota_max = 0.35;
         e.cota_min = 0.15;
-        let r = calcular(&e, &factores(), &Parametros::default());
+        let r = calcular(&e, &factores(), &pdef());
         assert_eq!((r.toy_aj, r.tog_aj), (5.0, 7.0));
+    }
+
+    #[test]
+    fn promocion_con_porcentaje_propio_por_referencia() {
+        let mut e = base();
+        e.cota_max = 0.5; e.cota_min = 0.3; e.promo = 1;
+        let p = Parametros::default();
+        assert_eq!(e.mult_max(&p), 1.2);          // sin dato: multiplicador global
+        e.aum_cota_max = 1.0; e.aum_cota_min = 0.7;
+        assert!((e.mult_max(&p) - 2.0).abs() < 1e-9 && (e.mult_min(&p) - 1.7).abs() < 1e-9);
+        assert!((e.cota_max * e.mult_max(&p) - 1.0).abs() < 1e-9); // 50% x 2 = 100% (AZ del Excel)
     }
 
     #[test]
@@ -477,12 +526,12 @@ mod tests {
         e.cota_max = 0.35;
         e.cota_min = 0.15;
         e.promo = 1;
-        let r = calcular(&e, &factores(), &Parametros::default());
+        let r = calcular(&e, &factores(), &pdef());
         // AL = ceil(4*0.42+1+2)=ceil(4.68)=5 ; AM = ceil(5+1+4*0.165)=ceil(6.66)=7
         assert_eq!((r.toy_aj, r.tog_aj), (5.0, 7.0));
         let mut e2 = e.clone();
         e2.bodega_id = "TC001".into(); // en TC/DM la promocion no aplica
-        let r2 = calcular(&e2, &factores(), &Parametros::default());
+        let r2 = calcular(&e2, &factores(), &pdef());
         assert_eq!((r2.toy_aj, r2.tog_aj), (5.0, 7.0)); // igual a la ruta sin promo con cotas normales
     }
 
@@ -493,7 +542,7 @@ mod tests {
         e.ventas = vec![1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0];
         e.cota_max = 0.5;
         e.cota_min = 0.5;
-        let r = calcular(&e, &factores(), &Parametros::default());
+        let r = calcular(&e, &factores(), &pdef());
         assert!(r.adu >= 1.0 && r.adu <= 4.0);
         assert_eq!(r.zonas.zrb, 0.0);
         assert_eq!(r.toy_aj, r.zonas.toy);
@@ -505,7 +554,7 @@ mod tests {
         let mut e = base();
         e.unidad_despacho = 12.0;
         e.vectorizacion = 6.0;
-        let r = calcular(&e, &factores(), &Parametros::default());
+        let r = calcular(&e, &factores(), &pdef());
         // ZV = max(1, 12, 1) = 12 -> TOG = 3+12 = 15 ; falta 15 -> 24 (2 cajas) + 6 de derrame
         assert_eq!(r.zonas.zv, 12.0);
         assert_eq!(r.cantidad_sugerida, 24.0 + 6.0);
@@ -515,13 +564,13 @@ mod tests {
     fn exceso_no_sugiere_y_sin_buffer_no_alerta() {
         let mut e = base();
         e.inventario = 500.0;
-        let r = calcular(&e, &factores(), &Parametros::default());
+        let r = calcular(&e, &factores(), &pdef());
         assert_eq!(r.zona, Zona::Exceso);
         assert_eq!(r.cantidad_sugerida, 0.0);
 
         let mut vacio = base();
         vacio.ventas = vec![0.0; 7];
-        let r = calcular(&vacio, &factores(), &Parametros::default());
+        let r = calcular(&vacio, &factores(), &pdef());
         assert_eq!(r.zonas.tog, 0.0);
         assert_eq!(r.zona, Zona::Verde); // sin buffer y sin stock: no es alerta
         assert_eq!(r.cantidad_sugerida, 0.0);
@@ -532,30 +581,30 @@ mod tests {
         let f = factores();
         // base(): TOR 1, TOY 3, TOG 4. Inventario 3 => amarilla (NFP <= TOY)
         let mut e = base(); e.inventario = 3.0;
-        let p = Parametros::default();
+        let p = pdef();
         assert_eq!(calcular(&e, &f, &p).cantidad_sugerida, 1.0); // TOG 4 - 3
-        let mut p2 = Parametros::default(); p2.regla_disparo = 2; // solo si roja
+        let mut p2 = pdef(); p2.regla_disparo = 2; // solo si roja
         assert_eq!(calcular(&e, &f, &p2).cantidad_sugerida, 0.0);
-        let mut p3 = Parametros::default(); p3.regla_objetivo = 2; // hasta TOY: falta 0
+        let mut p3 = pdef(); p3.regla_objetivo = 2; // hasta TOY: falta 0
         assert_eq!(calcular(&e, &f, &p3).cantidad_sugerida, 0.0);
         // 3 = TOY aj + mitad de la zona verde: TOY 3, TOG 4 -> objetivo ceil(3.5) = 4 ; con inventario 3 pide 1
-        let mut p4 = Parametros::default(); p4.regla_objetivo = 3;
+        let mut p4 = pdef(); p4.regla_objetivo = 3;
         let r4 = calcular(&e, &f, &p4);
         assert_eq!((r4.cantidad_sugerida, r4.objetivo_usado), (1.0, 3));
         // la regla propia del item gana sobre la global (global 1 = TOG, item 2 = TOY -> no pide)
         let mut e5 = e.clone(); e5.regla_objetivo = 2;
-        let r5 = calcular(&e5, &f, &Parametros::default());
+        let r5 = calcular(&e5, &f, &pdef());
         assert_eq!((r5.cantidad_sugerida, r5.objetivo_usado), (0.0, 2));
         // transito: con inventario 0 y transito 4 => NFP 4 (verde), sin contar transito => pide 4
         let mut e2 = base(); e2.inventario = 0.0; e2.en_transito = 4.0;
         assert_eq!(calcular(&e2, &f, &p).cantidad_sugerida, 0.0);
-        let mut p4 = Parametros::default(); p4.incluir_transito = false;
+        let mut p4 = pdef(); p4.incluir_transito = false;
         assert_eq!(calcular(&e2, &f, &p4).cantidad_sugerida, 4.0);
         // vectorizacion y minimo
         let mut e3 = base(); e3.vectorizacion = 5.0;
-        let mut p5 = Parametros::default(); p5.sumar_vectorizacion = false;
+        let mut p5 = pdef(); p5.sumar_vectorizacion = false;
         assert_eq!(calcular(&e3, &f, &p5).cantidad_sugerida, 4.0);
-        let mut p6 = Parametros::default(); p6.cantidad_minima = 10.0;
+        let mut p6 = pdef(); p6.cantidad_minima = 10.0;
         assert_eq!(calcular(&base(), &f, &p6).cantidad_sugerida, 0.0);
         // redondeo a multiplo de 10: falta 4 => arriba 10, cercano 0, abajo 0
         assert_eq!(a_multiplo(4.0, 10.0, 1), 10.0);
@@ -571,22 +620,43 @@ mod tests {
         // 12 meses: los 5 mas viejos en 100, los 7 ultimos en 10
         e.ventas = [vec![100.0; 5], vec![10.0; 7]].concat();
         // por defecto solo cuenta la ventana de 7 meses (igual al caso base)
-        assert_eq!(calcular(&e, &f, &Parametros::default()).adu, 13.0);
+        assert_eq!(calcular(&e, &f, &pdef()).adu, 13.0);
         // ventana de 12 meses: el ADU de referencia (BK) sube
         assert!(adu_referencia(&e.ventas) > adu_referencia(&e.ventas[5..]));
         // ADU con 1 mes + forecast en vez de 4: cambia el resultado
         e.ventas[11] = 40.0;
-        let a4 = calcular(&e, &f, &Parametros::default()).adu;
-        let mut p = Parametros::default(); p.meses_adu = 1;
+        let a4 = calcular(&e, &f, &pdef()).adu;
+        let mut p = pdef(); p.meses_adu = 1;
         assert_ne!(calcular(&e, &f, &p).adu, a4);
         // parametros absurdos se acotan (no revientan)
-        let mut p = Parametros::default(); p.meses_historia = 99; p.meses_adu = 0;
+        let mut p = pdef(); p.meses_historia = 99; p.meses_adu = 0;
         let _ = calcular(&e, &f, &p);
     }
 
     #[test]
     fn lote_paralelo() {
         let items = vec![base(); 50_000];
-        assert_eq!(calcular_lote(&items, &factores(), &Parametros::default()).len(), 50_000);
+        assert_eq!(calcular_lote(&items, &factores(), &pdef()).len(), 50_000);
+    }
+
+    #[test]
+    fn forecast_calculado_como_el_excel_de_ejemplo() {
+        // Fila 4 del Excel de ejemplo (GN410 / 199850): 9 meses G..O, LT 3, frecuencia 2, cotas 0.5 / 0.3, sin promocion.
+        // BI=18.89, BM=0.186, BK=23 -> zonas con ADU 23: ZA=3, ZRB=2, TOY=5, ZV=2, TOG=7 -> BW=5, BX=7 -> BZ=ROUND(2/3+5)=6
+        // CA=6/23*30=7.8 (<30) -> CB = 23 -> Forecast = 23; ADU = ROUNDUP(avg(16,16,19,18,23) * (1+IV)) = 22; TOY aj 9, TOG aj 14.
+        let mut p = Parametros::default(); p.meses_historia = 9; p.meses_adu = 4;
+        let mut e = base(); e.bodega_id = "GN410".into(); e.producto_id = "199850".into();
+        e.ventas = vec![24.0, 14.0, 24.0, 21.0, 18.0, 16.0, 16.0, 19.0, 18.0];
+        e.cota_max = 0.5; e.cota_min = 0.3; e.pronostico = 999.0; // el maestro NO cuenta
+        let r = calcular(&e, &factores(), &p);
+        assert_eq!(r.forecast, 23.0);
+        assert_eq!(r.adu, 22.0);
+        assert_eq!((r.toy_aj, r.tog_aj), (9.0, 14.0));
+        // con `pron_calculado = 0` vuelve a mandar el maestro (CA=999/23*30 > 60 -> 999/CA*60 = 46)
+        p.pron_calculado = false;
+        assert_eq!(calcular(&e, &factores(), &p).forecast, 46.0);
+        // 5 meses con venta pero el maestro en 0: el forecast calculado igual existe (antes salia 0)
+        let mut e0 = base(); e0.pronostico = 0.0; p.pron_calculado = true;
+        assert!(calcular(&e0, &factores(), &p).forecast > 0.0);
     }
 }

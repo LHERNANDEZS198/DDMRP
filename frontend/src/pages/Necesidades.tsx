@@ -398,6 +398,7 @@ export default function Necesidades() {
           {ocRes && (
             <Box sx={{ mt: 1 }}>
               {ocRes.avisos.length > 0 && <Alert severity="info" sx={{ mb: 1 }}>{ocRes.avisos.join(' · ')}</Alert>}
+              {!ocRes.ordenes.every((o: any) => o.estado === 'plano') && <Alert severity="success" sx={{ mb: 1 }} action={<Button color="inherit" size="small" variant="outlined" onClick={irAEnviadas}>Ir a OC enviadas a Siesa</Button>}>Envío terminado. Mira el estado de cada OC en «OC enviadas a Siesa».</Alert>}
               <Table size="small">
                 <TableHead><TableRow>{['Emp.', 'Proveedor', 'Ítems', 'Valor', 'Resultado', 'OC Siesa', 'Detalle', ''].map(h => <TableCell key={h} sx={{ fontWeight: 700 }}>{h}</TableCell>)}</TableRow></TableHead>
                 <TableBody>{ocRes.ordenes.map((o, k) => (

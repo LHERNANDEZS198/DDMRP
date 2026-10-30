@@ -30,6 +30,8 @@ PARAMS = [
     ("cantidad_minima", "Cantidad mínima: lo sugerido menor a esto se descarta", 0),
     ("meses_historia", "Meses de venta de la ventana (informativo: define las columnas de ventas)", 7),
     ("meses_adu", "Últimos meses que entran al ADU (informativo: define el rango de la fórmula)", 4),
+    ("pron_calculado", "Forecast: 1 = calculado del historial (Excel BI..CB) · 0 = valor estático del maestro de pronósticos", 1),
+    ("pron_divisor", "Forecast calculado: pronóstico = TOY aj + (TOG aj − TOY aj) / este número (Excel de ejemplo: 3)", 3),
 ]
 PR = {k: f"Parametros!$B${i + 2}" for i, (k, _, _) in enumerate(PARAMS)}
 TRAMO0 = len(PARAMS) + 5   # primera fila de tramos en Parametros (1 encabezado + params + vacia + titulo + encabezado)
@@ -74,13 +76,15 @@ def construir(filas: list[dict], meses: list[str], params: dict, factores: list[
         t, d_, a_ = primeras[key]; col(key, t, d_, "e", a_)
     for i, m in enumerate(meses):
         col(f"v{i}", m[:4] + "-" + m[4:] + (" (mes en curso)" if i == n - 1 else ""), "Unidades vendidas en el mes (ventas por mes cargadas)", "e", 10, "#,##0")
-    col("pron", "Pronóstico", "Valor estático que cargan los analistas (unidades/mes)", "e", 11, "#,##0.##")
+    col("pron", "Pronóstico (maestro)", "Valor estático que cargan los analistas (unidades/mes). Solo cuenta si en Parametros pron_calculado = 0", "e", 11, "#,##0.##")
     col("lt", "Lead time (días)", "Días entre el pedido y la llegada a la tienda (bitácora)", "e", 9)
     col("frec", "Frecuencia (días)", "Cada cuántos días se despacha a la tienda (bitácora)", "e", 9)
     col("ud", "Unidad de despacho", "Múltiplo en que se puede enviar", "e", 9)
     col("cmax", "Cota máxima", "Control de referencias", "e", 9, "0.0000")
     col("cmin", "Cota mínima", "Control de referencias", "e", 9, "0.0000")
     col("promo", "Promoción", "0 no · 1 sí · 2 variante GN (no aplica a TC ni DM)", "e", 9)
+    col("mmax", "Mult. cota máx promo", "1 + % de aumento propio de la referencia en el maestro de promociones; sin dato, el multiplicador global (Reglas)", "e", 9, "0.00")
+    col("mmin", "Mult. cota mín promo", "1 + % de aumento propio de la referencia en el maestro de promociones; sin dato, el multiplicador global (Reglas)", "e", 9, "0.00")
     col("vect", "Vectorización", "Unidades de derrame que se suman al pedido", "e", 10, "#,##0.##")
     col("inv", "Inventario", "Disponible en la tienda al correr el motor", "e", 10, "#,##0.##")
     col("tr", "En tránsito", "Traslados abiertos hacia la tienda", "e", 10, "#,##0.##")
@@ -92,7 +96,20 @@ def construir(filas: list[dict], meses: list[str], params: dict, factores: list[
     col("bl", "Desv. est.", "Desviación estándar muestral de la ventana (BL)", "f", 10, "0.00")
     col("bm", "IV ventana", "Desviación / promedio (BM)", "f", 9, "0.000")
     col("bk", "ADU referencia", "Promedio + promedio × IV, redondeado arriba (BK)", "f", 10)
-    col("ca", "Días inv. pronóstico", "Pronóstico / ADU referencia × 30 (CA)", "f", 10, "0.0")
+    # buffer del ADU de referencia (BN..BX del Excel): de ahi sale el pronostico calculado (BZ)
+    col("f_fvar", "Factor variab. (ref.)", "Factor según el tramo del IV de la ventana (BO) — tabla en Parametros", "f", 9, "0.00")
+    col("f_za", "ZA (ref.)", "Lead time × ADU referencia / 30, arriba (BR)", "f", 8)
+    col("f_zrb", "ZRB (ref.)", "ZA × factor LT (0 si el ADU referencia es bajo) (BP)", "f", 8)
+    col("f_zrs", "ZRS (ref.)", "ZRB × factor de variabilidad (BQ)", "f", 8)
+    col("f_tor", "TOR (ref.)", "ZRB + ZRS (BT)", "f", 8)
+    col("f_toy", "TOY (ref.)", "TOR + ZA (BU)", "f", 8)
+    col("f_zv", "ZV (ref.)", "máx(frecuencia × ADU ref./30 arriba, unidad de despacho, ZRB) (BS)", "f", 8)
+    col("f_tog", "TOG (ref.)", "TOY + ZV (BV)", "f", 8)
+    col("f_bw", "TOY aj (ref.)", "Sin promoción = TOY; con promoción se aplican las cotas de promoción (BW)", "f", 9)
+    col("f_bx", "TOG aj (ref.)", "Sin promoción = TOG; con promoción se aplican las cotas de promoción (BX)", "f", 9)
+    col("f_bz", "Pronóstico calculado", "ROUND((TOG aj − TOY aj) / divisor + TOY aj) (BZ) — el divisor está en Parametros", "f", 11)
+    col("pfc", "Pronóstico usado", "Parametros: calculado (BZ) o el valor estático del maestro", "f", 10, "0.##")
+    col("ca", "Días inv. pronóstico", "Pronóstico usado / ADU referencia × 30 (CA)", "f", 10, "0.0")
     col("q", "Forecast ajustado", "Si <30 días: pronóstico/días×30 · si >60: pronóstico/días×60 · si no, el pronóstico (Q = CB)", "f", 10, "0.00")
     # --- bloque principal (R..AM)
     col("u", "Promedio ADU", f"Promedio de los últimos {k} meses y el forecast (U)", "f", 10, "0.00")
@@ -156,8 +173,20 @@ def construir(filas: list[dict], meses: list[str], params: dict, factores: list[
         "bl": lambda r: f"=STDEV({hist(r)})",
         "bm": lambda r: f"=IFERROR({C('bl', r)}/{C('bi', r)},0)",
         "bk": lambda r: f"=ROUNDUP({C('bi', r)}+{C('bi', r)}*{C('bm', r)},0)",
-        "ca": lambda r: f"=IFERROR({C('pron', r)}/{C('bk', r)}*30,0)",
-        "q": lambda r: f"=IF({C('ca', r)}=0,0,IF({C('ca', r)}<30,{C('pron', r)}/{C('ca', r)}*30,IF({C('ca', r)}>60,{C('pron', r)}/{C('ca', r)}*60,{C('pron', r)})))",
+        "f_fvar": lambda r: "=" + _tramos_formula(va_t, C('bm', r), off_va),
+        "f_za": lambda r: f"=ROUNDUP({C('lt', r)}*{C('bk', r)}/30,0)",
+        "f_zrb": lambda r: f"=IF(AND({C('bk', r)}>={p['adu_bajo_min']},{C('bk', r)}<={p['adu_bajo_max']}),0,ROUND({C('f_za', r)}*{C('flt', r)},0))",
+        "f_zrs": lambda r: f"=ROUND({C('f_zrb', r)}*{C('f_fvar', r)},0)",
+        "f_tor": lambda r: f"={C('f_zrb', r)}+{C('f_zrs', r)}",
+        "f_toy": lambda r: f"={C('f_tor', r)}+{C('f_za', r)}",
+        "f_zv": lambda r: f"=IF(OR({C('bk', r)}=0,{C('f_toy', r)}=0),0,MAX(ROUNDUP({C('frec', r)}*{C('bk', r)}/30,0),{C('ud', r)},{C('f_zrb', r)}))",
+        "f_tog": lambda r: f"={C('f_toy', r)}+{C('f_zv', r)}",
+        "f_bw": lambda r: f"=IF({C('pe', r)}=1,ROUNDUP({C('f_tog', r)}*{C('cmax', r)}*{C('mmax', r)}+{C('f_tor', r)}+{C('f_za', r)},0),{C('f_toy', r)})",
+        "f_bx": lambda r: f"=IF({C('pe', r)}=1,ROUNDUP({C('f_bw', r)}+{C('f_zv', r)}+{C('f_tog', r)}*{C('cmin', r)}*{C('mmin', r)},0),{C('f_tog', r)})",
+        "f_bz": lambda r: f"=ROUND(({C('f_bx', r)}-{C('f_bw', r)})/{p['pron_divisor']}+{C('f_bw', r)},0)",
+        "pfc": lambda r: f"=IF({p['pron_calculado']}=1,{C('f_bz', r)},{C('pron', r)})",
+        "ca": lambda r: f"=IFERROR({C('pfc', r)}/{C('bk', r)}*30,0)",
+        "q": lambda r: f"=IF({C('ca', r)}=0,0,IF({C('ca', r)}<30,{C('pfc', r)}/{C('ca', r)}*30,IF({C('ca', r)}>60,{C('pfc', r)}/{C('ca', r)}*60,{C('pfc', r)})))",
         "u": lambda r: f"=AVERAGE({ult(r)},{C('q', r)})",
         "x": lambda r: f"=STDEV({ult(r)},{C('q', r)})",
         "y": lambda r: f"=IFERROR({C('x', r)}/{C('u', r)},0)",
@@ -173,11 +202,11 @@ def construir(filas: list[dict], meses: list[str], params: dict, factores: list[
         "tog": lambda r: f"={C('toy', r)}+{C('zv', r)}",
         "pe": lambda r: f"=IF(AND({C('promo', r)}<>0,OR(LEFT({C('bod', r)},2)=\"TC\",LEFT({C('bod', r)},2)=\"DM\")),0,{C('promo', r)})",
         "toyaj": lambda r: (f"=IF(AND(AND({C('w', r)}>={p['adu_bajo_min']},{C('w', r)}<={p['adu_bajo_max']}),{C('pe', r)}=0),{C('toy', r)},"
-                            f"IF({C('pe', r)}=1,ROUNDUP({C('tog', r)}*{C('cmax', r)}*{p['mult_cota_max_promo']}+{C('tor', r)}+{C('za', r)},0),"
+                            f"IF({C('pe', r)}=1,ROUNDUP({C('tog', r)}*{C('cmax', r)}*{C('mmax', r)}+{C('tor', r)}+{C('za', r)},0),"
                             f"ROUNDUP({C('tog', r)}*{C('cmax', r)}+{C('tor', r)}+{C('za', r)},0)))"),
         "togaj": lambda r: (f"=IF(AND(AND({C('w', r)}>={p['adu_bajo_min']},{C('w', r)}<={p['adu_bajo_max']}),{C('pe', r)}=0),{C('tog', r)},"
                             f"IF(OR({C('pe', r)}=1,AND({C('pe', r)}=2,LEFT({C('bod', r)},2)=\"GN\")),"
-                            f"ROUNDUP({C('toyaj', r)}+{C('zv', r)}+{C('tog', r)}*{C('cmin', r)}*{p['mult_cota_min_promo']},0),"
+                            f"ROUNDUP({C('toyaj', r)}+{C('zv', r)}+{C('tog', r)}*{C('cmin', r)}*{C('mmin', r)},0),"
                             f"ROUNDUP({C('toyaj', r)}+{C('zv', r)}+{C('tog', r)}*{C('cmin', r)},0)))"),
         "nfp": lambda r: f"={C('inv', r)}+IF({p['incluir_transito']}=1,{C('tr', r)},0)-IF({p['restar_demanda_calificada']}=1,{C('dc', r)},0)",
         "zona": lambda r: (f"=IF({C('togaj', r)}<=0,IF({C('nfp', r)}>0,\"EXCESO\",\"VERDE\"),IF({C('nfp', r)}<={C('tor', r)},\"ROJA\","
@@ -229,7 +258,7 @@ def construir(filas: list[dict], meses: list[str], params: dict, factores: list[
     ventas_keys = [f"v{i}" for i in range(n)]
     entradas_map = {"emp": "empresa", "bod": "bodega_id", "ref": "producto_id", "desc": "descripcion", "lab": "laboratorio",
                     "pron": "pronostico", "lt": "lead_time", "frec": "frecuencia", "ud": "unidad_despacho", "cmax": "cota_max", "cmin": "cota_min",
-                    "promo": "promo", "vect": "vectorizacion", "inv": "inventario", "tr": "en_transito", "dc": "demanda_calificada", "cond": "condenado", "robj": "regla_objetivo",
+                    "promo": "promo", "mmax": "mult_max", "mmin": "mult_min", "vect": "vectorizacion", "inv": "inventario", "tr": "en_transito", "dc": "demanda_calificada", "cond": "condenado", "robj": "regla_objetivo",
                     "m_adu": "adu", "m_toyaj": "toy_aj", "m_togaj": "tog_aj", "m_zona": "zona", "m_nec": "necesidad", "m_cedi": "stock_cedi",
                     "m_asig": "cantidad_sugerida", "m_est": "estado", "m_apr": "cantidad_aprobada",
                     "upe": "unidad_pedido", "red": "redondeo", "moq": "moq", "costo": "costo", "orig": "origen_costo", "ivap": "iva_tasa"}

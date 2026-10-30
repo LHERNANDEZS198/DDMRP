@@ -52,9 +52,12 @@ SENTENCIAS = [
     "INSERT INTO ddmrp.parametro VALUES ('valor_minimo_envio', 350000, 'Valor minimo (a costo promedio) del despacho a una tienda: por debajo no se deja enviar. 0 = sin minimo') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('inv_tiendas_resta_comprometido', 0, 'Inventario de las tiendas: 0 = existencia (como el reporte de Siesa), 1 = existencia menos cantidad comprometida') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('pron_meses_minimos', 3, 'Meses de venta minimos para ajustar el pronostico contra el historial; con menos, se usa el pronostico tal cual (0 = nunca)') ON CONFLICT DO NOTHING",
+    "INSERT INTO ddmrp.parametro VALUES ('pron_calculado', 1, 'Forecast: 1 = se calcula del historial (bloque BI..CB del Excel); 0 = valor estatico del maestro de pronosticos') ON CONFLICT DO NOTHING",
+    "INSERT INTO ddmrp.parametro VALUES ('pron_divisor', 3, 'Forecast calculado: pronostico = TOY aj + (TOG aj - TOY aj) / este numero (Excel de ejemplo: 3)') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('vectorizacion_un_solo_uso', 0, 'Derrame (vectorizacion): 0 = se sigue sumando en cada corrida; 1 = un solo uso, se pone en 0 al marcar la fila como enviada') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('inv_tiendas_resta_sin_acumular', 1, 'Inventario de las tiendas: 1 = resta las ventas del POS aun sin acumular (salida sin confirmar), como el disponible de Siesa; 0 = no') ON CONFLICT DO NOTHING",
     # CEDI por empresa: el inventario del CEDI se guarda por (empresa, item) y solo se reparte entre las tiendas de esa empresa
+    "ALTER TABLE ddmrp.promocion ADD COLUMN IF NOT EXISTS aum_cota_max NUMERIC(8,4), ADD COLUMN IF NOT EXISTS aum_cota_min NUMERIC(8,4)",   # % de aumento de cota por referencia en promocion (1 = 100%); vacio = multiplicador global de Reglas
     "ALTER TABLE ddmrp.inventario_cedi ADD COLUMN IF NOT EXISTS empresa TEXT NOT NULL DEFAULT '05'",
     """DO $$ BEGIN
          IF NOT EXISTS (SELECT 1 FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)

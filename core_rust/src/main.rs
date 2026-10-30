@@ -64,6 +64,8 @@ SELECT b.empresa, k.bodega_id, k.producto_id,
   COALESCE(c.cota_maxima, 0)::float8       AS cota_max,
   COALESCE(c.cota_minima, 0)::float8       AS cota_min,
   COALESCE(pr.indicativo, 0)::int2         AS promo,
+  COALESCE(pr.aum_cota_max, -1)::float8    AS aum_cota_max,
+  COALESCE(pr.aum_cota_min, -1)::float8    AS aum_cota_min,
   COALESCE(ve.vectorizacion, 0)::float8    AS vectorizacion,
   (EXISTS (SELECT 1 FROM ddmrp.item_condenado cd WHERE cd.empresa = k.empresa AND cd.producto_id = k.producto_id AND cd.bodega_id IN (k.bodega_id, '*')))::int::int2 AS condenado,
   COALESCE(i.disponible, 0)::float8        AS inventario,
@@ -232,6 +234,8 @@ fn leer_parametros(client: &mut Client) -> Result<Parametros> {
             "meses_historia" => p.meses_historia = (v as usize).clamp(2, 12),
             "meses_adu" => p.meses_adu = (v as usize).clamp(1, 12),
             "pron_meses_minimos" => p.pron_meses_minimos = (v as usize).min(12),
+            "pron_calculado" => p.pron_calculado = v != 0.0,
+            "pron_divisor" => p.pron_divisor = if v > 0.0 { v } else { 3.0 },
             _ => {}
         }
     }
@@ -274,6 +278,8 @@ fn main() -> Result<()> {
             cota_max: f(r, "cota_max"),
             cota_min: f(r, "cota_min"),
             promo: r.get("promo"),
+            aum_cota_max: f(r, "aum_cota_max"),
+            aum_cota_min: f(r, "aum_cota_min"),
             vectorizacion: f(r, "vectorizacion"),
             inventario: f(r, "inventario"),
             en_transito: f(r, "en_transito"),

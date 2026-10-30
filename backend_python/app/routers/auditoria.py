@@ -69,7 +69,7 @@ def _generar_excel(user, w: str, p: dict, limite: int, origen: str = ""):
             SELECT s.empresa, s.bodega_id, s.producto_id, mi.descripcion, COALESCE(lb.nombre, mi.categoria) AS laboratorio,
                    COALESCE(pn.pronostico, 0)::float8 AS pronostico, s.lead_time::float8 lead_time, s.frecuencia::float8 frecuencia,
                    s.unidad_despacho::float8 unidad_despacho, COALESCE(cr.cota_maxima, 0)::float8 cota_max, COALESCE(cr.cota_minima, 0)::float8 cota_min,
-                   COALESCE(pr.indicativo, 0)::int promo, s.vectorizacion::float8 vectorizacion, s.inventario::float8 inventario,
+                   COALESCE(pr.indicativo, 0)::int promo, pr.aum_cota_max::float8 aum_cota_max, pr.aum_cota_min::float8 aum_cota_min, s.vectorizacion::float8 vectorizacion, s.inventario::float8 inventario,
                    s.en_transito::float8 en_transito, s.demanda_calificada::float8 demanda_calificada, s.condenado::int condenado, COALESCE(s.regla_objetivo, 0)::int regla_objetivo,
                    s.adu::float8 adu, s.toy_aj::float8 toy_aj, s.tog_aj::float8 tog_aj, s.zona::text zona,
                    COALESCE(s.cantidad_necesaria, s.cantidad_sugerida)::float8 necesidad, s.stock_cedi::float8 stock_cedi,
@@ -88,6 +88,9 @@ def _generar_excel(user, w: str, p: dict, limite: int, origen: str = ""):
             meses.append(f"{y:04d}{m:02d}"); m -= 1
             if m == 0: y, m = y - 1, 12
         meses.reverse()
+        for f in filas:
+            f["mult_max"] = 1 + f["aum_cota_max"] if f.get("aum_cota_max") is not None else prm.get("mult_cota_max_promo", 1.2)
+            f["mult_min"] = 1 + f["aum_cota_min"] if f.get("aum_cota_min") is not None else prm.get("mult_cota_min_promo", 1.1)
         idx = {(f["empresa"], f["bodega_id"], f["producto_id"]): f for f in filas}
         for f in filas: f["ventas"] = [0.0] * n
         if filas:

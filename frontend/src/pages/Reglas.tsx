@@ -14,7 +14,7 @@ const grupos: [string, string[]][] = [
   ['Envío a las tiendas (Matriz de despacho)', ['valor_minimo_envio']],
   ['Qué items entran al modelo', ['solo_items_activos', 'rec_suma_original']],
   ['Datos de Siesa', ['etl_traer_ventas', 'inv_tiendas_resta_comprometido', 'inv_tiendas_resta_sin_acumular']],
-  ['Parámetros del modelo (hoja Modelo)', ['meses_historia', 'meses_adu', 'pron_meses_minimos', 'mult_cota_max_promo', 'mult_cota_min_promo', 'adu_bajo_min', 'adu_bajo_max']],
+  ['Parámetros del modelo (hoja Modelo)', ['meses_historia', 'meses_adu', 'pron_calculado', 'pron_divisor', 'pron_meses_minimos', 'mult_cota_max_promo', 'mult_cota_min_promo', 'adu_bajo_min', 'adu_bajo_max']],
   ['Historial (vistas de cambios y tendencia)', ['retener_dias']],
 ]
 

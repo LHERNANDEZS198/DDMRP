@@ -93,8 +93,8 @@ MAESTROS = {
         label="Reserva del CEDI: % del inventario que se guarda por item (no se despacha)", tabla="ddmrp.reserva_cedi",
         llave=["producto_id"], editable={"porcentaje": "num"}, bodega=None, producto="producto_id", global_=True, fraccion=True),
     "promocion": dict(
-        label="Promociones (indicativo 0/1/2)", tabla="ddmrp.promocion",
-        llave=["empresa", "producto_id"], editable={"indicativo": "int"},
+        label="Promociones (indicativo 0/1/2 y % de aumento de cotas por referencia)", tabla="ddmrp.promocion",
+        llave=["empresa", "producto_id"], editable={"indicativo": "int", "aum_cota_max": "num", "aum_cota_min": "num"},
         bodega=None, producto="producto_id", global_=True),
     "factores": dict(
         label="Factores de lead time y variabilidad", tabla="ddmrp.factor_tramo",

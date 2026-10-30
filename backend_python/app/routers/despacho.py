@@ -59,11 +59,18 @@ def matriz(empresa: str, bodega_id: str | None = None, bodegas: str | None = Non
               WHERE {f} ORDER BY s.bodega_id, s.pct_buffer"""
     # Lo que se reparte de cada item (suma de lo sugerido a todas las tiendas de la empresa) se calcula aparte y se cruza aqui: dentro del mismo SELECT, con
     # estadisticas viejas Postgres repetia esa agregacion de ~400 mil filas por cada fila de la matriz (consultas de 20 minutos y 504).
-    sql_tot = f"SELECT producto_id, SUM(cantidad_sugerida)::float8 FROM ddmrp.sugerencias_envio WHERE ejecucion_id = {ULTIMA} AND empresa = :emp AND NOT condenado GROUP BY producto_id"
+    # «CEDI después» = stock del CEDI - lo asignado a las tiendas QUE COMPITIERON por ese stock en el reparto (las del alcance: los DIAs elegidos, o todas) y que
+    # reciben envio (sin laboratorios sin envio ni items inactivos: los mismos filtros de reparto.aplicar_a_ejecucion). Las tiendas de otros DIAs no compiten (quedan con
+    # lo que pide su buffer, sin limite): restarlas dejaba el CEDI en negativo (stock 47, asignado a otros DIAs 137 -> -90) aunque el reparto de la corrida si cuadraba.
     with pg.connect() as c:
+        dias = reparto.dias_alcance(c)
+        sql_tot = (f"SELECT s.producto_id, SUM(s.cantidad_sugerida)::float8 FROM ddmrp.sugerencias_envio s WHERE s.ejecucion_id = {ULTIMA} AND s.empresa = :emp "
+                   f"AND NOT s.condenado AND {SIN_ENVIO} AND {ACTIVO}"
+                   + (" AND (s.empresa, s.bodega_id) IN (SELECT empresa, bodega_id FROM ddmrp.bodega_dia WHERE dia = ANY(CAST(:dias AS int[])))" if dias else "")
+                   + " GROUP BY s.producto_id")
         c.execute(text("SET LOCAL statement_timeout = 50000"))        # menos que el timeout de nginx (60 s): falla con mensaje en vez de dejar consultas colgadas
         try:
-            tot = dict(c.execute(text(sql_tot), {"emp": empresa}).all())
+            tot = dict(c.execute(text(sql_tot), {"emp": empresa, **({"dias": dias} if dias else {})}).all())
             filas = [dict(r) for r in c.execute(text(sql), p).mappings()]
         except DBAPIError as e:
             if "statement timeout" in str(e):

@@ -43,7 +43,7 @@ const cols: ColDef[] = [
   { field: 'stock_cedi', headerName: 'CEDI antes', type: 'numericColumn', headerTooltip: 'Stock del CEDI de la empresa para este ítem (menos la reserva), antes de repartir', valueFormatter: p => p.value == null ? '' : Math.round(p.value).toLocaleString() },
   { field: 'cantidad_sugerida', headerName: 'Asignado', type: 'numericColumn',
     cellStyle: p => p.data?.limitado ? { color: '#c62828', fontWeight: 700 } : null },
-  { field: 'cedi_despues', headerName: 'CEDI después', type: 'numericColumn', headerTooltip: 'Lo que queda en el CEDI de este ítem después de enviar todo lo asignado a las tiendas de la empresa',
+  { field: 'cedi_despues', headerName: 'CEDI después', type: 'numericColumn', headerTooltip: 'Lo que queda en el CEDI de este ítem después de enviar lo asignado a las tiendas que compiten por ese stock en el reparto (los DIAs elegidos en la corrida; si no se eligió ninguno, todas). Las tiendas de otros DIAs no cuentan aquí',
     valueFormatter: p => p.value == null ? '' : Math.round(p.value).toLocaleString() },
   { field: 'cantidad_aprobada', headerName: 'A enviar', editable: (p: any) => !!p.context?.aprobar, type: 'numericColumn',
     valueGetter: p => p.data.cantidad_aprobada ?? p.data.cantidad_sugerida,
