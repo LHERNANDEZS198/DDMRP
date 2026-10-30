@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Tabla from '../Tabla'
 import { ColDef, CellClickedEvent, CellValueChangedEvent, GridApi, ICellRendererParams } from 'ag-grid-community'
-import { Alert, Autocomplete, Box, Button, Card, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Paper, Tab, Table, TableBody, TableCell, TableHead, TableRow, Tabs, TextField, Tooltip, Typography } from '@mui/material'
+import { Alert, Autocomplete, Box, Button, Card, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, MenuItem, Paper, Tab, Table, TableBody, TableCell, TableHead, TableRow, Tabs, TextField, Tooltip, Typography } from '@mui/material'
 import Download from '@mui/icons-material/Download'
 import HelpOutline from '@mui/icons-material/HelpOutline'
 import Refresh from '@mui/icons-material/Refresh'
@@ -12,6 +12,8 @@ import { useYo } from '../Yo'
 import { useEmpresa } from '../Empresa'
 import { GuiaNecesidades } from '../guias'
 
+const haceDias = (n: number) => new Date(Date.now() - n * 864e5 - 5 * 36e5).toISOString().slice(0, 10)      // fecha de Colombia (UTC-5)
+const ESTADOS_OC = ['en_bpm', 'en_revision', 'aprobada', 'rechazada', 'creada', 'anulada', 'error', 'incierta', 'cancelada']
 const num = (p: any) => p.value == null ? '' : Number(p.value).toLocaleString('es-CO', { maximumFractionDigits: 2 })
 const ent = (p: any) => p.value == null ? '' : Math.round(Number(p.value)).toLocaleString('es-CO')
 const colorOC = (e: string) => e === 'creada' ? '#2e7d32' : e === 'anulada' ? '#757575' : ['plano', 'en_bpm', 'en_revision', 'aprobada'].includes(e) ? '#1565c0' : e === 'incierta' ? '#b45309' : '#c62828'
@@ -88,10 +90,13 @@ export default function Necesidades() {
   const [sel, setSel] = useState<Set<string>>(new Set())      // ítems elegidos para la OC (por proveedor o uno a uno)
   const [recarga, setRecarga] = useState(0); const silenciosa = useRef(false)
   const [ocDestino, setOcDestino] = useState('directo')
-  useEffect(() => { api('/compras/oc/config').then(x => setOcDestino(x.destino)).catch(() => {}) }, [])
+  const [ocExigir, setOcExigir] = useState(true)      // «Entiendo que se envía…»: se puede quitar en Configuración de compras (oc_exigir_entiendo = 0)
+  const [histDias, setHistDias] = useState(30)
+  useEffect(() => { api('/compras/oc/config').then(x => { setOcDestino(x.destino); setOcExigir(x.exigir_entiendo !== false); if (x.listado_dias > 0) { setHistDias(x.listado_dias); setHistF(f => ({ ...f, desde: haceDias(x.listado_dias) })) } }).catch(() => {}) }, [])
   const [ocEnviando, setOcEnviando] = useState(false); const [ocEntiendo, setOcEntiendo] = useState(false)
   const [ocRes, setOcRes] = useState<{ ordenes: any[]; avisos: string[] } | null>(null); const [ocErr, setOcErr] = useState('')
   const [histAbierta, setHistAbierta] = useState(false); const [hist, setHist] = useState<any[]>([]); const [histCarga, setHistCarga] = useState(false)
+  const [histF, setHistF] = useState({ desde: haceDias(30), hasta: '', estado: '', proveedor: '', q: '', creado_por: '' })      // por defecto: últimos 30 días
   const apiDet = useRef<GridApi | null>(null); const apiProv = useRef<GridApi | null>(null)
   useEffect(() => { api('/control/filtros').then(x => setOpcLabs((x.laboratorios ?? x.labs ?? []).filter((l: any) => l.codigo))).catch(() => {}) }, [])
   useEffect(() => { const t = setTimeout(() => setQ(qd), 400); return () => clearTimeout(t) }, [qd])
@@ -146,14 +151,23 @@ export default function Necesidades() {
     try {
       const r = await api('/compras/oc/enviar', { method: 'POST', body: cuerpoOC(soloPlano) })
       setOcRes(r)
-      if (!soloPlano) { setSel(new Set()); setOcEntiendo(false); recargar() }
+      if (!soloPlano) { setSel(new Set()); setOcEntiendo(false); recargar() }      // el resultado queda a la vista con el botón «Ir a OC enviadas a Siesa»
     } catch (e: any) { setOcErr(e.message || String(e)) } finally { setOcEnviando(false) }
   }
   const bajarPlano = (o: any) => {
     const b = new Blob([o.plano], { type: 'text/plain;charset=utf-8' }); const u = URL.createObjectURL(b); const a = document.createElement('a')
     a.href = u; a.download = `plano_oc_${o.empresa}_${o.proveedor_id}.txt`; a.click(); URL.revokeObjectURL(u)
   }
-  const cargarHist = async () => { setHistCarga(true); try { setHist((await api('/compras/oc')).datos) } catch (e: any) { setOcErr(e.message || String(e)) } finally { setHistCarga(false) } }
+  const cargarHist = async (f = histF) => {
+    setHistCarga(true)
+    try {
+      const p = new URLSearchParams({ limit: '500' })
+      for (const [k, v] of Object.entries(f)) if (String(v).trim()) p.set(k, String(v).trim())
+      if (empresa.length === 1) p.set('empresa', empresa[0])
+      setHist((await api('/compras/oc?' + p.toString())).datos)
+    } catch (e: any) { setOcErr(e.message || String(e)) } finally { setHistCarga(false) }
+  }
+  const irAEnviadas = () => { setOcAbierta(false); setOcRes(null); setHistAbierta(true); cargarHist() }
   const accionOC = async (id: number, que: 'reconsultar' | 'reenviar') => {
     try { const r = await api(`/compras/oc/${id}/${que}`, { method: 'POST' }); setMsg(`OC ${id}: ${r.estado}${r.consecutivo ? ' · ' + r.consecutivo : ''} — ${r.mensaje}`) } catch (e: any) { setMsg(e.message || String(e)) }
     cargarHist()
@@ -336,7 +350,7 @@ export default function Necesidades() {
         <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>La casilla del NIT elige todo el proveedor; la del SKU, un ítem. Puedes combinar ambas.</Typography>
         <Tooltip title={gestiona ? 'Revisa por proveedor lo que vas a montar: cantidades, valores y alertas' : 'Tu perfil no tiene permiso para enviar órdenes de compra'} placement="top" disableInteractive>
           <span><Button variant="contained" size="small" startIcon={<SendIcon />} disabled={!elegidas.length || !gestiona} onClick={() => setOcAbierta(true)}>Revisar y enviar OC</Button></span></Tooltip>
-        <Button size="small" onClick={() => { setHistAbierta(true); cargarHist() }}>OC enviadas</Button>
+        <Button size="small" onClick={() => { setHistAbierta(true); cargarHist() }}>OC enviadas a Siesa</Button>
       </Paper>
       <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ minHeight: 36, '& .MuiTab-root': { minHeight: 36, textTransform: 'none' } }}>
         <Tab label={<Tooltip title="Total a pedir por proveedor: valor, IVA, lead time, pedido mínimo y estado" placement="top" disableInteractive><span>Por proveedor ({d.proveedores.length})</span></Tooltip>} />
@@ -397,15 +411,28 @@ export default function Necesidades() {
             </Box>)}
         </DialogContent>
         <DialogActions>
-          <Box sx={{ flex: 1, pl: 1 }}><label style={{ fontSize: 13 }}><Checkbox size="small" checked={ocEntiendo} onChange={e => setOcEntiendo(e.target.checked)} />{ocDestino === 'bpm' ? 'Entiendo que se envía al BPM' : 'Entiendo que se crea en Siesa real'}</label></Box>
+          <Box sx={{ flex: 1, pl: 1 }}>{ocExigir && <label style={{ fontSize: 13 }}><Checkbox size="small" checked={ocEntiendo} onChange={e => setOcEntiendo(e.target.checked)} />{ocDestino === 'bpm' ? 'Entiendo que se envía al BPM' : 'Entiendo que se crea en Siesa real'}</label>}</Box>
+          {ocRes && !ocRes.ordenes.every(o => o.estado === 'plano') && <Button variant="outlined" onClick={irAEnviadas}>Ir a OC enviadas a Siesa</Button>}
           <Button onClick={() => setOcAbierta(false)}>Cerrar</Button>
           <Button disabled={ocEnviando || !elegidas.length} onClick={() => enviarOC(true)}>Vista previa del plano</Button>
-          <Button variant="contained" disabled={ocEnviando || !ocEntiendo || !elegidas.length} startIcon={<SendIcon />} onClick={() => enviarOC(false)}>{ocEnviando ? 'Enviando…' : ocDestino === 'bpm' ? 'Enviar al BPM' : 'Crear OC en Siesa'}</Button>
+          <Button variant="contained" disabled={ocEnviando || (ocExigir && !ocEntiendo) || !elegidas.length} startIcon={<SendIcon />} onClick={() => enviarOC(false)}>{ocEnviando ? 'Enviando…' : ocDestino === 'bpm' ? 'Enviar al BPM' : 'Crear OC en Siesa'}</Button>
         </DialogActions>
       </Dialog>
       <Dialog open={histAbierta} onClose={() => setHistAbierta(false)} maxWidth="xl" fullWidth>
         <DialogTitle sx={{ fontWeight: 700 }}>OC enviadas a Siesa</DialogTitle>
         <DialogContent dividers>
+          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center', mb: 1.5 }}>
+            <TextField size="small" type="date" label="Desde" InputLabelProps={{ shrink: true }} value={histF.desde} onChange={e => setHistF({ ...histF, desde: e.target.value })} sx={{ width: 150 }} />
+            <TextField size="small" type="date" label="Hasta" InputLabelProps={{ shrink: true }} value={histF.hasta} onChange={e => setHistF({ ...histF, hasta: e.target.value })} sx={{ width: 150 }} />
+            <TextField size="small" select label="Estado" value={histF.estado} onChange={e => setHistF({ ...histF, estado: e.target.value })} sx={{ width: 150 }}>
+              <MenuItem value="">Todos</MenuItem>{ESTADOS_OC.map(e => <MenuItem key={e} value={e}>{e}</MenuItem>)}</TextField>
+            <TextField size="small" label="Proveedor (NIT o nombre)" value={histF.proveedor} onChange={e => setHistF({ ...histF, proveedor: e.target.value })} sx={{ width: 210 }} />
+            <TextField size="small" label="Referencia / OC Siesa / #" value={histF.q} onChange={e => setHistF({ ...histF, q: e.target.value })} sx={{ width: 200 }} />
+            <TextField size="small" label="Creó" value={histF.creado_por} onChange={e => setHistF({ ...histF, creado_por: e.target.value })} sx={{ width: 140 }} />
+            <Button variant="contained" size="small" onClick={() => cargarHist()}>Filtrar</Button>
+            <Button size="small" onClick={() => { const f = { desde: haceDias(histDias), hasta: '', estado: '', proveedor: '', q: '', creado_por: '' }; setHistF(f); cargarHist(f) }}>Últimos {histDias} días</Button>
+            <Button size="small" onClick={() => { const f = { desde: '', hasta: '', estado: '', proveedor: '', q: '', creado_por: '' }; setHistF(f); cargarHist(f) }}>Ver todas</Button>
+          </Box>
           {histCarga && <Typography variant="body2">Cargando…</Typography>}
           <Table size="small">
             <TableHead><TableRow>{['#', 'Fecha', 'Emp.', 'Proveedor', 'Ítems', 'Total', 'Estado', 'OC Siesa', 'En Siesa', 'Referencia', 'Creó', 'Grupo / tomó', 'Mensaje', ''].map(h => <TableCell key={h} sx={{ fontWeight: 700 }}>{h}</TableCell>)}</TableRow></TableHead>
@@ -422,9 +449,9 @@ export default function Necesidades() {
                 </TableCell>
               </TableRow>))}</TableBody>
           </Table>
-          {!hist.length && !histCarga && <Typography variant="body2" sx={{ mt: 1 }}>Aún no se ha enviado ninguna OC desde DDMRP.</Typography>}
+          {!hist.length && !histCarga && <Typography variant="body2" sx={{ mt: 1 }}>No hay OC con estos filtros{histF.desde && !histF.hasta && !histF.estado && !histF.proveedor && !histF.q && !histF.creado_por ? ` (se muestran los últimos ${histDias} días: usa «Ver todas» para ampliar)` : ''}.</Typography>}
         </DialogContent>
-        <DialogActions><Button onClick={cargarHist}>Actualizar</Button><Button onClick={() => setHistAbierta(false)}>Cerrar</Button></DialogActions>
+        <DialogActions><Button onClick={() => cargarHist()}>Actualizar</Button><Button onClick={() => setHistAbierta(false)}>Cerrar</Button></DialogActions>
       </Dialog>
       <GuiaNecesidades abierta={guia} cerrar={() => setGuia(false)} cfg={d.config} />
     </Box>)

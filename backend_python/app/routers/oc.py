@@ -92,7 +92,7 @@ def _bloquea_minimo() -> bool:
 
 def _cfg_revision() -> dict:
     """Reglas de revision desde Configuracion de compras (tabla compras_config), no del .env. Los defectos aplican si la fila no existe o esta vacia."""
-    cfg = {"oc_umbral_total": 0.0, "oc_desvio_cant_pct": 30.0, "oc_desvio_cant_min": 15.0, "oc_desvio_costo_pct": 30.0}
+    cfg = {"oc_umbral_total": 0.0, "oc_desvio_cant_pct": 30.0, "oc_desvio_cant_min": 15.0, "oc_desvio_costo_pct": 30.0, "oc_exigir_entiendo": 1.0, "oc_listado_dias": 30.0}
     try:
         with pg.connect() as c:
             for k, v in c.execute(text("SELECT clave, valor::float8 FROM ddmrp.compras_config WHERE clave LIKE 'oc\\_%' AND valor IS NOT NULL")).all():
@@ -250,7 +250,8 @@ def _despachar(oc_id: int, usuario: str | None) -> dict:
 
 @router.get("/config")
 def config_oc():
-    return {"destino": settings.oc_destino, "revision": _cfg_revision()}
+    cfg = _cfg_revision()
+    return {"destino": settings.oc_destino, "revision": cfg, "exigir_entiendo": cfg["oc_exigir_entiendo"] >= 1, "listado_dias": int(cfg["oc_listado_dias"])}
 
 
 @router.post("/enviar")
@@ -319,13 +320,28 @@ def _sincronizar_estados() -> None:
 
 
 @router.get("")
-def listar(empresa: str | None = None, estado: str | None = None, limit: int = 200):
+def listar(empresa: str | None = None, estado: str | None = None, proveedor: str | None = None, q: str | None = None,
+           desde: date | None = None, hasta: date | None = None, dias: int | None = None, creado_por: str | None = None, limit: int = 200):
+    """Filtros: empresa, estado, proveedor (NIT o nombre), q (referencia, consecutivo de Siesa o # de OC), creado_por, y fechas (desde/hasta, o `dias` hacia atras desde hoy; fechas en hora de Colombia)."""
     _sincronizar_estados()
     w, p = ["TRUE"], {"lim": min(max(limit, 1), 1000)}
     if empresa:
         w.append("empresa = :e"); p["e"] = empresa
     if estado:
         w.append("estado = :s"); p["s"] = estado
+    if proveedor and proveedor.strip():
+        w.append("(proveedor_id ILIKE :pv OR proveedor_nombre ILIKE :pv)"); p["pv"] = f"%{proveedor.strip()}%"
+    if q and q.strip():
+        w.append("(referencia ILIKE :q OR siesa_consecutivo ILIKE :q OR id::text = :qe)"); p["q"] = f"%{q.strip()}%"; p["qe"] = q.strip()
+    if creado_por and creado_por.strip():
+        w.append("creado_por ILIKE :cp"); p["cp"] = f"%{creado_por.strip()}%"
+    CREADO_CO = "((creado AT TIME ZONE 'UTC') - interval '5 hours')::date"
+    if desde:
+        w.append(f"{CREADO_CO} >= :d1"); p["d1"] = desde
+    elif dias and dias > 0 and not hasta:
+        w.append(f"{CREADO_CO} >= (now() AT TIME ZONE 'UTC' - interval '5 hours')::date - :dias"); p["dias"] = int(dias)
+    if hasta:
+        w.append(f"{CREADO_CO} <= :d2"); p["d2"] = hasta
     with pg.connect() as c:
         filas = [dict(r) for r in c.execute(text(f"SELECT id, empresa, proveedor_id, sucursal, proveedor_nombre, cond_pago, comprador, estado, referencia, valor, iva, total, items, unidades, "
                                                  f"siesa_consecutivo, mensaje, intentos, creado_por, creado, enviado, confirmado, grupo, tomada_por, estado_bpm_fecha, estado_siesa, estado_siesa_fecha FROM ddmrp.orden_compra WHERE {' AND '.join(w)} "

@@ -349,7 +349,9 @@ SENTENCIAS_COMPRAS = [
          ('oc_umbral_total', 0, 'OC: total (con IVA, en pesos) hasta el cual una OC SIN desvios se crea sin revision en el BPM. 0 = toda OC pasa por revision'),
          ('oc_desvio_cant_pct', 30, 'OC: una linea pasa a revision si la cantidad se aparta mas de este % de la cantidad calculada (sugerida)'),
          ('oc_desvio_cant_min', 15, 'OC: la regla de cantidad solo se evalua si la cantidad calculada (sugerida) supera estas unidades (asi 1 por 2 no dispara revision)'),
-         ('oc_desvio_costo_pct', 30, 'OC: una linea pasa a revision si el costo editado sube mas de este % frente a la cotizacion (manual › Siesa › ultima compra)')
+         ('oc_desvio_costo_pct', 30, 'OC: una linea pasa a revision si el costo editado sube mas de este % frente a la cotizacion (manual › Siesa › ultima compra)'),
+         ('oc_exigir_entiendo', 1, 'OC: 1 = para enviar una OC hay que marcar la casilla «Entiendo que se envia al BPM»; 0 = no se pide esa confirmacion'),
+         ('oc_listado_dias', 30, 'OC enviadas: dias hacia atras que muestra por defecto el listado (se puede cambiar con los filtros de la pantalla)')
        ON CONFLICT DO NOTHING""",
     # el lead time general pasa de 30 a 8 dias (una sola vez: lo que se cambie despues no se pisa)
     "CREATE TABLE IF NOT EXISTS ddmrp.migracion_marca (clave TEXT PRIMARY KEY, fecha TIMESTAMPTZ NOT NULL DEFAULT now())",

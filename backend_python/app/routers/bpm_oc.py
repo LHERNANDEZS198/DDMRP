@@ -14,7 +14,7 @@ from ..bitacora import evento
 from ..config import settings
 from ..db import pg
 from .compras import ULTIMA
-from .oc import _al_dia, _cerrar_creada, _lineas_de, _oc_dict, _marcar
+from .oc import _al_dia, _cerrar_creada, _cfg_revision, _lineas_de, _oc_dict, _marcar
 
 
 def _secreto(x_oc_secret: str | None = Header(default=None)) -> None:
@@ -82,7 +82,8 @@ def detalle(oc_id: int):
     """La OC con sus lineas (y lo original si se edito): lo que el BPM muestra al aprobador."""
     with pg.connect() as c:
         r = c.execute(text("SELECT id, empresa, proveedor_id, proveedor_nombre, sucursal, cond_pago, comprador, estado, referencia, valor::float8 AS valor, iva::float8 AS iva, total::float8 AS total, items, "
-                           "unidades::float8 AS unidades, siesa_consecutivo, mensaje, creado_por, requiere_revision, motivo_revision FROM ddmrp.orden_compra WHERE id = :i"), {"i": oc_id}).mappings().first()
+                           "unidades::float8 AS unidades, siesa_consecutivo, mensaje, creado_por, requiere_revision, motivo_revision, "
+                           "(SELECT u.nombre FROM ddmrp.usuario u WHERE u.usuario_id = orden_compra.comprador) AS comprador_nombre FROM ddmrp.orden_compra WHERE id = :i"), {"i": oc_id}).mappings().first()
         if not r:
             raise HTTPException(404, "No existe esa OC")
         lineas = [dict(x) for x in c.execute(text(f"""
@@ -101,6 +102,19 @@ def detalle(oc_id: int):
                                WHERE s.ejecucion_id = {ULTIMA} AND s.empresa = :e AND s.producto_id = l.producto_id LIMIT 1) z ON true
             WHERE l.oc_id = :i ORDER BY l.nro"""), {"i": oc_id, "e": r["empresa"]}).mappings()]
         creado = c.execute(text("SELECT ((creado AT TIME ZONE 'UTC') - interval '5 hours')::date::text FROM ddmrp.orden_compra WHERE id = :i"), {"i": oc_id}).scalar()
+    # Desviada = lo que compras dejo al montar la OC se aparta de lo calculado (mismas reglas de _motivos_revision, con los umbrales de Configuracion de compras):
+    # esas lineas son las que obligaron a pasar por revision. Se evalua sobre lo ORIGINAL de compras, no sobre lo que edite el aprobador despues.
+    cfg = _cfg_revision()
+    for l in lineas:
+        mot = []
+        calc, cant = l.get("cantidad_sugerida"), l.get("cantidad_comprador")
+        if calc is not None and cant is not None and calc > cfg["oc_desvio_cant_min"] and abs(cant - calc) > calc * cfg["oc_desvio_cant_pct"] / 100:
+            mot.append(f"cantidad {cant:,.0f} vs calculada {calc:,.0f}")
+        ref, costo = l.get("costo_cotizado"), l.get("costo_comprador")
+        if ref and ref > 0 and costo is not None and costo > ref * (1 + cfg["oc_desvio_costo_pct"] / 100):
+            mot.append(f"costo +{(costo / ref - 1) * 100:.0f}% vs cotización")
+        l["desviada"] = bool(mot)
+        l["motivo_desvio"] = "; ".join(mot)
     entregas = [l["fecha_entrega"] for l in lineas if l.get("fecha_entrega")]
     extra = {"fecha_montaje": creado, "fecha_necesidad": max(entregas) if entregas else None, "fecha_necesidad_min": min(entregas) if entregas else None}
     return dict(r) | extra | {"lineas": lineas}
