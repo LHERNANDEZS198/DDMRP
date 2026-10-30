@@ -1,6 +1,7 @@
-"""Auditoria del calculo: Excel con las formulas (auditoria_xlsx) de las filas que se ven en la matriz de despacho."""
+"""Auditoria del calculo: vista previa de lo que calculo el motor y descarga a Excel con las formulas (auditoria_xlsx), desde la pagina Auditoria o
+de exactamente las filas que se ven en la matriz de despacho."""
 from datetime import date
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -9,7 +10,7 @@ from ..auditoria_xlsx import construir
 from ..bitacora import evento, usuario_de
 from ..db import pg
 from ..security import empresas_permitidas, filtro_sql_permisos, requiere
-from .control import FROM, ULTIMA
+from .control import FROM, ULTIMA, _filtros
 
 router = APIRouter(prefix="/auditoria", tags=["auditoria"])
 TOPE = 20000
@@ -26,21 +27,34 @@ class PedidoExcel(BaseModel):
     limite: int = Field(TOPE, ge=1, le=TOPE)
 
 
-@router.post("/excel")
-def excel(body: PedidoExcel, user=Depends(requiere("ver_auditoria"))):
-    """Excel de auditoria de EXACTAMENTE las filas (bodega, producto) que la matriz de despacho tiene en pantalla.
-    Respeta los permisos del usuario (bodegas/laboratorios y empresa) y toma la ultima corrida del motor."""
-    if body.empresa not in ("05", "21"):
-        raise HTTPException(400, "Elige la empresa (05 o 21)")
-    perm = empresas_permitidas(user["id"])
-    if perm and body.empresa not in perm:
-        raise HTTPException(403, f"Tu usuario no tiene asignada la empresa {body.empresa}")
-    wp, p = filtro_sql_permisos(user, "s.bodega_id", "mi.categoria")
-    llaves = list(dict.fromkeys((f.b, f.p) for f in body.filas))
-    p.update(k_emp=body.empresa, k_b=[k[0] for k in llaves], k_p=[k[1] for k in llaves])
-    w = (f"s.ejecucion_id = {ULTIMA} AND s.empresa = :k_emp AND {wp} AND {solo_activos('s')} "
-         "AND (s.bodega_id, s.producto_id) IN (SELECT k.b, k.p FROM unnest(CAST(:k_b AS text[]), CAST(:k_p AS text[])) k(b, p))")
-    limite = body.limite
+def _donde(user, bodegas, labs, q, zonas, dia, empresa, crit, solo_sugerido):
+    cond, p = _filtros(user, bodegas, labs, q, zonas, dia, empresa, crit=crit)
+    cond = [f"s.ejecucion_id = {ULTIMA}"] + cond
+    if solo_sugerido:
+        cond.append("(s.cantidad_sugerida > 0 OR COALESCE(s.cantidad_necesaria, 0) > 0)")
+    return " AND ".join(cond), p
+
+
+@router.get("/vista")
+def vista(bodegas: str | None = None, labs: str | None = None, q: str | None = None, zonas: str | None = None, dia: int | None = None,
+          empresa: str | None = None, crit: str | None = None, solo_sugerido: bool = True, limit: int = Query(300, le=1000),
+          user=Depends(requiere("ver_auditoria"))):
+    w, p = _donde(user, bodegas, labs, q, zonas, dia, empresa, crit, solo_sugerido)
+    with pg.connect() as c:
+        ej = c.execute(text(f"SELECT id, fecha_calculo FROM ddmrp.ejecucion_motor WHERE id = {ULTIMA}")).mappings().first()
+        total = c.execute(text(f"SELECT count(*) {FROM} WHERE {w}"), p).scalar()
+        filas = [dict(r) for r in c.execute(text(f"""
+            SELECT s.empresa, s.bodega_id, s.producto_id, mi.descripcion, s.adu::float8 adu, s.forecast::float8 forecast, s.lead_time::float8 lead_time,
+                   s.tor::float8 tor, s.toy_aj::float8 toy_aj, s.tog_aj::float8 tog_aj, s.inventario::float8 inventario, s.en_transito::float8 en_transito,
+                   s.demanda_calificada::float8 demanda_calificada, s.flujo_neto::float8 flujo_neto, s.zona::text zona,
+                   COALESCE(s.cantidad_necesaria, s.cantidad_sugerida)::float8 necesidad, s.stock_cedi::float8 stock_cedi,
+                   s.cantidad_sugerida::float8 cantidad_sugerida, s.estado::text estado
+            {FROM} WHERE {w} ORDER BY s.bodega_id, s.pct_buffer LIMIT :lim"""), {**p, "lim": limit}).mappings()]
+    return {"ejecucion": dict(ej) if ej else None, "total": total, "filas": filas, "tope_excel": TOPE}
+
+
+def _generar_excel(user, w: str, p: dict, limite: int, origen: str = ""):
+    """Arma el Excel (con formulas) de las filas que cumplen `w` en la ultima corrida."""
     with pg.connect() as c:
         ej = c.execute(text(f"SELECT id, fecha_calculo FROM ddmrp.ejecucion_motor WHERE id = {ULTIMA}")).mappings().first()
         if not ej:
@@ -83,6 +97,31 @@ def excel(body: PedidoExcel, user=Depends(requiere("ver_auditoria"))):
                 WHERE v.mes = ANY(:m) GROUP BY 1, 2, 3, 4"""), {"e": [f["empresa"] for f in filas], "b": [f["bodega_id"] for f in filas], "p": [f["producto_id"] for f in filas], "m": meses}):
                 idx[(em, b, pid)]["ventas"][meses.index(mes)] = cant
     data = construir(filas, meses, prm, factores, {"id": ej["id"], "fecha": fc.isoformat()}, truncado=total if total > len(filas) else 0)
-    evento("auditoria", usuario_de(user), f"Excel de auditoría desde la matriz de despacho (empresa {body.empresa}): {len(filas):,} filas de la corrida #{ej['id']}", {"filas": len(filas), "total": total, "ejecucion_id": ej["id"]})
+    evento("auditoria", usuario_de(user), f"Excel de auditoría{origen}: {len(filas):,} filas de la corrida #{ej['id']}", {"filas": len(filas), "total": total, "ejecucion_id": ej["id"]})
     h = {"Content-Disposition": f'attachment; filename="Auditoria_DDMRP_{fc:%Y%m%d}.xlsx"', "X-Filas": str(len(filas)), "X-Filas-Total": str(total)}
     return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers=h)
+
+
+@router.get("/excel")
+def excel_pagina(bodegas: str | None = None, labs: str | None = None, q: str | None = None, zonas: str | None = None, dia: int | None = None,
+                 empresa: str | None = None, crit: str | None = None, solo_sugerido: bool = True, limite: int = Query(10000, ge=1, le=TOPE),
+                 user=Depends(requiere("ver_auditoria"))):
+    w, p = _donde(user, bodegas, labs, q, zonas, dia, empresa, crit, solo_sugerido)
+    return _generar_excel(user, w, p, limite)
+
+
+@router.post("/excel")
+def excel(body: PedidoExcel, user=Depends(requiere("ver_auditoria"))):
+    """Excel de auditoria de EXACTAMENTE las filas (bodega, producto) que la matriz de despacho tiene en pantalla.
+    Respeta los permisos del usuario (bodegas/laboratorios y empresa) y toma la ultima corrida del motor."""
+    if body.empresa not in ("05", "21"):
+        raise HTTPException(400, "Elige la empresa (05 o 21)")
+    perm = empresas_permitidas(user["id"])
+    if perm and body.empresa not in perm:
+        raise HTTPException(403, f"Tu usuario no tiene asignada la empresa {body.empresa}")
+    wp, p = filtro_sql_permisos(user, "s.bodega_id", "mi.categoria")
+    llaves = list(dict.fromkeys((f.b, f.p) for f in body.filas))
+    p.update(k_emp=body.empresa, k_b=[k[0] for k in llaves], k_p=[k[1] for k in llaves])
+    w = (f"s.ejecucion_id = {ULTIMA} AND s.empresa = :k_emp AND {wp} AND {solo_activos('s')} "
+         "AND (s.bodega_id, s.producto_id) IN (SELECT k.b, k.p FROM unnest(CAST(:k_b AS text[]), CAST(:k_p AS text[])) k(b, p))")
+    return _generar_excel(user, w, p, body.limite, f" desde la matriz de despacho (empresa {body.empresa})")
