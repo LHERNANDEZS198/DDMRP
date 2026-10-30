@@ -53,7 +53,7 @@ const cols: ColDef[] = [
 ]
 
 export default function Despacho() {
-  const { puede } = useYo(); const pAprobar = puede('aprobar_despacho'); const pPlano = puede('descargar_planos')
+  const { puede } = useYo(); const pAprobar = puede('aprobar_despacho'); const pPlano = puede('descargar_planos'); const pAudit = puede('ver_auditoria')
   const [rows, setRows] = useState<any[]>([])
   const [cargando, setCargando] = useState(true)
   const [grid, setGrid] = useState<GridApi | null>(null)
@@ -66,10 +66,11 @@ export default function Despacho() {
   // empresa obligatoria (05 Funat / 21 Stores): cada una tiene su CEDI, su matriz y su plano
   const { una: empresa } = useEmpresa()
   // filtros de la lista (en pantalla): texto, laboratorio, zona, solo lo limitado por el CEDI
-  const [fTexto, setFTexto] = useState(''); const [fLab, setFLab] = useState(''); const [fZona, setFZona] = useState(''); const [fLim, setFLim] = useState(false)
+  const [fTexto, setFTexto] = useState(''); const [fLab, setFLab] = useState(''); const [fZona, setFZona] = useState(''); const [fLim, setFLim] = useState(true)   // por defecto solo lo que el CEDI no alcanzó a cubrir
   const [fTienda, setFTienda] = useState<string | null>(null)   // ver el detalle de los items de una sola tienda
   const [fCero, setFCero] = useState(false)   // filas con 0 a enviar: ocultas por defecto (a la tienda no le llega nada)
   const [porTienda, setPorTienda] = useState(false)
+  const [bajandoAud, setBajandoAud] = useState(false)
   const [ediciones, setEdiciones] = useState(0)   // al cambiar "A enviar" a mano se recalculan los totales
   useEffect(() => { api('/despacho/cedi').then(setCedi).catch(() => {}) }, [])
   const [ver, setVer] = useState<'pendiente' | 'aprobada' | 'enviada'>('pendiente')
@@ -130,6 +131,18 @@ export default function Despacho() {
     const v = new Map<string, number>(); for (const r of rows) v.set(r.bodega_id, (v.get(r.bodega_id) ?? 0) + valorDe(r))
     return new Set(regla ? [...v.entries()].filter(([, x]) => x < minimo).map(([b]) => b) : [])
   }, [rows, ediciones, regla, minimo])
+  // Excel de auditoría (con fórmulas) de lo que se ve ahora mismo: mismas filas, con todos los filtros de la pantalla
+  const TOPE_AUD = 10000
+  const auditoria = async () => {
+    if (!vista.length) return
+    const filas = vista.slice(0, TOPE_AUD).map((r: any) => ({ b: r.bodega_id, p: r.producto_id }))
+    setBajandoAud(true); setMsg('Armando el Excel de auditoría con las fórmulas… puede tardar si son muchas filas')
+    try {
+      await descargar('/auditoria/excel', { empresa, filas, limite: TOPE_AUD })
+      setMsg(`Excel de auditoría descargado: ${filas.length.toLocaleString('es-CO')} filas`
+        + (vista.length > TOPE_AUD ? ` (de ${vista.length.toLocaleString('es-CO')}: el Excel lleva las primeras ${TOPE_AUD.toLocaleString('es-CO')}, filtra más para el resto)` : ''))
+    } catch (x: any) { setMsg('Error: ' + x.message) } finally { setBajandoAud(false) }
+  }
   const aprobar = async () => {
     const sel = grid?.getSelectedRows() ?? []
     if (!sel.length) { setMsg('Selecciona filas'); return }
@@ -233,6 +246,8 @@ export default function Despacho() {
         <Chip label={`${tot.lista.length} tiendas`} size="small" />
         {bajoMin.size > 0 && <Tooltip title={`En gris: ${[...bajoMin].join(', ')}. No salen en el plano ni se marcan como enviadas.`}><Chip label={`${bajoMin.size} tiendas bajo el mínimo`} size="small" /></Tooltip>}
         {tot.sinCosto > 0 && <Chip label={`${tot.sinCosto} filas sin costo`} size="small" color="warning" />}
+        {pAudit && <Tooltip title="Descarga a Excel, con todas las fórmulas del cálculo, exactamente las filas que ves ahora (con los filtros de la pantalla)">
+          <span><Button size="small" variant="outlined" startIcon={<Download />} onClick={auditoria} disabled={bajandoAud || !vista.length || !empresa}>Excel auditoría</Button></span></Tooltip>}
         <Button size="small" variant={porTienda ? 'contained' : 'outlined'} endIcon={<ExpandMore sx={{ transform: porTienda ? 'rotate(180deg)' : 'none' }} />} onClick={() => setPorTienda(!porTienda)}>{porTienda ? 'Volver a la vista por ítem' : 'Por tienda'}</Button>
       </Paper>
       {porTienda && (

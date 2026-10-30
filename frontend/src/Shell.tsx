@@ -14,7 +14,6 @@ import Storage from '@mui/icons-material/Storage'
 import ManageAccounts from '@mui/icons-material/ManageAccounts'
 import History from '@mui/icons-material/History'
 import MonitorHeart from '@mui/icons-material/MonitorHeart'
-import FactCheck from '@mui/icons-material/FactCheck'
 import ShoppingCart from '@mui/icons-material/ShoppingCart'
 import ShoppingBasket from '@mui/icons-material/ShoppingBasket'
 import SettingsIcon from '@mui/icons-material/Settings'
@@ -43,7 +42,6 @@ export const NAV = [
   { to: '/control', label: 'Informes', icon: <Insights />, vistas: true, req: ['ver_control', 'ver_alertas'] },
   { to: '/despacho', label: 'Matriz de despacho', icon: <LocalShipping />, req: ['ver_despacho'] },
   { to: '/compras/necesidades', label: 'Necesidades de compra', icon: <ShoppingBasket />, req: ['ver_compras'] },
-  { to: '/auditoria', label: 'Auditoría', icon: <FactCheck />, req: ['ver_auditoria'] },
   { to: '/config', label: 'Maestros', icon: <Storage />, req: ['ver_maestros', 'cargar_maestros', 'sincronizar_siesa'] },
   { to: '/compras/maestros', label: 'Maestros compras', icon: <ShoppingCart />, req: ['ver_compras', 'cargar_maestros_compras'] },
   // lo que se agrupa en el menú «Config» (desplegable)
@@ -169,7 +167,7 @@ export default function Shell() {
               </Collapse>
               <Divider />
             </>)}
-            {[{ titulo: 'Operar', tos: ['/despacho', '/compras/necesidades', '/auditoria'] },
+            {[{ titulo: 'Operar', tos: ['/despacho', '/compras/necesidades'] },
               { titulo: 'Maestros', tos: ['/config', '/compras/maestros'] },
               { titulo: 'Config', tos: ['/motor', '/reglas', '/usuarios', '/log', '/diagnostico'] }].map(sec => {
               const items = NAV_OK.filter(n => sec.tos.includes(n.to))

@@ -14,7 +14,6 @@ import Motor from './pages/Motor'
 import Usuarios from './pages/Usuarios'
 import Log from './pages/Log'
 import Diagnostico from './pages/Diagnostico'
-import Auditoria from './pages/Auditoria'
 import Lanzamientos from './pages/Lanzamientos'
 import Clasificacion from './pages/Clasificacion'
 import Necesidades from './pages/Necesidades'
@@ -30,7 +29,6 @@ export const PANTALLAS = [
   { to: '/clasificacion', req: ['ver_control'] },
   { to: '/dashboard', req: ['ver_alertas'] },
   { to: '/despacho', req: ['ver_despacho'] },
-  { to: '/auditoria', req: ['ver_auditoria'] },
   { to: '/motor', req: ['correr_motor'] },
   { to: '/reglas', req: ['editar_reglas', 'correr_motor'] },
   { to: '/config', req: ['ver_maestros', 'cargar_maestros', 'sincronizar_siesa'] },
@@ -84,7 +82,6 @@ export default function App() {
           <Route path="/compras/necesidades" element={<Req to="/compras/necesidades"><Necesidades /></Req>} />
           <Route path="/compras/maestros" element={<Req to="/compras/maestros"><Config key="compras" grupo="compras" /></Req>} />
           <Route path="/usuarios" element={<Req to="/usuarios"><Usuarios /></Req>} />
-          <Route path="/auditoria" element={<Req to="/auditoria"><Auditoria /></Req>} />
           <Route path="/log" element={<Req to="/log"><Log /></Req>} />
           <Route path="/diagnostico" element={<Req to="/diagnostico"><Diagnostico /></Req>} />
           <Route path="*" element={<Inicio />} />
