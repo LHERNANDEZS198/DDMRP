@@ -187,7 +187,7 @@ export default function Necesidades() {
     if (!e.data || esCasilla(e)) return
     const c = e.colDef.field ?? ''
     if (c === 'producto_id') abrir(`/compras/maestros?maestro=items-compras&q=${encodeURIComponent(e.data.producto_id)}`)      // SKU → maestro de ítems de compras
-    else if (['inventario', 'adu'].includes(c)) abrir(`/control?item=${encodeURIComponent(e.data.producto_id)}&modo=todos`)    // saldo y rotación: tiendas + CEDI
+    else if (['inventario', 'inventario_tiendas', 'adu'].includes(c)) abrir(`/control?item=${encodeURIComponent(e.data.producto_id)}&modo=todos`)    // saldo y rotación: tiendas + CEDI
   }
   const alEditar = async (e: CellValueChangedEvent) => {
     if (!e.data) return
@@ -260,8 +260,10 @@ export default function Necesidades() {
     { field: 'adu', headerName: 'ADU (u/mes)', type: 'numericColumn', width: 110, valueFormatter: num, cellStyle: ENLACE,
       headerTooltip: 'Rotación mensual del CEDI: venta de las tiendas que abastece + venta directa. Clic: ver la rotación por tienda y CEDI' },
     { field: 'lead_time', headerName: 'Lead time (d)', type: 'numericColumn', width: 110, valueFormatter: ent, headerTooltip: 'Días de reposición que usa el buffer: ítem, proveedor o general (8)' },
-    { field: 'inventario', headerName: 'Inventario', type: 'numericColumn', width: 110, valueFormatter: ent, cellStyle: ENLACE,
+    { field: 'inventario', headerName: 'Inventario CEDI', type: 'numericColumn', width: 125, valueFormatter: ent, cellStyle: ENLACE,
       headerTooltip: 'Stock disponible del CEDI. Clic: ver el saldo por tienda y CEDI' },
+    { field: 'inventario_tiendas', headerName: 'Inventario tiendas', type: 'numericColumn', width: 130, valueFormatter: ent, cellStyle: ENLACE,
+      headerTooltip: 'Inventario de todas las tiendas de la empresa sumado, sin el CEDI (de la última corrida del motor). Clic: ver el saldo por tienda y CEDI' },
     { field: 'en_transito', headerName: 'Tránsito', type: 'numericColumn', width: 100, valueFormatter: ent, headerTooltip: 'Saldo de órdenes de compra abiertas hacia el CEDI' },
     { field: 'flujo_neto', headerName: 'Flujo neto', type: 'numericColumn', width: 110, valueFormatter: ent, headerTooltip: 'Inventario + tránsito − demanda calificada. Con esto se decide si se pide' },
     { field: 'tog_aj', headerName: 'TOG aj.', type: 'numericColumn', width: 100, valueFormatter: ent, headerTooltip: 'Tope verde ajustado: hasta donde se repone' },

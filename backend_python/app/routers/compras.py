@@ -77,13 +77,17 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
       SELECT empresa, producto_id, count(*) FILTER (WHERE q > 0)::int AS meses FROM (
         SELECT o.empresa, a.producto_id, a.mes, sum(a.cantidad) AS q
         FROM ddmrp.ventas_mensual a JOIN ddmrp.v_origen_cedi o ON o.empresa = a.empresa AND o.origen = a.bodega_id
-        WHERE a.mes >= :mes12 GROUP BY 1, 2, 3) x GROUP BY 1, 2)
+        WHERE a.mes >= :mes12 GROUP BY 1, 2, 3) x GROUP BY 1, 2),
+    tiendas AS (   -- inventario de todas las tiendas de la empresa (sin el CEDI) en la ultima corrida
+      SELECT e.empresa, e.producto_id, sum(e.inventario) AS inv FROM ddmrp.sugerencias_envio e
+      WHERE e.ejecucion_id = {ULTIMA} AND NOT EXISTS (SELECT 1 FROM ddmrp.maestro_cedi mc WHERE mc.empresa = e.empresa AND mc.bodega_id = e.bodega_id)
+      GROUP BY 1, 2)
       SELECT s.empresa, s.bodega_id, s.producto_id, mi.descripcion, COALESCE(mi.categoria, '') AS lab_cod, lb.nombre AS lab_nombre, {CAT_NOM} AS categoria,
              ic.proveedor_id, ic.sucursal, pv.nombre AS proveedor_nombre, COALESCE(pv.activo, 1) AS prov_activo, COALESCE(pv.redondeo, 'arriba') AS redondeo,
              pv.pedido_minimo::float8 AS pedido_minimo,
              s.frecuencia::float8 AS frecuencia, s.unidad_despacho::float8 AS unidad_despacho, s.demanda_calificada::float8 AS demanda_calificada,
              COALESCE(s.regla_objetivo, 0)::int AS regla_objetivo, s.condenado::int AS condenado,
-             s.adu::float8 AS adu, s.lead_time::float8 AS lead_time, s.inventario::float8 AS inventario, s.en_transito::float8 AS en_transito, s.flujo_neto::float8 AS flujo_neto,
+             s.adu::float8 AS adu, s.lead_time::float8 AS lead_time, s.inventario::float8 AS inventario, COALESCE(tn.inv, 0)::float8 AS inventario_tiendas, s.en_transito::float8 AS en_transito, s.flujo_neto::float8 AS flujo_neto,
              s.tor::float8 AS tor, s.toy_aj::float8 AS toy_aj, s.tog_aj::float8 AS tog_aj, s.pct_buffer::float8 AS pct_buffer, s.zona::text AS zona, s.cantidad_sugerida::float8 AS qty_buffer,
              COALESCE(NULLIF(ic.moq, 0), 1)::float8 AS moq, pv.frecuencia::float8 AS frecuencia_proveedor,
              COALESCE(NULLIF(ic.unidad_pedido, 0), 1)::float8 AS unidad_pedido, COALESCE(NULLIF(ic.unidad_empaque, 0), 1)::float8 AS unidad_empaque,
@@ -100,7 +104,8 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
       LEFT JOIN ddmrp.proveedor pv ON pv.empresa = ic.empresa AND pv.proveedor_id = ic.proveedor_id AND pv.sucursal = ic.sucursal
       LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = s.producto_id
       LEFT JOIN ddmrp.laboratorio lb ON lb.codigo = mi.categoria
-      LEFT JOIN hist h ON h.empresa = s.empresa AND h.producto_id = s.producto_id"""
+      LEFT JOIN hist h ON h.empresa = s.empresa AND h.producto_id = s.producto_id
+      LEFT JOIN tiendas tn ON tn.empresa = s.empresa AND tn.producto_id = s.producto_id"""
     p["mes12"] = _mes_hace(11)
     prov_cond = _csv(proveedores)
     with pg.connect() as c:
@@ -271,7 +276,7 @@ def necesidades_excel(empresa: str | None = None, proveedores: str | None = None
         {"t": "Producto (SKU)", "k": "producto_id", "w": 12}, {"t": "Descripción", "k": "descripcion", "w": 40}, {"t": "Empresa", "k": "empresa", "w": 9},
         {"t": "NIT", "k": "proveedor_id", "w": 13}, {"t": "Proveedor", "k": "proveedor_nombre", "w": 32}, {"t": "Categoría", "k": "categoria", "w": 24}, {"t": "Laboratorio", "k": "lab_nombre", "w": 20},
         {"t": "Zona", "k": "zona", "w": 11, "zona": True}, {"t": "ADU (u/mes)", "k": "adu", "f": "dec1", "w": 11}, {"t": "Lead time (d)", "k": "lead_time", "f": "int", "w": 9},
-        {"t": "Inventario", "k": "inventario", "f": "int", "w": 11}, {"t": "Tránsito", "k": "en_transito", "f": "int", "w": 10}, {"t": "Flujo neto", "k": "flujo_neto", "f": "int", "w": 11},
+        {"t": "Inventario CEDI", "k": "inventario", "f": "int", "w": 11}, {"t": "Inventario tiendas", "k": "inventario_tiendas", "f": "int", "w": 11}, {"t": "Tránsito", "k": "en_transito", "f": "int", "w": 10}, {"t": "Flujo neto", "k": "flujo_neto", "f": "int", "w": 11},
         {"t": "TOG aj.", "k": "tog_aj", "f": "int", "w": 10}, {"t": "Cobertura (días)", "k": "cobertura_dias", "f": "dec1", "w": 11},
         {"t": "Pide el buffer", "k": "qty_buffer", "f": "int", "w": 11}, {"t": "Unidad de pedido", "k": "unidad_pedido", "f": "dec2", "w": 10}, {"t": "MOQ (u.)", "k": "moq", "f": "dec2", "w": 9}, {"t": "A pedir", "k": "qty_pedir", "f": "int", "w": 10},
         {"t": "Calculada", "k": "qty_calculada", "f": "int", "w": 10}, {"t": "Editada por compras", "k": "qty_manual", "f": "int", "w": 11},
