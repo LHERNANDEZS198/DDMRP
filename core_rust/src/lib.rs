@@ -128,7 +128,7 @@ pub struct Entrada {
     pub demanda_calificada: f64,
     /// 0 = usa la regla global; 1, 2 o 3 = regla propia de este item (o de su laboratorio)
     pub regla_objetivo: u8,
-    /// Meses que dura el espejo de ESTA tienda (apertura de tienda): mientras tenga menos meses de venta que esto, el pronostico del maestro se usa tal cual.
+    /// Meses CON pronostico de ESTA tienda (apertura de tienda), contados desde su primera venta: durante esos meses el pronostico del maestro se usa tal cual y despues manda el historial.
     /// Negativo = la tienda no tiene apertura registrada: rige la regla global `pron_meses_minimos`. 0 = nunca.
     pub meses_espejo: f64,
 }
@@ -270,8 +270,9 @@ pub fn calcular(e: &Entrada, f: &Factores, p: &Parametros) -> Resultado {
     let pron_base = if p.pron_calculado { pronostico_calculado(bk, bm_ref, e, promo, f, p) } else { e.pronostico };
     // meses con historia = desde la primera venta de la ventana hasta hoy (los meses en cero antes de abrir no cuentan)
     let meses_hist = hist.iter().position(|x| *x > 0.0).map_or(0, |i| hist.len() - i);
-    // duracion del caso nuevo: la del espejo de esta tienda si tiene apertura registrada; si no, la regla global
-    let min_meses = if e.meses_espejo >= 0.0 { e.meses_espejo.round() as usize } else { p.pron_meses_minimos };
+    // duracion del caso nuevo: con apertura registrada, el pronostico rige durante `meses_espejo` meses de venta (el mes en curso cuenta como el 1) y desde el siguiente manda el
+    // historial; sin apertura rige la regla global (`pron_meses_minimos`: pronostico mientras haya MENOS meses que ese numero)
+    let min_meses = if e.meses_espejo >= 0.0 { let m = e.meses_espejo.round() as usize; if m > 0 { m + 1 } else { 0 } } else { p.pron_meses_minimos };
     let pron_directo = min_meses > 0 && e.pronostico > 0.0 && meses_hist < min_meses;
     // Pronostico ajustado: normalmente queda entre 1 y 2 veces el ADU de referencia (si no hay historial da 0). En un caso nuevo
     // (pocos meses de venta) el historial no es confiable: se usa el pronostico tal cual y solo se promedian los meses con venta.
@@ -668,20 +669,25 @@ mod tests {
 
     #[test]
     fn espejo_por_tienda() {
-        let p = pdef(); // regla global: pron_meses_minimos = 3
+        let p = pdef(); // regla global: pron_meses_minimos = 3 (pronostico mientras haya menos de 3 meses de venta)
         // 3 meses de venta (10 u/mes) y pronostico 100: con la regla global el caso nuevo ya termino y manda el historial
         let mut e = base(); e.ventas = vec![0.0, 0.0, 0.0, 0.0, 10.0, 10.0, 10.0]; e.pronostico = 100.0;
         assert_ne!(calcular(&e, &factores(), &p).forecast, 100.0);
-        // con un espejo de 5 meses para ESTA tienda sigue el pronostico tal cual
+        // apertura con 3 meses con pronostico: el tercer mes de venta todavia usa el pronostico
+        e.meses_espejo = 3.0;
+        assert_eq!(calcular(&e, &factores(), &p).forecast, 100.0);
+        // 5 meses con pronostico: sigue
         e.meses_espejo = 5.0;
         assert_eq!(calcular(&e, &factores(), &p).forecast, 100.0);
-        // un espejo de 3 meses con 3 meses de venta ya termino (3 < 3 es falso)
-        e.meses_espejo = 3.0;
+        // 2 meses con pronostico: en el tercer mes de venta ya manda el historial
+        e.meses_espejo = 2.0;
         assert_ne!(calcular(&e, &factores(), &p).forecast, 100.0);
-        // 2 meses de venta: la regla global (3) la tiene en espejo; un espejo de 2 meses no; 0 = nunca
+        // 2 meses de venta: la regla global (3) la tiene en espejo; con 2 meses con pronostico todavia; con 1 ya no; 0 = nunca
         let mut e = base(); e.ventas = vec![0.0, 0.0, 0.0, 0.0, 0.0, 10.0, 10.0]; e.pronostico = 100.0;
         assert_eq!(calcular(&e, &factores(), &p).forecast, 100.0);
         e.meses_espejo = 2.0;
+        assert_eq!(calcular(&e, &factores(), &p).forecast, 100.0);
+        e.meses_espejo = 1.0;
         assert_ne!(calcular(&e, &factores(), &p).forecast, 100.0);
         e.meses_espejo = 0.0;
         assert_ne!(calcular(&e, &factores(), &p).forecast, 100.0);

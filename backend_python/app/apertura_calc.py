@@ -39,3 +39,14 @@ def pronostico_propuesto(base: float, factor: float) -> float:
 def meses_con_venta(inicio: str | None, hoy: date) -> int:
     """Meses de venta de la tienda como los cuenta el motor: desde el mes de su primera venta hasta el mes en curso (el mes de apertura cuenta completo)."""
     return meses_entre(inicio, mes_de(hoy)) if inicio else 0
+
+
+def fin_espejo(inicio: str | None, n: int) -> str | None:
+    """Ultimo mes (YYYYMM) con pronostico: la tienda tiene pronostico durante `n` meses de venta contando el de su primera venta (el mes en curso cuenta completo).
+    Desde el mes siguiente manda su propio historial. None si la tienda aun no tiene ventas (el reloj arranca con la primera)."""
+    return sumar_meses(inicio, max(n, 1) - 1) if inicio else None
+
+
+def restan_espejo(transcurridos: int, n: int) -> int:
+    """Meses con pronostico que le quedan, contando el mes en curso. Sin ventas aun: todos."""
+    return n if transcurridos <= 0 else max(0, n - transcurridos + 1)

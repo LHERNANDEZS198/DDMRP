@@ -1,7 +1,7 @@
 """Apertura de tienda (espejo): arma una tienda nueva a partir de otra que ya vende y deja registrado cuanto dura el espejo.
 
 El pronostico de la tienda nueva se carga en el maestro Pronostico (venta mensual de la espejo x factor, o el pronostico que ya tenga la espejo); ademas se pueden copiar
-cotas, NxP, DIA de abastecimiento y el alta en la Bitacora. El motor usa ese pronostico "tal cual" mientras la tienda tenga menos meses de venta que `meses_espejo`
+cotas, NxP, DIA de abastecimiento y el alta en la Bitacora. El motor usa ese pronostico "tal cual" durante `meses_espejo` meses de venta contados desde la primera venta de la tienda (el mes en curso cuenta)
 (esta duracion se guarda por tienda en ddmrp.apertura_tienda y el motor Rust la lee; sin apertura registrada rige la regla global pron_meses_minimos).
 Todo se escribe solo en tablas de DDMRP: nada de esto toca Siesa."""
 from datetime import date
@@ -12,7 +12,7 @@ from ..db import pg
 from .. import bitacora
 from ..bitacora import usuario_de
 from ..security import usuario_actual, requiere
-from ..apertura_calc import mes_de, sumar_meses, meses_entre, ventana_base, pronostico_propuesto, meses_con_venta
+from ..apertura_calc import fin_espejo, restan_espejo, mes_de, sumar_meses, meses_entre, ventana_base, pronostico_propuesto, meses_con_venta
 from .maestros import _puede_global
 
 router = APIRouter(prefix="/apertura", tags=["apertura"])
@@ -61,7 +61,8 @@ def _exigir_global(user):
 def _cfg(c) -> dict:
     v = dict(c.execute(text("SELECT clave, valor::float8 FROM ddmrp.parametro WHERE clave IN "
                             "('apertura_meses_defecto', 'apertura_factor_defecto', 'apertura_base_meses', 'meses_historia')")).all())
-    mx = max(1, min(12, int(v.get("meses_historia", 7))))   # los meses de venta se cuentan dentro de la ventana de historia del motor
+    # los meses de venta se cuentan dentro de la ventana de historia del motor y el historial debe alcanzar a tomar el mando el mes siguiente: maximo meses_historia - 1
+    mx = max(1, min(11, int(v.get("meses_historia", 7)) - 1))
     return {"meses_defecto": max(1, min(mx, int(v.get("apertura_meses_defecto", 4)))), "factor_defecto": float(v.get("apertura_factor_defecto", 1.0)),
             "base_meses": max(1, min(12, int(v.get("apertura_base_meses", 6)))), "max_meses": mx}
 
@@ -157,6 +158,8 @@ def vista_previa(p: Plan, user=Depends(requiere("cargar_maestros"))):
         emp, dst = p.empresa.strip(), p.destino.strip()
         resumen["destino_en_bitacora"] = info["destino"] is not None
         resumen["destino_pronosticos"] = c.execute(text("SELECT count(*) FROM ddmrp.pronostico WHERE empresa = :e AND bodega_id = :b"), {"e": emp, "b": dst}).scalar()
+        ini = c.execute(text("SELECT min(mes) FROM ddmrp.ventas_mensual WHERE empresa = :e AND bodega_id = :b AND cantidad > 0"), {"e": emp, "b": dst}).scalar()
+        resumen["destino_inicio_ventas"] = ini; resumen["destino_meses_venta"] = meses_con_venta(ini, date.today())
         resumen["apertura_previa"] = bool(c.execute(text("SELECT 1 FROM ddmrp.apertura_tienda WHERE empresa = :e AND bodega_id = :b AND activa"), {"e": emp, "b": dst}).first())
         e = info["espejo"]
         resumen["espejo"] = {"nombre": e["descripcion"], "leadtime": e["leadtime"], "frecuencia": e["frecuencia"], "cedi": e["cedi"]}
@@ -261,7 +264,7 @@ def listar(user=Depends(requiere(*VER))):
             k = {"e": a["empresa"], "b": a["bodega_id"]}
             n_it, pron = c.execute(text("SELECT count(*), COALESCE(sum(pronostico), 0)::float8 FROM ddmrp.pronostico WHERE empresa = :e AND bodega_id = :b AND pronostico > 0"), k).one()
             inicio = c.execute(text("SELECT min(mes) FROM ddmrp.ventas_mensual WHERE empresa = :e AND bodega_id = :b AND cantidad > 0"), k).scalar()
-            transc = meses_con_venta(inicio, hoy); restan = max(0, a["meses_espejo"] - transc)
+            transc = meses_con_venta(inicio, hoy); restan = restan_espejo(transc, a["meses_espejo"])
             n_cerr = meses_entre(inicio, mes_ant) if inicio else 0
             prom = ultimo = desvio = None
             if n_cerr >= 1:
@@ -272,10 +275,10 @@ def listar(user=Depends(requiere(*VER))):
                 prom = tot / n_cerr
                 if pron > 0:
                     desvio = (prom - pron) / pron * 100
-            estado = "Cerrada" if not a["activa"] else "Sin ventas aun" if transc == 0 else "En espejo" if restan > 0 else "Terminado (manda el historial)"
+            estado = "Cerrada" if not a["activa"] else "Sin ventas aun" if transc == 0 else "En espejo" if transc <= a["meses_espejo"] else "Terminado (manda el historial)"
             salida.append({"empresa": a["empresa"], "bodega_id": a["bodega_id"], "nombre": a["nombre"], "espejo": a["espejo_bodega"], "espejo_nombre": a["espejo_nombre"],
                            "factor": float(a["factor"]), "base": a["base"], "base_meses": a["base_meses"], "meses_espejo": a["meses_espejo"],
-                           "fecha_apertura": a["fecha_apertura"], "activa": a["activa"], "items": n_it, "pronostico_total": pron, "meses_venta": transc, "restan": restan,
+                           "fecha_apertura": a["fecha_apertura"], "activa": a["activa"], "items": n_it, "pronostico_total": pron, "meses_venta": transc, "restan": restan, "inicio_ventas": inicio, "fin_espejo": fin_espejo(inicio, a["meses_espejo"]),
                            "estado": estado, "venta_prom_mes": prom, "venta_ultimo_mes": ultimo, "desvio_pct": desvio, "creado": a["creado"], "creado_por": a["creado_por"]})
     return salida
 

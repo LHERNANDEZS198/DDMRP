@@ -13,6 +13,15 @@ import { GuiaApertura } from '../guias'
 const COL_DEF = { resizable: true, sortable: true }
 const ent = (p: any) => p.value == null ? '' : Math.round(Number(p.value)).toLocaleString('es-CO')
 const num = (p: any) => p.value == null ? '' : Number(p.value).toLocaleString('es-CO', { maximumFractionDigits: 2 })
+const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
+const mesTxt = (m?: string | null) => m ? `${MESES[Number(m.slice(4, 6)) - 1]} ${m.slice(0, 4)}` : ''
+/** Fecha en que termina el espejo: ultimo dia del ultimo mes con pronostico (n meses de venta desde la primera venta, el mes de la primera cuenta). null si aun no hay ventas. */
+const finEspejo = (inicio: string | null | undefined, n: number) => {
+  if (!inicio || !(n >= 1)) return null
+  const t = Number(inicio.slice(0, 4)) * 12 + Number(inicio.slice(4, 6)) - 1 + n - 1      // mes (base 0) del ultimo mes con pronostico
+  const d = new Date(Math.floor(t / 12), (t % 12) + 1, 0)                                  // dia 0 del mes siguiente = ultimo dia
+  return `${d.getDate()} de ${MESES[d.getMonth()]} de ${d.getFullYear()}`
+}
 const hoyISO = () => new Date(Date.now() - 5 * 36e5).toISOString().slice(0, 10)   // fecha de Colombia (UTC-5)
 
 type Tienda = { empresa: string; bodega_id: string; nombre: string | null; leadtime?: number; frecuencia?: number; cedi?: string | null }
@@ -116,10 +125,13 @@ export default function Apertura() {
     { field: 'nombre', headerName: 'Nombre', width: 200 },
     { field: 'espejo', headerName: 'Espejo', width: 200, valueGetter: (p: any) => `${p.data.espejo}${p.data.espejo_nombre ? ' · ' + p.data.espejo_nombre : ''}` },
     { field: 'estado', headerName: 'Estado', width: 190, cellStyle: (p: any) => ({ fontWeight: 600, color: p.value === 'En espejo' ? '#1565c0' : p.value?.startsWith('Terminado') ? '#2e7d32' : p.value === 'Cerrada' ? '#757575' : '#b45309' }) },
+    { field: 'inicio_ventas', headerName: 'Primera venta', width: 150, valueFormatter: (p: any) => p.value ? mesTxt(p.value) : 'Aún sin ventas' },
+    { headerName: 'El espejo termina', width: 190, valueGetter: (p: any) => finEspejo(p.data.inicio_ventas, p.data.meses_espejo) ?? 'Con la 1.ª venta',
+      headerTooltip: 'Último día del último mes con pronóstico. Desde el mes siguiente manda el historial de la tienda' },
     { field: 'meses_venta', headerName: 'Meses de venta', width: 130, type: 'rightAligned', headerTooltip: 'Meses desde la primera venta de la tienda, contando el mes en curso (así los cuenta el motor)' },
-    { field: 'meses_espejo', headerName: 'Dura (meses)', width: 120, type: 'rightAligned', editable: edita, cellStyle: { background: '#fffde7', fontWeight: 600 },
+    { field: 'meses_espejo', headerName: 'Meses con pronóstico', width: 170, type: 'rightAligned', editable: edita, cellStyle: { background: '#fffde7', fontWeight: 600 },
       valueParser: (p: any) => { const v = Math.round(Number(p.newValue)); return v >= 1 && v <= (op?.config.max_meses ?? 12) ? v : p.oldValue }, headerTooltip: 'Doble clic para alargar o acortar el espejo' },
-    { field: 'restan', headerName: 'Restan', width: 90, type: 'rightAligned' },
+    { field: 'restan', headerName: 'Restan', width: 90, type: 'rightAligned', headerTooltip: 'Meses con pronóstico que le quedan, contando el mes en curso' },
     { field: 'items', headerName: 'Ítems', width: 90, type: 'rightAligned', valueFormatter: ent },
     { field: 'pronostico_total', headerName: 'Pronóstico (u/mes)', width: 150, type: 'rightAligned', valueFormatter: ent },
     { field: 'venta_prom_mes', headerName: 'Venta real prom. (u/mes)', width: 170, type: 'rightAligned', valueFormatter: ent, headerTooltip: 'Promedio de los meses cerrados, solo de los ítems con pronóstico' },
@@ -161,7 +173,7 @@ export default function Apertura() {
             <MenuItem value="venta">Venta mensual promedio de la espejo</MenuItem><MenuItem value="pronostico">Pronóstico que ya tiene la espejo</MenuItem></TextField>
           {base === 'venta' && <TextField size="small" label="Meses de venta a promediar" type="number" value={baseMeses} onChange={e => setBaseMeses(e.target.value)} slotProps={{ htmlInput: { min: 1, max: 12 } }} />}
           <TextField size="small" label="Meses que dura el espejo" type="number" value={meses} onChange={e => setMeses(e.target.value)} slotProps={{ htmlInput: { min: 1, max: op?.config.max_meses ?? 12 } }}
-            helperText="Mientras la tienda tenga menos meses de venta que esto, manda el pronóstico; después, su propio historial. El mes de apertura cuenta." />
+            helperText="Meses de venta con pronóstico, contados desde la primera venta de la tienda nueva (el mes en curso cuenta). Después manda su historial." />
           <TextField size="small" label="Fecha de apertura" type="date" value={fecha} onChange={e => setFecha(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} helperText="Solo informativa" />
           <TextField select size="small" label="Si la tienda nueva ya tiene pronósticos" value={modo} onChange={e => setModo(e.target.value as any)}>
             <MenuItem value="reemplazar">Reemplazar: dejarla como la espejo</MenuItem><MenuItem value="completar">Completar: solo agregar lo que le falte</MenuItem></TextField>
@@ -181,8 +193,10 @@ export default function Apertura() {
             <Kpi t="Con cotas" v={String(r.con_cotas)} />
             <Kpi t="NxP excluidos" v={String(r.nxp_excluidos)} />
             {r.meses_base && <Kpi t="Base" v={`${r.meses_base} meses (${r.desde}–${r.hasta})`} />}
-            <Kpi t="Espejo dura" v={`${meses} meses`} />
+            <Kpi t="Ventas de la tienda nueva" v={r.destino_inicio_ventas ? `desde ${mesTxt(r.destino_inicio_ventas)}` : 'Aún no registra ventas'} />
+            <Kpi t="El espejo termina" v={finEspejo(r.destino_inicio_ventas, Number(meses)) ?? `${meses} meses después de su primera venta`} />
           </Stack>
+          {r.destino_meses_venta > Number(meses) && <Alert severity="warning">La tienda nueva ya lleva {r.destino_meses_venta} meses de venta (desde {mesTxt(r.destino_inicio_ventas)}): con {meses} meses con pronóstico el espejo ya habría terminado y mandaría su historial. Sube los meses si quieres que el pronóstico siga rigiendo.</Alert>}
           {(r.avisos ?? []).map((a: string, i: number) => <Alert key={i} severity="warning">{a}</Alert>)}
           {r.destino_pronosticos > 0 && <Alert severity="info">La tienda nueva ya tiene {r.destino_pronosticos} pronósticos. Con «{modo === 'reemplazar' ? 'Reemplazar' : 'Completar'}» {modo === 'reemplazar' ? 'quedará igual que la espejo' : 'solo se agregan los que le faltan'}.</Alert>}
           {r.apertura_previa && <Alert severity="warning">Esta tienda ya tiene una apertura activa: al aplicar se reemplaza por esta.</Alert>}
@@ -210,7 +224,7 @@ export default function Apertura() {
           <Typography variant="body2" sx={{ mb: 1 }}>Tienda <b>{destino && etiqueta(destino)}</b> como espejo de <b>{espejo && etiqueta(espejo)}</b>:</Typography>
           <Box component="ul" sx={{ m: 0, pl: 3, '& li': { fontSize: 14 } }}>
             <li>{elegidas.length.toLocaleString('es-CO')} pronósticos ({Math.round(totalUn).toLocaleString('es-CO')} u/mes) — modo {modo}</li>
-            <li>El pronóstico manda durante <b>{meses} meses</b> de venta de la tienda; después, su historial</li>
+            <li>El pronóstico manda durante <b>{meses} meses</b> de venta, contados desde su primera venta{r?.destino_inicio_ventas ? `; el espejo termina el ${finEspejo(r.destino_inicio_ventas, Number(meses))}` : ' (aún no registra ventas)'}; después, su historial</li>
             <li>{[cotas && 'cotas', nxp && 'NxP', dia && 'día de abastecimiento', bit && 'lead time y frecuencia'].filter(Boolean).join(', ') || 'sin copiar nada más'}</li>
           </Box>
           <Typography variant="caption" color="text.secondary">Se aplica en la próxima corrida del motor.</Typography>

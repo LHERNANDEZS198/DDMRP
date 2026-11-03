@@ -232,7 +232,7 @@ export function GuiaNecesidades({ abierta, cerrar, cfg }: { abierta: boolean; ce
 export function GuiaApertura({ abierta, cerrar }: { abierta: boolean; cerrar: () => void }) {
   return (
     <Guia abierta={abierta} cerrar={cerrar} titulo="Cómo funciona la apertura de tienda">
-      <P>Una tienda nueva no tiene historial, así que el sistema le pone el <b>pronóstico de una tienda espejo</b> (la que más se le parece) durante unos meses. Pasado ese tiempo, la tienda se calcula sola con su propia venta.</P>
+      <P>Una tienda nueva no tiene historial, así que el sistema parte de la <b>venta real de una tienda espejo</b> (la que más se le parece): promedia lo que vendió cada ítem en sus últimos meses cerrados, lo multiplica por el factor y lo guarda como el <b>pronóstico</b> de la tienda nueva. Con ese pronóstico el motor arma el buffer y calcula la necesidad contra el inventario actual de la tienda nueva. Pasados los meses del espejo, la tienda se calcula sola con su propia venta.</P>
       <H>Paso a paso</H>
       <P><b>Antes de abrir</b></P>
       <L items={[<>Confirma que la bodega nueva ya existe en Siesa y que la tienda espejo tiene ventas y pronóstico cargados.</>]} />
@@ -260,9 +260,9 @@ export function GuiaApertura({ abierta, cerrar }: { abierta: boolean; cerrar: ()
 
       <H>Qué hace al aplicar</H>
       <L items={[
-        <>Carga el <b>pronóstico</b> de cada referencia (venta mensual promedio de la espejo × factor, o el pronóstico que ya tiene la espejo). Puedes quitar ítems o ajustar cantidades antes de aplicar.</>,
+        <>Carga el <b>pronóstico</b> de cada referencia: por defecto la venta mensual promedio de la espejo × factor (opcionalmente, el pronóstico que ya tiene la espejo en el maestro). Puedes quitar ítems o ajustar cantidades antes de aplicar.</>,
         <>Opcional: copia <b>cotas</b>, <b>NxP</b> (esos ítems no se cargan), <b>día de abastecimiento</b> y <b>lead time / frecuencia</b>; da de alta la tienda en la Bitácora si no estaba.</>,
-        <>Guarda <b>cuántos meses dura el espejo</b>. Mientras la tienda tenga menos meses de venta que ese número, el motor usa el pronóstico tal cual; después manda el historial. El mes de apertura cuenta como un mes completo.</>,
+        <>Guarda <b>cuántos meses dura el espejo</b>. Es el número de <b>meses de venta con pronóstico</b>. Se cuentan desde la <b>primera venta</b> de la tienda nueva (no desde la fecha de apertura, que es solo informativa) y el mes en que vende por primera vez cuenta completo. Con 4 y primera venta en noviembre, el pronóstico rige noviembre, diciembre, enero y febrero; desde marzo manda el historial. La pantalla muestra la <b>fecha en que termina el espejo</b> y, si la tienda aún no ha vendido, lo dice: el reloj arranca con la primera venta y mientras tanto sigue rigiendo el pronóstico.</>,
       ]} />
       <H>Seguimiento</H>
       <P>En «Aperturas en curso» ves los meses de venta, cuántos restan, y la venta real contra el pronóstico. Si se aleja mucho, ajusta el pronóstico en el maestro, o alarga/acorta el espejo con doble clic en «Dura (meses)». «Cerrar espejo» devuelve la tienda a la regla normal.</P>

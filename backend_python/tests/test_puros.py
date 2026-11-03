@@ -169,6 +169,16 @@ def test_apertura_ventana_base():
     assert apertura_calc.ventana_base(None, hoy, 3) == ("202608", "202610", 3)
 
 
+def test_apertura_fin_y_restan():
+    assert apertura_calc.fin_espejo("202611", 4) == "202702"      # primer mes de venta nov-26 + 4 meses con pronostico: ultimo mes feb-27
+    assert apertura_calc.fin_espejo("202611", 1) == "202611"
+    assert apertura_calc.fin_espejo(None, 4) is None
+    assert apertura_calc.restan_espejo(0, 4) == 4                  # sin ventas aun: todos
+    assert apertura_calc.restan_espejo(1, 4) == 4                  # el mes en curso cuenta
+    assert apertura_calc.restan_espejo(4, 4) == 1
+    assert apertura_calc.restan_espejo(5, 4) == 0
+
+
 def test_apertura_pronostico_y_meses_con_venta():
     assert apertura_calc.pronostico_propuesto(10.2, 1.0) == 11.0 and apertura_calc.pronostico_propuesto(10.0, 0.8) == 8.0
     assert apertura_calc.pronostico_propuesto(0.2, 1.0) == 1.0           # minimo 1 si la espejo vende algo
