@@ -15,7 +15,7 @@ const ent = (p: any) => p.value == null ? '' : Math.round(Number(p.value)).toLoc
 const num = (p: any) => p.value == null ? '' : Number(p.value).toLocaleString('es-CO', { maximumFractionDigits: 2 })
 const hoyISO = () => new Date(Date.now() - 5 * 36e5).toISOString().slice(0, 10)   // fecha de Colombia (UTC-5)
 
-type Tienda = { empresa: string; bodega_id: string; nombre: string | null; leadtime?: number; frecuencia?: number; cedi?: boolean }
+type Tienda = { empresa: string; bodega_id: string; nombre: string | null; leadtime?: number; frecuencia?: number; cedi?: string | null }
 type Opciones = { config: { meses_defecto: number; factor_defecto: number; base_meses: number; max_meses: number }; bitacora: Tienda[]; sin_bitacora: Tienda[] }
 const etiqueta = (t: Tienda) => `${t.bodega_id} · ${t.nombre ?? 'sin nombre'}`
 
@@ -53,7 +53,7 @@ export default function Apertura() {
     if (op && !lleno) { setFactor(String(op.config.factor_defecto)); setBaseMeses(String(op.config.base_meses)); setMeses(String(op.config.meses_defecto)); setLleno(true) }
   }, [op, lleno])
 
-  const tiendas = useMemo(() => (op?.bitacora ?? []).filter(t => t.empresa === empresa && !t.cedi), [op, empresa])
+  const tiendas = useMemo(() => (op?.bitacora ?? []).filter(t => t.empresa === empresa), [op, empresa])
   const nuevas = useMemo(() => {
     const extra = (op?.sin_bitacora ?? []).filter(t => t.empresa === empresa)
     return [...tiendas, ...extra]

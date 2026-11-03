@@ -140,7 +140,8 @@ def opciones(user=Depends(requiere(*VER))):
     with pg.connect() as c:
         cfg = _cfg(c)
         bit = [dict(r) for r in c.execute(text("SELECT empresa, bodega_id, descripcion AS nombre, leadtime::float8 AS leadtime, frecuencia::float8 AS frecuencia, cedi "
-                                               "FROM ddmrp.abast_bitacora ORDER BY empresa, bodega_id")).mappings()]
+                                               "FROM ddmrp.abast_bitacora b WHERE NOT EXISTS (SELECT 1 FROM ddmrp.maestro_cedi mc WHERE mc.bodega_id = b.bodega_id) "
+                                               "ORDER BY empresa, bodega_id")).mappings()]
         extra = [dict(r) for r in c.execute(text("SELECT mb.empresa, mb.bodega_id, mb.descripcion AS nombre FROM ddmrp.maestro_bodega mb "
                                                  "WHERE NOT EXISTS (SELECT 1 FROM ddmrp.abast_bitacora b WHERE b.bodega_id = mb.bodega_id) "
                                                  "AND NOT EXISTS (SELECT 1 FROM ddmrp.maestro_cedi mc WHERE mc.bodega_id = mb.bodega_id) ORDER BY mb.empresa, mb.bodega_id")).mappings()]
