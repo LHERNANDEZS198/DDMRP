@@ -34,7 +34,20 @@ export default function Tabla({ cargando, textoCargando = 'Cargando datos…', v
   const LSM = memoria ? 'ddmrp_vista_' + memoria : ''
   const guardarVista = () => { try { if (LSM && api.current) localStorage.setItem(LSM, JSON.stringify(api.current.getColumnState())) } catch { /* sin almacenamiento */ } }
   const aplicarVista = () => {
-    try { const raw = LSM && localStorage.getItem(LSM); if (raw && api.current) api.current.applyColumnState({ state: JSON.parse(raw), applyOrder: true }) } catch { /* vista guardada invalida: se ignora */ }
+    try {
+      const raw = LSM && localStorage.getItem(LSM); if (!raw || !api.current) return
+      const estado: { colId: string }[] = JSON.parse(raw)
+      // columnas nuevas (que la vista guardada no conoce): se ponen justo despues de la que las precede en la definicion de la pantalla, en vez de al final
+      const orden = ((p.columnDefs ?? []) as any[]).map(d => d.colId ?? d.field).filter(Boolean) as string[]
+      const conocidas = new Set(estado.map(x => x.colId))
+      orden.forEach((id, i) => {
+        if (conocidas.has(id)) return
+        let pos = 0
+        for (let j = i - 1; j >= 0; j--) { const k = estado.findIndex(x => x.colId === orden[j]); if (k >= 0) { pos = k + 1; break } }
+        estado.splice(pos, 0, { colId: id }); conocidas.add(id)
+      })
+      api.current.applyColumnState({ state: estado, applyOrder: true })
+    } catch { /* vista guardada invalida: se ignora */ }
   }
 
   const columnas = (): Column[] => api.current?.getAllDisplayedColumns() ?? []
