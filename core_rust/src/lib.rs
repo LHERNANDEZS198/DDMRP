@@ -128,6 +128,9 @@ pub struct Entrada {
     pub demanda_calificada: f64,
     /// 0 = usa la regla global; 1, 2 o 3 = regla propia de este item (o de su laboratorio)
     pub regla_objetivo: u8,
+    /// Meses que dura el espejo de ESTA tienda (apertura de tienda): mientras tenga menos meses de venta que esto, el pronostico del maestro se usa tal cual.
+    /// Negativo = la tienda no tiene apertura registrada: rige la regla global `pron_meses_minimos`. 0 = nunca.
+    pub meses_espejo: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -267,7 +270,9 @@ pub fn calcular(e: &Entrada, f: &Factores, p: &Parametros) -> Resultado {
     let pron_base = if p.pron_calculado { pronostico_calculado(bk, bm_ref, e, promo, f, p) } else { e.pronostico };
     // meses con historia = desde la primera venta de la ventana hasta hoy (los meses en cero antes de abrir no cuentan)
     let meses_hist = hist.iter().position(|x| *x > 0.0).map_or(0, |i| hist.len() - i);
-    let pron_directo = p.pron_meses_minimos > 0 && e.pronostico > 0.0 && meses_hist < p.pron_meses_minimos;
+    // duracion del caso nuevo: la del espejo de esta tienda si tiene apertura registrada; si no, la regla global
+    let min_meses = if e.meses_espejo >= 0.0 { e.meses_espejo.round() as usize } else { p.pron_meses_minimos };
+    let pron_directo = min_meses > 0 && e.pronostico > 0.0 && meses_hist < min_meses;
     // Pronostico ajustado: normalmente queda entre 1 y 2 veces el ADU de referencia (si no hay historial da 0). En un caso nuevo
     // (pocos meses de venta) el historial no es confiable: se usa el pronostico tal cual y solo se promedian los meses con venta.
     let q = if pron_directo { e.pronostico } else { forecast_ajustado(pron_base, bk) };
@@ -423,6 +428,7 @@ mod tests {
             en_transito: 0.0,
             demanda_calificada: 0.0,
             regla_objetivo: 0,
+            meses_espejo: -1.0,
         }
     }
 
@@ -658,5 +664,29 @@ mod tests {
         // 5 meses con venta pero el maestro en 0: el forecast calculado igual existe (antes salia 0)
         let mut e0 = base(); e0.pronostico = 0.0; p.pron_calculado = true;
         assert!(calcular(&e0, &factores(), &p).forecast > 0.0);
+    }
+
+    #[test]
+    fn espejo_por_tienda() {
+        let p = pdef(); // regla global: pron_meses_minimos = 3
+        // 3 meses de venta (10 u/mes) y pronostico 100: con la regla global el caso nuevo ya termino y manda el historial
+        let mut e = base(); e.ventas = vec![0.0, 0.0, 0.0, 0.0, 10.0, 10.0, 10.0]; e.pronostico = 100.0;
+        assert_ne!(calcular(&e, &factores(), &p).forecast, 100.0);
+        // con un espejo de 5 meses para ESTA tienda sigue el pronostico tal cual
+        e.meses_espejo = 5.0;
+        assert_eq!(calcular(&e, &factores(), &p).forecast, 100.0);
+        // un espejo de 3 meses con 3 meses de venta ya termino (3 < 3 es falso)
+        e.meses_espejo = 3.0;
+        assert_ne!(calcular(&e, &factores(), &p).forecast, 100.0);
+        // 2 meses de venta: la regla global (3) la tiene en espejo; un espejo de 2 meses no; 0 = nunca
+        let mut e = base(); e.ventas = vec![0.0, 0.0, 0.0, 0.0, 0.0, 10.0, 10.0]; e.pronostico = 100.0;
+        assert_eq!(calcular(&e, &factores(), &p).forecast, 100.0);
+        e.meses_espejo = 2.0;
+        assert_ne!(calcular(&e, &factores(), &p).forecast, 100.0);
+        e.meses_espejo = 0.0;
+        assert_ne!(calcular(&e, &factores(), &p).forecast, 100.0);
+        // sin pronostico cargado el espejo no cambia nada
+        e.meses_espejo = 6.0; e.pronostico = 0.0;
+        assert_ne!(calcular(&e, &factores(), &p).forecast, 100.0);
     }
 }

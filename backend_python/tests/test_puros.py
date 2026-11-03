@@ -4,7 +4,7 @@ from datetime import date, timedelta
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app import lanzamientos, mapa_calor, rec  # noqa: E402
+from app import apertura_calc, lanzamientos, mapa_calor, rec  # noqa: E402
 
 
 def test_rec_pares_y_sin_original():
@@ -150,3 +150,29 @@ def test_clasificar_por_percentil_con_infaltables():
     assert set(por) == {"I", "A", "B", "C"}
     assert max(por["I"]) < min(por["A"]) < min(por["B"]) < min(por["C"])
     assert items[0]["clase"].startswith("I")
+
+
+def test_apertura_meses():
+    assert apertura_calc.sumar_meses("202611", 1) == "202612" and apertura_calc.sumar_meses("202601", -1) == "202512"
+    assert apertura_calc.meses_entre("202610", "202610") == 1 and apertura_calc.meses_entre("202508", "202611") == 16
+    assert apertura_calc.meses_entre("202611", "202610") == 0
+
+
+def test_apertura_ventana_base():
+    hoy = date(2026, 11, 3)
+    # espejo con historia larga: los 6 meses cerrados anteriores al mes en curso
+    assert apertura_calc.ventana_base("202401", hoy, 6) == ("202605", "202610", 6)
+    # espejo que abrio hace 3 meses y medio: solo cuentan sus meses cerrados (sin los meses previos a su primera venta)
+    assert apertura_calc.ventana_base("202608", hoy, 6) == ("202608", "202610", 3)
+    # espejo que abrio este mes: ningun mes cerrado
+    assert apertura_calc.ventana_base("202611", hoy, 6)[2] == 0
+    assert apertura_calc.ventana_base(None, hoy, 3) == ("202608", "202610", 3)
+
+
+def test_apertura_pronostico_y_meses_con_venta():
+    assert apertura_calc.pronostico_propuesto(10.2, 1.0) == 11.0 and apertura_calc.pronostico_propuesto(10.0, 0.8) == 8.0
+    assert apertura_calc.pronostico_propuesto(0.2, 1.0) == 1.0           # minimo 1 si la espejo vende algo
+    assert apertura_calc.pronostico_propuesto(0.0, 1.0) == 0.0 and apertura_calc.pronostico_propuesto(5, 0) == 0.0
+    # como lo cuenta el motor: del mes de la primera venta al mes en curso, ambos incluidos
+    assert apertura_calc.meses_con_venta("202611", date(2026, 11, 3)) == 1 and apertura_calc.meses_con_venta("202609", date(2026, 11, 3)) == 3
+    assert apertura_calc.meses_con_venta(None, date(2026, 11, 3)) == 0

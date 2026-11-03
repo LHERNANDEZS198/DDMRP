@@ -431,8 +431,24 @@ SENTENCIAS_COMPRAS = [
 ]
 
 
+# Apertura de tienda (espejo): una fila por tienda nueva con cuanto dura el espejo; el motor Rust la lee (meses_espejo) en lugar de la regla global pron_meses_minimos.
+SENTENCIAS_APERTURA = [
+    """CREATE TABLE IF NOT EXISTS ddmrp.apertura_tienda (
+         empresa TEXT NOT NULL, bodega_id TEXT NOT NULL, espejo_bodega TEXT NOT NULL,
+         factor NUMERIC(8,3) NOT NULL DEFAULT 1 CHECK (factor > 0),
+         base TEXT NOT NULL DEFAULT 'venta' CHECK (base IN ('venta', 'pronostico')), base_meses INT,
+         meses_espejo INT NOT NULL CHECK (meses_espejo BETWEEN 1 AND 12),
+         fecha_apertura DATE, activa BOOLEAN NOT NULL DEFAULT true, items INT, unidades_mes NUMERIC(14,2),
+         creado_por TEXT, creado TIMESTAMPTZ NOT NULL DEFAULT now(), actualizado_por TEXT, actualizado TIMESTAMPTZ,
+         PRIMARY KEY (empresa, bodega_id))""",
+    "INSERT INTO ddmrp.parametro VALUES ('apertura_meses_defecto', 4, 'Apertura de tienda: meses que dura el espejo por defecto. El motor usa el pronostico del maestro mientras la tienda tenga menos meses de venta que esto (el mes de apertura cuenta completo)') ON CONFLICT DO NOTHING",
+    "INSERT INTO ddmrp.parametro VALUES ('apertura_factor_defecto', 1, 'Apertura de tienda: factor por defecto sobre la venta de la tienda espejo (1 = igual, 0.8 = 20 % menos)') ON CONFLICT DO NOTHING",
+    "INSERT INTO ddmrp.parametro VALUES ('apertura_base_meses', 6, 'Apertura de tienda: meses cerrados de venta de la espejo que se promedian para proponer el pronostico') ON CONFLICT DO NOTHING",
+]
+
+
 def esquema_cedi() -> None:
-    for s in SENTENCIAS_CEDI + SENTENCIAS_BITACORA + SENTENCIAS_COMPRAS:
+    for s in SENTENCIAS_CEDI + SENTENCIAS_BITACORA + SENTENCIAS_COMPRAS + SENTENCIAS_APERTURA:
         try:
             with pg.begin() as c:
                 c.execute(text(s))

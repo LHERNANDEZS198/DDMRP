@@ -71,7 +71,8 @@ SELECT b.empresa, k.bodega_id, k.producto_id,
   COALESCE(i.disponible, 0)::float8        AS inventario,
   COALESCE(t.cant, 0)::float8              AS en_transito,
   COALESCE(d.cantidad, 0)::float8          AS demanda_calificada,
-  COALESCE(oi.regla, ol.regla, 0)::int2    AS regla_objetivo
+  COALESCE(oi.regla, ol.regla, 0)::int2    AS regla_objetivo,
+  COALESCE(ap.meses_espejo, -1)::float8    AS meses_espejo   -- apertura de tienda: meses que dura el espejo (-1 = sin apertura: regla global)
 FROM llaves k
 JOIN ddmrp.abast_bitacora b ON b.empresa = k.empresa AND b.bodega_id = k.bodega_id
 LEFT JOIN v ON v.empresa = k.empresa AND v.bodega_id = k.bodega_id AND v.producto_id = k.producto_id
@@ -86,6 +87,7 @@ LEFT JOIN ddmrp.demanda_calificada d ON d.empresa = k.empresa AND d.bodega_id = 
 LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = k.producto_id
 LEFT JOIN ddmrp.reposicion_item oi ON oi.producto_id = k.producto_id
 LEFT JOIN ddmrp.reposicion_laboratorio ol ON ol.laboratorio = mi.categoria
+LEFT JOIN ddmrp.apertura_tienda ap ON ap.empresa = b.empresa AND ap.bodega_id = k.bodega_id AND ap.activa
 WHERE NOT EXISTS (SELECT 1 FROM rec r2 WHERE r2.empresa = b.empresa AND r2.rec_id = k.producto_id)
   AND (mi.producto_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM ddmrp.maestro_item))
   AND (NOT EXISTS (SELECT 1 FROM ddmrp.item_empresa ie0 WHERE ie0.empresa = b.empresa)   -- el item debe existir en la base de SU empresa (Funat no se calcula en Stores ni al reves)
@@ -168,7 +170,8 @@ SELECT k.empresa, k.bodega_id, k.producto_id,
   COALESCE(i.disponible, 0)::float8                       AS inventario,
   COALESCE(t.cant, 0)::float8                             AS en_transito,
   0::float8                                               AS demanda_calificada,
-  COALESCE(oi.regla, ol.regla, 0)::int2                   AS regla_objetivo
+  COALESCE(oi.regla, ol.regla, 0)::int2                   AS regla_objetivo,
+  (-1)::float8                                            AS meses_espejo
 FROM llaves k
 LEFT JOIN v ON v.empresa = k.empresa AND v.bodega_id = k.bodega_id AND v.producto_id = k.producto_id
 LEFT JOIN pron p ON p.empresa = k.empresa AND p.bodega_id = k.bodega_id AND p.producto_id = k.producto_id
@@ -287,6 +290,7 @@ fn main() -> Result<()> {
             en_transito: f(r, "en_transito"),
             demanda_calificada: f(r, "demanda_calificada"),
             regla_objetivo: r.get::<_, i16>("regla_objetivo") as u8,
+            meses_espejo: f(r, "meses_espejo"),
         })
         .collect();
     if items.is_empty() {

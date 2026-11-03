@@ -19,6 +19,7 @@ import Lanzamientos from './pages/Lanzamientos'
 import Clasificacion from './pages/Clasificacion'
 import Necesidades from './pages/Necesidades'
 import SaludInventario from './pages/Salud'
+import Apertura from './pages/Apertura'
 import { SaludProvider } from './Salud'
 import { Yo, YoCtx, useYo } from './Yo'
 
@@ -34,6 +35,7 @@ export const PANTALLAS = [
   { to: '/motor', req: ['correr_motor'] },
   { to: '/reglas', req: ['editar_reglas', 'correr_motor'] },
   { to: '/config', req: ['ver_maestros', 'cargar_maestros', 'sincronizar_siesa'] },
+  { to: '/apertura-tienda', req: ['ver_maestros', 'cargar_maestros'] },
   { to: '/compras/necesidades', req: ['ver_compras'] },
   { to: '/compras/maestros', req: ['ver_compras', 'cargar_maestros_compras'] },
   { to: '/usuarios', req: ['admin_usuarios'] },
@@ -82,6 +84,7 @@ export default function App() {
           <Route path="/motor" element={<Req to="/motor"><Motor /></Req>} />
           <Route path="/reglas" element={<Req to="/reglas"><Reglas /></Req>} />
           <Route path="/config" element={<Req to="/config"><Config key="ddmrp" grupo="ddmrp" /></Req>} />
+          <Route path="/apertura-tienda" element={<Req to="/apertura-tienda"><Apertura /></Req>} />
           <Route path="/compras/necesidades" element={<Req to="/compras/necesidades"><Necesidades /></Req>} />
           <Route path="/compras/maestros" element={<Req to="/compras/maestros"><Config key="compras" grupo="compras" /></Req>} />
           <Route path="/usuarios" element={<Req to="/usuarios"><Usuarios /></Req>} />

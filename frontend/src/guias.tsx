@@ -228,3 +228,50 @@ export function GuiaNecesidades({ abierta, cerrar, cfg }: { abierta: boolean; ce
       ]} />
     </Guia>)
 }
+
+export function GuiaApertura({ abierta, cerrar }: { abierta: boolean; cerrar: () => void }) {
+  return (
+    <Guia abierta={abierta} cerrar={cerrar} titulo="Cómo funciona la apertura de tienda">
+      <P>Una tienda nueva no tiene historial, así que el sistema le pone el <b>pronóstico de una tienda espejo</b> (la que más se le parece) durante unos meses. Pasado ese tiempo, la tienda se calcula sola con su propia venta.</P>
+      <H>Paso a paso</H>
+      <P><b>Antes de abrir</b></P>
+      <L items={[<>Confirma que la bodega nueva ya existe en Siesa y que la tienda espejo tiene ventas y pronóstico cargados.</>]} />
+      <P><b>Crear la apertura</b> (pestaña «Nueva apertura»)</P>
+      <L items={[
+        <>Elige la <b>empresa</b>, la <b>tienda espejo</b> (la más parecida) y la <b>tienda nueva</b>. Si la nueva no está en la Bitácora, escribe su nombre.</>,
+        <>Deja el <b>factor</b> en 1 (0,8 si esperas un 20% menos de venta).</>,
+        <>Deja la <b>base</b> en «Venta mensual promedio de la espejo». Usa «Pronóstico que ya tiene la espejo» solo si ese pronóstico está bien afinado.</>,
+        <>Pon los <b>meses que dura el espejo</b> (por defecto 4) y la fecha de apertura.</>,
+        <>Deja marcadas las cuatro casillas: cotas, NxP, día de abastecimiento y lead time/frecuencia.</>,
+        <>Pulsa <b>Ver vista previa</b>.</>,
+      ]} />
+      <P><b>Revisar y aplicar</b></P>
+      <L items={[
+        <>Mira los totales (ítems y unidades por mes) y los avisos en amarillo.</>,
+        <>En la tabla quita la marca de lo que no aplique y corrige con doble clic los pronósticos que no te cuadren.</>,
+        <>Pulsa <b>Aplicar apertura</b> y confirma. Corre el motor (o espera el proceso nocturno): con eso la tienda ya tiene buffer.</>,
+      ]} />
+      <P><b>Seguimiento</b> (pestaña «Aperturas en curso»)</P>
+      <L items={[
+        <>Cada semana mira «Real vs pron.». Si se pasa de ±30% (sale en rojo), ajusta pronósticos o cambia «Dura (meses)».</>,
+        <>Cuando el estado diga «Terminado (manda el historial)», revisa esa tienda en el siguiente cálculo.</>,
+        <>Para cortar el espejo antes de tiempo, pulsa <b>Cerrar espejo</b>.</>,
+      ]} />
+
+      <H>Qué hace al aplicar</H>
+      <L items={[
+        <>Carga el <b>pronóstico</b> de cada referencia (venta mensual promedio de la espejo × factor, o el pronóstico que ya tiene la espejo). Puedes quitar ítems o ajustar cantidades antes de aplicar.</>,
+        <>Opcional: copia <b>cotas</b>, <b>NxP</b> (esos ítems no se cargan), <b>día de abastecimiento</b> y <b>lead time / frecuencia</b>; da de alta la tienda en la Bitácora si no estaba.</>,
+        <>Guarda <b>cuántos meses dura el espejo</b>. Mientras la tienda tenga menos meses de venta que ese número, el motor usa el pronóstico tal cual; después manda el historial. El mes de apertura cuenta como un mes completo.</>,
+      ]} />
+      <H>Seguimiento</H>
+      <P>En «Aperturas en curso» ves los meses de venta, cuántos restan, y la venta real contra el pronóstico. Si se aleja mucho, ajusta el pronóstico en el maestro, o alarga/acorta el espejo con doble clic en «Dura (meses)». «Cerrar espejo» devuelve la tienda a la regla normal.</P>
+      <H>Ojo</H>
+      <L items={[
+        <>Los cambios se ven en la <b>próxima corrida del motor</b>.</>,
+        <>El CEDI no anticipa la demanda de la tienda nueva si el ítem ya tiene historial: revisa los ítems grandes a mano.</>,
+        <>Al terminar el espejo el pronóstico pasa a depender del historial corto; puede haber un salto. Vigila el mes en que termina.</>,
+        <>Los valores por defecto (meses, factor, meses de base) se cambian en Reglas de pedido.</>,
+      ]} />
+    </Guia>)
+}
