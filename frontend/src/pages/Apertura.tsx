@@ -3,6 +3,8 @@ import Tabla from '../Tabla'
 import { ColDef } from 'ag-grid-community'
 import { Alert, Autocomplete, Box, Button, Card, Checkbox, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, MenuItem, Stack, Tab, Tabs, TextField, Typography } from '@mui/material'
 import HelpOutline from '@mui/icons-material/HelpOutline'
+import ArrowBack from '@mui/icons-material/ArrowBack'
+import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { useYo } from '../Yo'
 import { useEmpresa } from '../Empresa'
@@ -23,6 +25,7 @@ function Kpi({ t, v }: { t: string; v: string }) {
 }
 
 export default function Apertura() {
+  const nav = useNavigate()
   const { puede } = useYo(); const edita = puede('cargar_maestros')
   const { una } = useEmpresa()
   const [tab, setTab] = useState(0)
@@ -133,6 +136,7 @@ export default function Apertura() {
   return (
     <Box sx={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 1.5 }}>
       <Stack direction="row" sx={{ alignItems: 'center', gap: 1 }}>
+        <Button size="small" startIcon={<ArrowBack />} onClick={() => nav('/config')}>Maestros</Button>
         <Typography variant="h6" sx={{ fontWeight: 700 }}>Apertura de tienda</Typography>
         <Button size="small" startIcon={<HelpOutline />} onClick={() => setGuia(true)}>¿Cómo funciona? · Paso a paso</Button>
       </Stack>

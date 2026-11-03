@@ -17,7 +17,6 @@ import History from '@mui/icons-material/History'
 import MonitorHeart from '@mui/icons-material/MonitorHeart'
 import ShoppingCart from '@mui/icons-material/ShoppingCart'
 import ShoppingBasket from '@mui/icons-material/ShoppingBasket'
-import Storefront from '@mui/icons-material/Storefront'
 import SettingsIcon from '@mui/icons-material/Settings'
 import { useYo } from './Yo'
 import { NOMBRE_EMPRESA, useEmpresa } from './Empresa'
@@ -45,7 +44,6 @@ export const NAV = [
   { to: '/despacho', label: 'Matriz de despacho', icon: <LocalShipping />, req: ['ver_despacho'] },
   { to: '/auditoria', label: 'Auditoría', icon: <FactCheck />, req: ['ver_auditoria'] },
   { to: '/compras/necesidades', label: 'Necesidades de compra', icon: <ShoppingBasket />, req: ['ver_compras'] },
-  { to: '/apertura-tienda', label: 'Apertura de tienda', icon: <Storefront />, req: ['ver_maestros', 'cargar_maestros'] },
   { to: '/config', label: 'Maestros', icon: <Storage />, req: ['ver_maestros', 'cargar_maestros', 'sincronizar_siesa'] },
   { to: '/compras/maestros', label: 'Maestros compras', icon: <ShoppingCart />, req: ['ver_compras', 'cargar_maestros_compras'] },
   // lo que se agrupa en el menú «Config» (desplegable)
@@ -76,7 +74,7 @@ export default function Shell() {
   const enConfig = CONFIG.some(t => loc.pathname.startsWith(t))
   const enInformes = VISTAS.some(v => v.to === '/control' ? loc.pathname === '/control' : loc.pathname.startsWith(v.to))
   const titulo = VISTAS.find(v => loc.pathname === v.to)?.label ?? NAV.find(n => !(n as any).vistas && loc.pathname.startsWith(n.to))?.label ?? ''
-  const activo = (n: any) => n.vistas ? enInformes : n.to === '/config' && ambosMaestros ? (loc.pathname.startsWith('/config') || loc.pathname.startsWith('/compras/maestros')) : loc.pathname.startsWith(n.to)
+  const activo = (n: any) => n.vistas ? enInformes : n.to === '/config' && ambosMaestros ? (loc.pathname.startsWith('/config') || loc.pathname.startsWith('/apertura-tienda') || loc.pathname.startsWith('/compras/maestros')) : loc.pathname.startsWith(n.to)
   // las entradas «del CEDI» de Compras activan «Ver solo CEDI» (y recargan si hacía falta); las demás respetan el modo actual
   const irA = (v: { to: string; cedi?: boolean }) => { setAnclaV(null); if (v.cedi && !soloCediOn()) { setSoloCedi(true); location.href = v.to } else nav(v.to) }
   return (
@@ -172,7 +170,7 @@ export default function Shell() {
               <Divider />
             </>)}
             {[{ titulo: 'Operar', tos: ['/despacho', '/compras/necesidades', '/auditoria'] },
-              { titulo: 'Maestros', tos: ['/config', '/apertura-tienda', '/compras/maestros'] },
+              { titulo: 'Maestros', tos: ['/config', '/compras/maestros'] },
               { titulo: 'Config', tos: ['/motor', '/reglas', '/usuarios', '/log', '/diagnostico'] }].map(sec => {
               const items = NAV_OK.filter(n => sec.tos.includes(n.to))
               return items.length ? [

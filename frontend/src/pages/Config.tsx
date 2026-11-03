@@ -16,7 +16,9 @@ import { confirmar, confirmarEscribiendo, esc } from '../alertas'
 import PegarGrilla, { ColPegar } from '../PegarGrilla'
 import { useEmpresa } from '../Empresa'
 import AvisoInfo from '../AvisoInfo'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import ArrowBack from '@mui/icons-material/ArrowBack'
+import MaestrosHome from './MaestrosHome'
 
 type Filtros = { tienda: boolean; item: boolean; lab: boolean; texto: boolean; empresa?: boolean; empresa_opc?: boolean; mes?: boolean }
 type Tienda = { bodega_id: string; nombre: string | null; empresa: string | null }
@@ -37,10 +39,11 @@ const resumen = (r: any) =>
   (r.omitidas ? ` · ${r.omitidas} filas omitidas por datos inválidos (ej. ${r.ejemplos_omitidas?.[0] ?? ''})` : '')
 
 /** `grupo`: 'ddmrp' (maestros de abastecimiento a tiendas) o 'compras' (maestros del area de compras): dos pantallas con la misma tabla. */
-export default function Config({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
+function ConfigTabla({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
   const { puede } = useYo(); const pCarga = puede(grupo === 'compras' ? 'cargar_maestros_compras' : 'cargar_maestros'); const pSync = grupo === 'ddmrp' && puede('sincronizar_siesa')
   const [defs, setDefs] = useState<Def[]>([])
   // ?maestro=proveedores&q=900123456 (enlaces desde Necesidades de compra): abre ese maestro ya filtrado por el texto
+  const nav = useNavigate()
   const [sp] = useSearchParams(); const maestroUrl = sp.get('maestro') ?? '', qUrl = sp.get('q') ?? ''
   const inicial = maestroUrl || (grupo === 'compras' ? 'items-compras' : 'bitacora')
   const [sel, setSel] = useState(inicial)
@@ -272,6 +275,7 @@ export default function Config({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 1.5, minHeight: 500 }}>
       <Paper variant="outlined" sx={{ p: 1.5, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
+        {grupo === 'ddmrp' && <Button size="small" startIcon={<ArrowBack />} onClick={() => nav('/config')}>Todos los maestros</Button>}
         <TextField select size="small" label="Maestro" value={sel} onChange={e => setSel(e.target.value)} sx={{ minWidth: 260 }}>
           {defs.map(d => <MenuItem key={d.clave} value={d.clave}>{d.label}</MenuItem>)}
         </TextField>
@@ -354,4 +358,11 @@ export default function Config({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras
       </Dialog>
       <Aviso msg={msg} onClose={() => setMsg('')} />
     </Box>)
+}
+
+/** Maestros DDMRP: sin `?maestro=` se ve el home de tarjetas con buscador; con él, la tabla de ese maestro. Compras abre directo la tabla. */
+export default function Config({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
+  const [sp] = useSearchParams()
+  if (grupo === 'ddmrp' && !sp.get('maestro')) return <MaestrosHome />
+  return <ConfigTabla key={sp.get('maestro') ?? ''} grupo={grupo} />
 }
