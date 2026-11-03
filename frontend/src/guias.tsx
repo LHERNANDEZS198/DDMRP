@@ -168,6 +168,7 @@ export function GuiaNecesidades({ abierta, cerrar, cfg }: { abierta: boolean; ce
     <Guia abierta={abierta} cerrar={cerrar} titulo="Cómo se calculan las necesidades de compra">
       <P>Esta pantalla es una <b>propuesta</b> para que compras la valide: parte de lo que pide el buffer DDMRP del CEDI, lo lleva a cantidades que se pueden pedir al proveedor y le pone costo.
         <b> No crea ni envía órdenes de compra.</b></P>
+      <P>Muestra lo que pide el buffer del CEDI de los ítems que se compran en cada empresa, con su proveedor, costo y múltiplo de pedido. Edita la cantidad a pedir si hace falta, elige lo que vas a montar y revisa la OC.</P>
 
       <H>1 · Qué pide el buffer del CEDI</H>
       <P>El CEDI se calcula como una “tienda más grande”, con la misma metodología DDMRP:</P>
@@ -213,6 +214,7 @@ export function GuiaNecesidades({ abierta, cerrar, cfg }: { abierta: boolean; ce
         <><b>Editar la cantidad:</b> doble clic en “A pedir” (necesita permiso de gestión de compras). Se guarda aparte del cálculo: <b>se conserva aunque corra el motor</b> y vuelva a calcular, hasta que se monte la OC. Dejarla vacía, o igual a la calculada, la devuelve al cálculo. Los ítems editados quedan resaltados y se avisa si la cantidad no es múltiplo de la unidad de pedido o es más del doble de lo que pide el buffer.</>,
         <><b>Recalcular necesidades:</b> vuelve a calcular solo el buffer del CEDI con el inventario y las órdenes de compra de ahora, sin correr el motor completo (no toca las tiendas ni los despachos). Tus cantidades editadas se mantienen.</>,
         <><b>OC a montar:</b> elige con la casilla del NIT todos los ítems de un proveedor, con la del SKU un ítem, o combina ambas. “Revisar y enviar OC” muestra una orden por proveedor y empresa con valores y alertas. El envío a aprobación se conecta en el siguiente paso.</>,
+        <><b>Incluir ítems sin necesidad:</b> el interruptor está apagado por defecto y la pantalla solo muestra lo que hay que pedir. Al encenderlo se agregan también los ítems comprables que el buffer no pide hoy (con 0 a pedir), para consultarlos o editarles la cantidad. Esos ítems no se pueden elegir para la OC mientras su cantidad a pedir sea 0.</>,
         <>Las columnas <b>SKU y nombre</b> quedan fijas; arrastra otra columna hasta la raya para fijarla también.</>,
         <>El <b>Excel</b> trae lo filtrado y la hoja “Cálculo CEDI”: todo el cálculo en fórmulas vivas (ventas de los últimos meses → ADU → zonas → necesidad → a pedir → valor e IVA) y la hoja “Parametros” para probar escenarios.</>,
       ]} />

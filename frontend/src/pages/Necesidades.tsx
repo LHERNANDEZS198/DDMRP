@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Tabla from '../Tabla'
 import { ColDef, CellClickedEvent, CellValueChangedEvent, GridApi, ICellRendererParams } from 'ag-grid-community'
-import { Alert, Autocomplete, Box, Button, Card, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, MenuItem, Paper, Tab, Table, TableBody, TableCell, TableHead, TableRow, Tabs, TextField, Tooltip, Typography } from '@mui/material'
+import { Alert, Autocomplete, Box, Button, Card, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, MenuItem, Paper, Switch, Tab, Table, TableBody, TableCell, TableHead, TableRow, Tabs, TextField, Tooltip, Typography } from '@mui/material'
 import Download from '@mui/icons-material/Download'
 import HelpOutline from '@mui/icons-material/HelpOutline'
 import Refresh from '@mui/icons-material/Refresh'
@@ -39,7 +39,7 @@ function CasillaItem(p: ICellRendererParams) {
   const k = kItem(p.data); const ctx = p.context
   return (
     <Box sx={{ display: 'flex', alignItems: 'center', height: '100%' }}>
-      <Checkbox className="chk-oc" size="small" sx={{ p: .25, mr: .5 }} checked={ctx.sel.has(k)} onChange={() => ctx.alternarItem(k)} />
+      <Checkbox className="chk-oc" size="small" sx={{ p: .25, mr: .5 }} checked={ctx.sel.has(k)} disabled={!(p.data.qty_pedir > 0)} onChange={() => ctx.alternarItem(k)} />
       <span style={ENLACE}>{p.value}</span>
     </Box>)
 }
@@ -81,6 +81,8 @@ export default function Necesidades() {
   const { puede } = useYo(); const gestiona = puede('gestionar_compras')
   const [d, setD] = useState<Resp>(VACIO)
   const [cargando, setCargando] = useState(true); const [err, setErr] = useState(''); const [msg, setMsg] = useState('')
+  useEffect(() => { const antes = document.title; document.title = 'Compras'; return () => { document.title = antes } }, [])      // título de la pestaña del navegador
+  const [verTodos, setVerTodos] = useState(false)      // apagado: solo lo que hay que pedir; encendido: también los ítems sin necesidad
   const [tab, setTab] = useState(0); const [guia, setGuia] = useState(false); const [ocAbierta, setOcAbierta] = useState(false)
   const [provs, setProvs] = useState<string[]>([]); const [cats, setCats] = useState<string[]>([]); const [zonas, setZonas] = useState<string[]>([])
   const [sp] = useSearchParams(); const qUrl = sp.get('q') ?? ''      // enlace desde el BPM: /compras/necesidades?q=<item>
@@ -108,8 +110,9 @@ export default function Necesidades() {
     if (zonas.length) p.set('zonas', zonas.join(','))
     if (labs.length) p.set('labs', labs.join(','))
     if (q.trim()) p.set('q', q.trim())
+    if (verTodos) p.set('todos', '1')
     return p.toString()
-  }, [empresa, provs, cats, zonas, labs, q])
+  }, [empresa, provs, cats, zonas, labs, q, verTodos])
   useEffect(() => {
     let vivo = true
     if (!silenciosa.current) setCargando(true)      // tras editar una cantidad se recarga sin tapar la tabla con el aviso de carga
@@ -121,7 +124,7 @@ export default function Necesidades() {
   const excel = async () => { setBajando(true); setErr(''); try { await bajar('/compras/necesidades/excel?' + qs, 'necesidades_compra.xlsx') } catch (e: any) { setErr(e.message) } finally { setBajando(false) } }
 
   // ---- selección: por proveedor (todos sus ítems) o ítem por ítem; ambas valen a la vez
-  const itemsDeProv = useMemo(() => { const m = new Map<string, any[]>(); d.filas.forEach(f => { const k = kProv(f); m.set(k, [...(m.get(k) ?? []), f]) }); return m }, [d.filas])
+  const itemsDeProv = useMemo(() => { const m = new Map<string, any[]>(); d.filas.forEach(f => { if (!(f.qty_pedir > 0)) return; const k = kProv(f); m.set(k, [...(m.get(k) ?? []), f]) }); return m }, [d.filas])
   const alternarItem = (k: string) => setSel(x => { const n = new Set(x); if (n.has(k)) n.delete(k); else n.add(k); return n })
   const alternarProv = (p: any) => setSel(x => {
     const items = itemsDeProv.get(kProv(p)) ?? []; const n = new Set(x)
@@ -249,6 +252,11 @@ export default function Necesidades() {
     { field: 'categoria', headerName: 'Categoría', width: 200, filter: true, headerTooltip: 'Categoría de Siesa (plan 001): productos Funat, de terceros o maquila' },
     { field: 'lab_nombre', headerName: 'Laboratorio', width: 160, filter: true, headerTooltip: 'Laboratorio del ítem' },
     { field: 'zona', headerName: 'Zona', width: 100, filter: true, cellStyle: (p: any) => ({ color: ZONA[p.value] ?? '#333', fontWeight: 700 }), headerTooltip: 'Zona del buffer del CEDI: roja (urgente), amarilla (reponer), verde, exceso' },
+    { field: 'qty_pedir', headerName: gestiona ? 'A pedir (editable)' : 'A pedir', type: 'numericColumn', width: 140, valueFormatter: ent, editable: gestiona,
+      valueParser: (p: any) => { const t = String(p.newValue ?? '').trim().replace(',', '.'); if (t === '') return null; const n = Number(t); return Number.isFinite(n) && n >= 0 ? n : p.oldValue },
+      cellStyle: (p: any): Record<string, string | number> => p.data?.editada ? { fontWeight: 700, background: '#fff4ce' } : { fontWeight: 700 },
+      headerTooltip: 'Cantidad que se va a pedir. Haz doble clic para editarla; vacía = vuelve al cálculo. Lo que edites se conserva aunque corra el motor, hasta que se monte la OC' },
+    { field: 'qty_calculada', headerName: 'Calculada', type: 'numericColumn', width: 110, valueFormatter: ent, headerTooltip: 'Lo que pide el buffer llevado al múltiplo de pedido con el redondeo del proveedor (sin tus ediciones)' },
     { field: 'adu', headerName: 'ADU (u/mes)', type: 'numericColumn', width: 110, valueFormatter: num, cellStyle: ENLACE,
       headerTooltip: 'Rotación mensual del CEDI: venta de las tiendas que abastece + venta directa. Clic: ver la rotación por tienda y CEDI' },
     { field: 'lead_time', headerName: 'Lead time (d)', type: 'numericColumn', width: 110, valueFormatter: ent, headerTooltip: 'Días de reposición que usa el buffer: ítem, proveedor o general (8)' },
@@ -261,11 +269,6 @@ export default function Necesidades() {
     { field: 'qty_buffer', headerName: 'Pide el buffer', type: 'numericColumn', width: 120, valueFormatter: ent, headerTooltip: 'Lo que pide el buffer del CEDI (hasta el tope verde), antes del múltiplo de pedido' },
     { field: 'unidad_pedido', headerName: 'Unidad de pedido', type: 'numericColumn', width: 130, valueFormatter: num, headerTooltip: 'Múltiplo en que se pide al proveedor (maestro de ítems de compras)' },
     { field: 'moq', headerName: 'MOQ (u.)', type: 'numericColumn', width: 100, valueFormatter: num, headerTooltip: 'Cantidad mínima de compra del ítem (maestro de ítems de compras; por defecto 1). Si el pedido queda por debajo, sube a este mínimo' },
-    { field: 'qty_calculada', headerName: 'Calculada', type: 'numericColumn', width: 110, valueFormatter: ent, headerTooltip: 'Lo que pide el buffer llevado al múltiplo de pedido con el redondeo del proveedor (sin tus ediciones)' },
-    { field: 'qty_pedir', headerName: gestiona ? 'A pedir (editable)' : 'A pedir', type: 'numericColumn', width: 140, valueFormatter: ent, editable: gestiona,
-      valueParser: (p: any) => { const t = String(p.newValue ?? '').trim().replace(',', '.'); if (t === '') return null; const n = Number(t); return Number.isFinite(n) && n >= 0 ? n : p.oldValue },
-      cellStyle: (p: any): Record<string, string | number> => p.data?.editada ? { fontWeight: 700, background: '#fff4ce' } : { fontWeight: 700 },
-      headerTooltip: 'Cantidad que se va a pedir. Haz doble clic para editarla; vacía = vuelve al cálculo. Lo que edites se conserva aunque corra el motor, hasta que se monte la OC' },
     { field: 'costo', headerName: gestiona ? 'Costo (editable)' : 'Costo', type: 'numericColumn', width: 140, editable: gestiona,
       valueParser: (p: any) => { const t = String(p.newValue ?? '').trim().replace(',', '.'); if (t === '') return null; const n = Number(t); return Number.isFinite(n) && n > 0 ? n : p.oldValue },
       headerTooltip: 'Cotización manual › cotización de Siesa › última compra. Sin ninguno: “Sin cotización”. Doble clic para editarlo (vacío = vuelve a la cotización); si sube mucho frente a la cotización, la OC pasa a revisión',
@@ -292,7 +295,7 @@ export default function Necesidades() {
   ], [])
 
   const bloquea = (d.config.pedido_minimo_bloquea ?? 0) >= 1
-  const hayFiltro = !!(provs.length || cats.length || labs.length || zonas.length || qd)
+  const hayFiltro = !!(provs.length || cats.length || labs.length || zonas.length || qd || verTodos)
   const nProvSel = resumenSel.length
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 1.25, minHeight: 520 }}>
@@ -306,9 +309,6 @@ export default function Necesidades() {
         <Tooltip title="Baja lo filtrado con la hoja “Cálculo CEDI”: todo el cálculo en fórmulas, con las ventas de los últimos meses" placement="top" disableInteractive>
           <span><Button variant="outlined" startIcon={<Download />} onClick={excel} disabled={bajando || !d.filas.length}>{bajando ? 'Preparando…' : 'Descargar Excel'}</Button></span></Tooltip>
       </Box>
-      <Typography variant="body2" color="text.secondary">
-        Lo que pide el buffer del CEDI de los ítems que se compran en cada empresa, con su proveedor, costo y múltiplo de pedido. Edita la cantidad a pedir si hace falta, elige lo que vas a montar y revisa la OC. Todavía no se envía nada: eso viene con la aprobación.
-      </Typography>
       {d.aviso && <Alert severity="warning">{d.aviso}</Alert>}
       {err && <Alert severity="error" onClose={() => setErr('')}>{err}</Alert>}
       {msg && <Alert severity="success" onClose={() => setMsg('')}>{msg}</Alert>}
@@ -336,13 +336,15 @@ export default function Necesidades() {
         <AutoMulti ayuda="Zona del buffer del CEDI: roja es lo más urgente" label="Zona" value={zonas} sx={{ minWidth: 170, flex: '0 1 200px' }} options={ZONAS} getOptionLabel={(c: string) => c} onChange={setZonas} />
         <Tooltip title="Busca por SKU o por parte del nombre" placement="top-start" disableInteractive enterDelay={600}>
           <TextField size="small" label="Item o descripción" value={qd} onChange={e => setQd(e.target.value)} sx={{ width: 200 }} /></Tooltip>
-        {hayFiltro ? <Button size="small" onClick={() => { setProvs([]); setCats([]); setLabs([]); setZonas([]); setQd('') }}>Quitar filtros</Button> : null}
+        <Tooltip title="Apagado: solo lo que el buffer pide comprar. Encendido: también trae los ítems comprables que hoy no se necesitan (0 a pedir)" placement="top" disableInteractive enterDelay={600}>
+          <FormControlLabel sx={{ ml: .5, mr: 0 }} control={<Switch size="small" checked={verTodos} onChange={e => setVerTodos(e.target.checked)} />} label={<Typography variant="body2">Incluir ítems sin necesidad</Typography>} /></Tooltip>
+        {hayFiltro ? <Button size="small" onClick={() => { setProvs([]); setCats([]); setLabs([]); setZonas([]); setQd(''); setVerTodos(false) }}>Quitar filtros</Button> : null}
       </Paper>
       <Paper variant="outlined" sx={{ p: .75, px: 1.25, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
         <Typography variant="body2" sx={{ fontWeight: 600 }}>OC a montar</Typography>
         <Chip size="small" color={elegidas.length ? 'primary' : 'default'} label={elegidas.length ? `${elegidas.length.toLocaleString('es-CO')} ítems · ${nProvSel} proveedor${nProvSel === 1 ? '' : 'es'}` : 'Nada elegido'} />
         <Tooltip title="Elige todos los ítems que se ven con los filtros actuales" placement="top" disableInteractive>
-          <span><Button size="small" disabled={!d.filas.length} onClick={() => setSel(new Set(d.filas.map(kItem)))}>Elegir todo lo filtrado</Button></span></Tooltip>
+          <span><Button size="small" disabled={!d.filas.length} onClick={() => setSel(new Set(d.filas.filter(f => f.qty_pedir > 0).map(kItem)))}>Elegir todo lo filtrado</Button></span></Tooltip>
         <Button size="small" disabled={!sel.size} onClick={() => setSel(new Set())}>Quitar elección</Button>
         <Tooltip title="Vuelve las columnas de las tres pestañas a su orden, ancho y columnas fijas originales (tu vista se guarda sola en este navegador)" placement="top" disableInteractive>
           <Button size="small" onClick={() => { ['necesidades_proveedor', 'necesidades_detalle', 'necesidades_sin_proveedor'].forEach(k => { try { localStorage.removeItem('ddmrp_vista_' + k) } catch { /* nada */ } })

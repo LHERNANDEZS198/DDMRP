@@ -59,10 +59,10 @@ def _mes_hace(meses: int) -> str:
     return f"{m // 12:04d}{m % 12 + 1:02d}"
 
 
-def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite: int = 5000) -> dict:
+def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite: int = 5000, todos: bool = False) -> dict:
     w, p = filtro_sql_permisos(user, "s.bodega_id", "mi.categoria")
     # entran los que piden algo Y los que compras ya edito (la cantidad editada se conserva aunque el motor ya no pida nada)
-    cond = [f"s.ejecucion_id = {ULTIMA}", "NOT s.condenado", "(s.cantidad_sugerida > 0 OR cm.cantidad IS NOT NULL)", solo_activos("s"), COMPRABLE, "COALESCE(ic.activo, 1) <> 0", w]
+    cond = [f"s.ejecucion_id = {ULTIMA}", "NOT s.condenado", *([] if todos else ["(s.cantidad_sugerida > 0 OR cm.cantidad IS NOT NULL)"]), solo_activos("s"), COMPRABLE, "COALESCE(ic.activo, 1) <> 0", w]
     if _csv(empresa):
         cond.append("s.empresa = ANY(:f_emp)"); p["f_emp"] = _csv(empresa)
     if _csv(categorias):
@@ -149,7 +149,7 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
             if u > 1 and abs(f["qty_manual"] / u - round(f["qty_manual"] / u)) > 1e-9: alertas.append("No es múltiplo de la unidad de pedido")
             if f["qty_manual"] > 2 * max(f["qty_buffer"], 1): alertas.append("Más del doble de lo que pide el buffer")
             if f["qty_manual"] < f["moq"]: alertas.append(f"Menor que el MOQ ({f['moq']:g})")
-        elif f["qty_pedir"] <= 0: alertas.append("Redondeo a 0")
+        elif f["qty_pedir"] <= 0 and f["qty_buffer"] > 0: alertas.append("Redondeo a 0")
         elif f["subio_moq"]: alertas.append(f"Subió al MOQ ({f['moq']:g})")
         f["alertas"] = "; ".join(alertas)
         k = (f["empresa"], f["proveedor_id"], f["sucursal"])
@@ -158,13 +158,13 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
                                   "cond_pago": f["cond_pago"], "leadtime": f["leadtime_proveedor"], "frecuencia": f["frecuencia_proveedor"] if f["frecuencia_proveedor"] is not None else cfg.get("frecuencia_defecto", 15.0), "items": 0, "unidades": 0.0, "valor": 0.0, "iva": 0.0, "total": 0.0, "sin_costo": 0, "poca_historia": 0, "editadas": 0})
         g["items"] += 1; g["unidades"] += f["qty_pedir"]
         if f["editada"]: g["editadas"] += 1
-        if f["valor"] is None: g["sin_costo"] += 1
+        if f["valor"] is None: g["sin_costo"] += 1 if f["qty_pedir"] > 0 else 0      # los ítems sin necesidad no cuentan como faltantes
         else: g["valor"] += f["valor"]; g["iva"] += f["iva"] or 0; g["total"] += f["total"]
-        if f["meses_venta"] < poca: g["poca_historia"] += 1
+        if f["meses_venta"] < poca and f["qty_pedir"] > 0: g["poca_historia"] += 1
     provs = []
     for g in grupos.values():
         pm = g["pedido_minimo"]
-        g["bajo_minimo"] = bool(pm and pm > 0 and g["items"] > g["sin_costo"] and g["valor"] < pm)
+        g["bajo_minimo"] = bool(pm and pm > 0 and g["items"] > g["sin_costo"] and g["valor"] < pm and g["unidades"] > 0)
         g["sin_cond_pago"] = not (g["cond_pago"] or "").strip()
         g["estado"] = ("Bajo el pedido mínimo" if g["bajo_minimo"] else "Sin condición de pago" if g["sin_cond_pago"] else "Incompleto (ítems sin cotización)" if g["sin_costo"]
                        else "Proveedor inactivo" if not g["activo"] else "OK")
@@ -176,9 +176,9 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
         filas = [f for f in filas if (f["empresa"], f["proveedor_id"], f["sucursal"]) not in quitar]
         provs = [g for g in provs if (g["empresa"], g["proveedor_id"], g["sucursal"]) not in quitar]
     provs.sort(key=lambda g: -g["total"])
-    tot = {"proveedores": len(provs), "items": len(filas), "unidades": sum(f["qty_pedir"] for f in filas), "valor": sum(g["valor"] for g in provs),
-           "iva": sum(g["iva"] for g in provs), "total": sum(g["total"] for g in provs), "sin_costo": sum(1 for f in filas if f["costo"] is None),
-           "poca_historia": sum(1 for f in filas if f["meses_venta"] < poca), "editadas": sum(1 for f in filas if f["editada"]), "bajo_minimo": sum(1 for g in provs if g["bajo_minimo"]), "bloqueados": len(bloqueados)}
+    tot = {"proveedores": len(provs), "items": sum(1 for f in filas if f["qty_pedir"] > 0), "unidades": sum(f["qty_pedir"] for f in filas), "valor": sum(g["valor"] for g in provs),
+           "iva": sum(g["iva"] for g in provs), "total": sum(g["total"] for g in provs), "sin_costo": sum(1 for f in filas if f["costo"] is None and f["qty_pedir"] > 0),
+           "poca_historia": sum(1 for f in filas if f["meses_venta"] < poca and f["qty_pedir"] > 0), "editadas": sum(1 for f in filas if f["editada"]), "bajo_minimo": sum(1 for g in provs if g["bajo_minimo"]), "bloqueados": len(bloqueados)}
     aviso = None if ej else "Aún no hay una corrida del motor con el buffer del CEDI: corre el motor."
     return {"config": cfg, "ejecucion": dict(ej) if ej else None, "aviso": aviso, "filas": filas, "proveedores": provs, "bloqueados": bloqueados,
             "sin_proveedor": {"total": n_sin, "filas": sin}, "totales": tot, "truncado": truncado}
@@ -186,10 +186,10 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
 
 @router.get("/necesidades")
 def necesidades(empresa: str | None = None, proveedores: str | None = None, categorias: str | None = None, labs: str | None = None, zonas: str | None = None,
-                q: str | None = None, limit: int = Query(5000, ge=1, le=20000), user=Depends(usuario_actual)):
+                q: str | None = None, todos: bool = False, limit: int = Query(5000, ge=1, le=20000), user=Depends(usuario_actual)):
     """Necesidades de compra del CEDI: items a pedir con proveedor, cantidad (al multiplo de pedido), costo y valor; resumen por proveedor; y los items que se compran
     pero no tienen proveedor. Filtros: empresa, proveedores (NIT), categorias (codigos del plan 001), labs, zonas, texto."""
-    return _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limit)
+    return _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limit, todos=todos)
 
 
 class CantidadIn(BaseModel):
@@ -256,10 +256,10 @@ def recalcular(user=Depends(requiere("gestionar_compras"))):
 
 @router.get("/necesidades/excel")
 def necesidades_excel(empresa: str | None = None, proveedores: str | None = None, categorias: str | None = None, labs: str | None = None, zonas: str | None = None,
-                      q: str | None = None, user=Depends(usuario_actual)):
+                      q: str | None = None, todos: bool = False, user=Depends(usuario_actual)):
     """Excel de las necesidades (lo filtrado): resumen por proveedor, detalle, ítems sin proveedor y, como en la Auditoría, la hoja «Cálculo CEDI» con TODO el cálculo
     como fórmulas vivas de Excel (ventas de los últimos meses → ADU → zonas → necesidad del buffer → cantidad a pedir → valor e IVA) y la hoja de parámetros."""
-    r = _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, 20000)
+    r = _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, 20000, todos=todos)
     wb = excel.libro()
     excel.hoja(wb, "Por proveedor", [
         {"t": "NIT", "k": "proveedor_id", "w": 13}, {"t": "Proveedor", "k": "proveedor_nombre", "w": 36}, {"t": "Empresa", "k": "empresa", "w": 9}, {"t": "Sucursal", "k": "sucursal", "w": 9},
