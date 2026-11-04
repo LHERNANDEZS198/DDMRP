@@ -149,9 +149,10 @@ function Base({ setMsg }: { setMsg: (s: string) => void }) {
   return (
     <Stack spacing={1.5}>
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-        {[['Tamaño de la base', mb(d.bytes_base)], ['Conexiones', `${d.conexiones_activas} activas de ${d.conexiones}`], ['Tiempo máximo por consulta', d.statement_timeout === '0' ? 'sin límite' : d.statement_timeout], ['Meses de ventas cargados', String(ventasMeses)]].map(([k, v]) => (
+        {[['Tamaño de la base', mb(d.bytes_base)], ['Disco del servidor', d.disco ? `${mb(d.disco.total)} en total` : '—'], ['Disco libre', d.disco ? `${mb(d.disco.libre)} (${(100 * d.disco.libre / d.disco.total).toFixed(0)} %)` : '—'], ['Conexiones', `${d.conexiones_activas} activas de ${d.conexiones}`], ['Tiempo máximo por consulta', d.statement_timeout === '0' ? 'sin límite' : d.statement_timeout], ['Meses de ventas cargados', String(ventasMeses)]].map(([k, v]) => (
           <Paper key={k} variant="outlined" sx={{ p: 1.25, flex: '1 1 150px' }}><Typography variant="caption" color="text.secondary">{k}</Typography><Typography sx={{ fontWeight: 700 }}>{v}</Typography></Paper>))}
       </Box>
+      {d.disco && d.disco.libre / d.disco.total < 0.15 && <Alert severity="warning" sx={{ py: 0 }}>Queda menos del 15 % del disco libre ({mb(d.disco.libre)}). Postgres necesita espacio para trabajar: libera disco o baja los días de historial que se conservan (Reglas de pedido).</Alert>}
       {viejas.length > 0 && <Alert severity="warning" sx={{ py: 0 }}>Estas tablas tienen estadísticas viejas o con muchos cambios desde el último análisis: {viejas.map((t: any) => t.tabla).join(', ')}. Corre Log → «Actualizar estadísticas».</Alert>}
       <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>Tablas más grandes</Typography>
       <Paper variant="outlined" sx={contenedor}>

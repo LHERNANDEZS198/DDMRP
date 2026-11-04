@@ -34,10 +34,6 @@ export const VISTAS = [
   { grupo: 'Análisis', to: '/salud-inventario', label: 'Salud del inventario', ayuda: 'Zona de hoy × importancia del item: qué atender primero', req: ['ver_control'] },
   { grupo: 'Análisis', to: '/clasificacion', label: 'Clasificación ABC', ayuda: 'ABC por margen × XYZ por variabilidad, con filtros', req: ['ver_control'] },
   { grupo: 'Análisis', to: '/lanzamientos', label: 'Lanzamientos', ayuda: 'Items nuevos y reingresos al CEDI', req: ['ver_control'] },
-  // Compras: las mismas pantallas, abiertas en «Ver solo CEDI». Solo para perfiles con ver_compras. (Necesidades de compra tiene su propio botón en la barra)
-  { grupo: 'Compras', to: '/salud-inventario', label: 'Sobrestock y salud del CEDI', ayuda: 'Qué sobra, qué falta y dónde hay capital dormido en el CEDI', req: ['ver_control'], compras: true, cedi: true },
-  { grupo: 'Compras', to: '/clasificacion', label: 'Clasificación ABC del CEDI', ayuda: 'ABC × XYZ del CEDI (su rotación suma lo que sale a las tiendas)', req: ['ver_control'], compras: true, cedi: true },
-  { grupo: 'Compras', to: '/dashboard', label: 'Alertas del CEDI', ayuda: 'Zona roja y lo que hay que atender en el CEDI', req: ['ver_alertas'], compras: true, cedi: true },
 ] as { grupo: string; to: string; label: string; ayuda: string; req: string[]; compras?: boolean; cedi?: boolean }[]
 export const NAV = [
   { to: '/control', label: 'Informes', icon: <Insights />, vistas: true, req: ['ver_control', 'ver_alertas'] },

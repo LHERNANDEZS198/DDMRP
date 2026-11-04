@@ -82,5 +82,12 @@ def base():
         conexiones = c.execute(text("SELECT count(*) FILTER (WHERE state <> 'idle'), count(*) FROM pg_stat_activity WHERE datname = current_database()")).one()
         timeout = c.execute(text("SHOW statement_timeout")).scalar()
         tam = c.execute(text("SELECT pg_database_size(current_database())")).scalar()
+    disco = None
+    try:     # disco del servidor: el backend y la base corren en la misma maquina (Docker), asi que "/" es el disco donde vive la base
+        import shutil
+        u = shutil.disk_usage("/")
+        disco = {"total": u.total, "libre": u.free, "usado": u.total - u.free}
+    except Exception:
+        pass
     return {"tablas": tablas, "ventas_por_mes": ventas, "conexiones_activas": conexiones[0], "conexiones": conexiones[1],
-            "statement_timeout": timeout, "bytes_base": tam}
+            "statement_timeout": timeout, "bytes_base": tam, "disco": disco}
