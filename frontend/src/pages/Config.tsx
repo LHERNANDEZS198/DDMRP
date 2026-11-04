@@ -1,3 +1,4 @@
+import Plegable from '../Plegable'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Tabla from '../Tabla'
 import { CellValueChangedEvent, ColDef, GridApi } from 'ag-grid-community'
@@ -281,6 +282,10 @@ function ConfigTabla({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 1.5, minHeight: 500 }}>
+      <Plegable id="maestros" titulo="acciones y filtros" resumen={<>
+        {def && <Chip size="small" color="primary" label={def.label.split(':')[0]} />}
+        <Chip size="small" label={`${(total ?? 0).toLocaleString('es-CO')} filas`} />
+        {hayFiltro && <Chip size="small" variant="outlined" label="con filtros" />}</>}>
       <Paper variant="outlined" sx={{ p: 1.5, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
         {grupo === 'ddmrp' && <Button size="small" startIcon={<ArrowBack />} onClick={() => nav('/config')}>Todos los maestros</Button>}
         <TextField select size="small" label="Maestro" value={sel} onChange={e => setSel(e.target.value)} sx={{ minWidth: 260 }}>
@@ -347,6 +352,7 @@ function ConfigTabla({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
           <Box sx={{ flex: 1 }} />
           <Chip size="small" label={total > rows.length ? `Mostrando ${rows.length.toLocaleString('es-CO')} de ${total.toLocaleString('es-CO')} filas` : `${rows.length.toLocaleString('es-CO')} ${rows.length === 1 ? 'fila' : 'filas'}`} color={total > rows.length ? 'warning' : 'default'} />
         </Paper>)}
+      </Plegable>
       {total > rows.length && <Alert severity="warning" sx={{ py: 0 }}>Este maestro tiene {total.toLocaleString('es-CO')} filas y la pantalla solo muestra las primeras {rows.length.toLocaleString('es-CO')}: usa los filtros de arriba (tienda, item, empresa, columna…: los resuelve el servidor sobre todas las filas) para ver y editar lo que buscas. “Descargar Excel” baja todo lo filtrado, sin ese tope, y “Eliminar todo lo filtrado” borra todo lo filtrado.</Alert>}
       {pegar && def && <PegarGrilla key={sel} titulo={def.label} columnas={colsPegar} ocupado={enviando} onFinalizar={enviarGrilla} onCancelar={() => setPegar(false)} />}
       <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 300 }}>

@@ -1,3 +1,4 @@
+import Plegable from '../Plegable'
 import { useEffect, useMemo, useState } from 'react'
 import Tabla from '../Tabla'
 import { ColDef } from 'ag-grid-community'
@@ -70,6 +71,7 @@ export default function Auditoria() {
   const sobra = total > f.limite
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 1.5, minHeight: 500 }}>
+      <Plegable id="auditoria" titulo="explicación y filtros" resumen={d ? <Chip label={`${total.toLocaleString('es-CO')} combinaciones tienda × item`} size="small" /> : undefined}>
       <Box>
         <Typography variant="h6" sx={{ fontWeight: 700 }}>Auditoría del cálculo</Typography>
         <Typography variant="body2" color="text.secondary">
@@ -93,6 +95,7 @@ export default function Auditoria() {
         </TextField>
         <Button variant="contained" startIcon={<Download />} onClick={descargar} disabled={bajando || !total}>Descargar Excel con fórmulas</Button>
       </Paper>
+      </Plegable>
       {d && (
         <Stack direction="row" spacing={1} alignItems="center" useFlexGap flexWrap="wrap">
           <Chip label={`${total.toLocaleString('es-CO')} combinaciones tienda × item`} />

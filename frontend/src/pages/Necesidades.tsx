@@ -1,3 +1,4 @@
+import Plegable from '../Plegable'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Tabla from '../Tabla'
 import { ColDef, CellClickedEvent, CellValueChangedEvent, GridApi, ICellRendererParams } from 'ag-grid-community'
@@ -315,6 +316,10 @@ export default function Necesidades() {
       {err && <Alert severity="error" onClose={() => setErr('')}>{err}</Alert>}
       {msg && <Alert severity="success" onClose={() => setMsg('')}>{msg}</Alert>}
       {d.truncado && <Alert severity="info">Se muestran los primeros ítems por criticidad: filtra por proveedor, categoría o zona, o baja el Excel.</Alert>}
+      <Plegable id="necesidades" titulo="indicadores y filtros" resumen={<>
+        <Chip size="small" label={`${(t.proveedores ?? 0).toLocaleString('es-CO')} proveedores · ${(t.items ?? 0).toLocaleString('es-CO')} ítems a pedir`} />
+        <Chip size="small" color="primary" label={`Total ${MM(t.total ?? 0)}`} />
+        {hayFiltro && <Chip size="small" variant="outlined" label="con filtros" />}</>}>
       <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
         <Kpi t="Proveedores" v={(t.proveedores ?? 0).toLocaleString('es-CO')} ayuda="Proveedores con algo que pedir con los filtros actuales" />
         <Kpi t="Ítems a pedir" v={(t.items ?? 0).toLocaleString('es-CO')} sub={`${Math.round(t.unidades ?? 0).toLocaleString('es-CO')} unidades`} ayuda="Ítems comprables con necesidad según el buffer del CEDI (o con cantidad editada), y las unidades a pedir" />
@@ -342,6 +347,7 @@ export default function Necesidades() {
           <FormControlLabel sx={{ ml: .5, mr: 0 }} control={<Switch size="small" checked={verTodos} onChange={e => setVerTodos(e.target.checked)} />} label={<Typography variant="body2">Incluir ítems sin necesidad</Typography>} /></Tooltip>
         {hayFiltro ? <Button size="small" onClick={() => { setProvs([]); setCats([]); setLabs([]); setZonas([]); setQd(''); setVerTodos(false) }}>Quitar filtros</Button> : null}
       </Paper>
+      </Plegable>
       <Paper variant="outlined" sx={{ p: .75, px: 1.25, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
         <Typography variant="body2" sx={{ fontWeight: 600 }}>OC a montar</Typography>
         <Chip size="small" color={elegidas.length ? 'primary' : 'default'} label={elegidas.length ? `${elegidas.length.toLocaleString('es-CO')} ítems · ${nProvSel} proveedor${nProvSel === 1 ? '' : 'es'}` : 'Nada elegido'} />

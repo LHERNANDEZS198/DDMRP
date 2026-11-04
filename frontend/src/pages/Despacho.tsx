@@ -1,3 +1,4 @@
+import Plegable from '../Plegable'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Tabla from '../Tabla'
 import AvisoInfo from '../AvisoInfo'
@@ -203,6 +204,12 @@ export default function Despacho() {
   }
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 1.5, minHeight: 500 }}>
+      <Plegable id="despacho" titulo="corrida, acciones y filtros" resumen={<>
+        <Chip label={`${vista.length.toLocaleString()}${vista.length !== rows.length ? ` de ${rows.length.toLocaleString()}` : ''} filas`} size="small" />
+        <Chip label={`${Math.round(tot.uds).toLocaleString('es-CO')} uds a enviar`} size="small" color="primary" />
+        <Chip label={`Costo total ${cop(tot.valor)}`} size="small" color="primary" />
+        <Chip label={`${tot.lista.length} tiendas`} size="small" />
+        {hayFiltro && <Chip label="con filtros" size="small" variant="outlined" />}</>}>
       <Paper variant="outlined" sx={{ p: 1.5, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
         <Typography sx={{ fontWeight: 700 }}>Corrida</Typography>
         <TextField select size="small" value={dia} onChange={e => elegirDia(e.target.value)} sx={{ minWidth: 220 }} slotProps={{ select: { displayEmpty: true } }}>
@@ -267,6 +274,7 @@ export default function Despacho() {
           <span><Button size="small" variant="outlined" startIcon={<Download />} onClick={auditoria} disabled={bajandoAud || !vista.length || !empresa}>Excel auditoría</Button></span></Tooltip>}
         <Button size="small" variant={porTienda ? 'contained' : 'outlined'} endIcon={<ExpandMore sx={{ transform: porTienda ? 'rotate(180deg)' : 'none' }} />} onClick={() => setPorTienda(!porTienda)}>{porTienda ? 'Volver a la vista por ítem' : 'Por tienda'}</Button>
       </Paper>
+      </Plegable>
       {porTienda && (
         <Paper variant="outlined" sx={{ flex: 1, minHeight: 300, overflow: 'auto' }}>
           <Table size="small" stickyHeader>

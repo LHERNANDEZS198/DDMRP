@@ -1,3 +1,4 @@
+import Plegable from '../Plegable'
 import { useEffect, useMemo, useState } from 'react'
 import Tabla from '../Tabla'
 import { ColDef, ICellRendererParams } from 'ag-grid-community'
@@ -273,6 +274,10 @@ export default function Control() {
         <Typography variant="h6" sx={{ fontWeight: 700, flex: 1 }}>{mapaModo ? 'Control DDMRP · mapa de calor' : tendModo ? 'Control DDMRP · tendencia en el tiempo' : cambiosModo ? 'Control DDMRP · cambios en un periodo' : 'Control DDMRP · foto actual'}</Typography>
         <Tooltip title="Baja a Excel lo que ves, con los mismos filtros (sin el tope de filas de la pantalla)"><span><Button size="small" variant="outlined" disabled={bajando} onClick={excel}>{bajando ? 'Generando…' : 'Descargar Excel'}</Button></span></Tooltip>
       </Box>
+      <Plegable id="control" titulo="indicadores y filtros" resumen={<>
+        {!tendModo && kpi && <Chip size="small" label={`${(cambiosModo ? kpi.n_fin : kpi.n)?.toLocaleString()} combinaciones`} />}
+        {!tendModo && kpi && ZONAS.map(z => <Chip key={z} size="small" label={`${z === 'ROJA' ? 'Rojo' : z === 'AMARILLA' ? 'Amarillo' : z === 'VERDE' ? 'Verde' : 'Exceso'} ${(kpi[KEY[z] + (cambiosModo ? '_fin' : '')] ?? 0).toLocaleString()}`} sx={{ bgcolor: COLOR[z], color: '#fff' }} />)}
+        {hayFiltros && <Chip size="small" variant="outlined" label="con filtros" />}</>}>
       {!tendModo && <Box sx={{ display: 'grid', flexShrink: 0, gridTemplateColumns: { xs: 'repeat(2, 1fr)', md: 'repeat(5, 1fr)' }, gap: 1.5 }}>
         <Card variant="outlined" sx={{ borderLeft: '6px solid #6e8a37', flexShrink: 0 }}>
           <Box sx={{ p: 1.25 }}>
@@ -348,6 +353,7 @@ export default function Control() {
           {cambiosModo && periodo && <Typography variant="caption" color="text.secondary">Comparando la corrida del {periodo.desde} contra la del {periodo.hasta}
             {periodo.desde === periodo.hasta ? ' (solo hay una corrida guardada en ese rango)' : ''}</Typography>}
         </Paper>)}
+      </Plegable>
       {cambiosModo && matriz.length > 0 && (
         <Paper variant="outlined" sx={{ flexShrink: 0, p: 1.25, overflow: 'auto' }}>
           <Typography variant="caption" color="text.secondary">Movimientos entre zonas (filas = antes, columnas = ahora)</Typography>

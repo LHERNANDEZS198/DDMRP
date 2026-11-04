@@ -1,3 +1,4 @@
+import Plegable from '../Plegable'
 import { useEffect, useMemo, useState } from 'react'
 import { ColDef, ICellRendererParams } from 'ag-grid-community'
 import { Alert, Autocomplete, Box, Button, Card, CardActionArea, Chip, MenuItem, Paper, TextField, Tooltip, Typography } from '@mui/material'
@@ -90,6 +91,8 @@ export default function Salud() {
       <Typography variant="caption" color="text.secondary" sx={{ mt: -1 }}>Cruza la zona del buffer de hoy con la importancia del item (clase ABC × XYZ): qué reponer primero, dónde sobra y dónde hay capital dormido.</Typography>
       {d?.meta.sin_valor && <Alert severity="warning" sx={{ flexShrink: 0 }}>Las ventas aún no traen el valor en pesos: corre “Traer ventas por mes” para que el ABC por margen sea confiable.</Alert>}
 
+      <Plegable id="salud" titulo="indicadores y filtros" resumen={<>
+        {(d?.resumen ?? []).filter((r: any) => r.n > 0).map((r: any) => <Chip key={r.diag} size="small" label={`${r.etiqueta} ${r.n.toLocaleString()}`} sx={{ bgcolor: r.color, color: '#fff' }} />)}</>}>
       <Box sx={{ display: 'grid', flexShrink: 0, gridTemplateColumns: { xs: 'repeat(2, 1fr)', md: 'repeat(4, 1fr)', xl: 'repeat(7, 1fr)' }, gap: 1 }}>
         {(d?.resumen ?? []).map((r: any) => {
           const act = diag.includes(r.diag)
@@ -126,6 +129,7 @@ export default function Salud() {
         </>}
         <TextField size="small" label="Item (código o nombre)" value={qd} onChange={e => setQd(e.target.value)} sx={{ minWidth: 190, flex: '1 1 190px' }} />
       </Paper>
+      </Plegable>
       {err && <Typography color="error" variant="body2">{err}</Typography>}
       <Typography variant="caption" color="text.secondary">{d ? (d.truncado ? `Mostrando ${d.filas.length.toLocaleString()} de ${d.total.toLocaleString()} (en orden de atención); filtra o baja el Excel` : `${d.total.toLocaleString()} tienda × item`) : ''}</Typography>
       <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 320 }}>
