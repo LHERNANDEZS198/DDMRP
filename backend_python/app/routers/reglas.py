@@ -71,6 +71,8 @@ REGLAS = [
          opciones=[{"valor": 1, "label": "Sí: restar ventas sin acumular"}, {"valor": 0, "label": "No"}]),
     dict(clave="etl_traer_ventas", titulo="El ETL trae las ventas por mes de Siesa",
          ayuda="Si: cada corrida del ETL (y la nocturna) trae las ventas. No: solo con el boton 'Traer ventas por mes' de Maestros.", opciones=SI_NO),
+    dict(clave="ventas_todas_tiendas", titulo="Ventas de todas las tiendas de Siesa (no solo las de la Bitácora)",
+         ayuda="Sí: se traen las ventas por mes de todas las tiendas del catálogo de Siesa (Maestros > Traer tiendas de Siesa) y suman a la demanda del CEDI y a Necesidades de compra, estén o no en la Bitácora. No: solo las tiendas de la Bitácora. Las tiendas que no están en la Bitácora no tienen buffer ni envíos, solo aportan demanda al CEDI. Tras cambiarla: Traer tiendas, Traer ventas por mes y correr el motor.", opciones=SI_NO),
     dict(clave="solo_items_activos", titulo="Solo items ACTIVOS en el modelo",
          ayuda="Si: los items inactivos o bloqueados en Siesa (extension del item, f121_ind_estado) no entran al ETL, al motor, a la matriz de despacho ni a los controles. No: entran todos. Un item REC se trata como su original, aunque el REC este inactivo. Tras cambiarla corre el ETL y el motor.", opciones=SI_NO),
     dict(clave="rec_suma_original", titulo="Items REC se suman a su original",

@@ -74,7 +74,7 @@ SELECT b.empresa, k.bodega_id, k.producto_id,
   COALESCE(oi.regla, ol.regla, 0)::int2    AS regla_objetivo,
   COALESCE(ap.meses_espejo, -1)::float8    AS meses_espejo   -- apertura de tienda: meses que dura el espejo (-1 = sin apertura: regla global)
 FROM llaves k
-JOIN ddmrp.abast_bitacora b ON b.empresa = k.empresa AND b.bodega_id = k.bodega_id
+JOIN ddmrp.abast_bitacora b ON b.empresa = k.empresa AND b.bodega_id = k.bodega_id AND COALESCE(b.activa, 1) = 1   -- tienda apagada en la bitacora: no se calcula
 LEFT JOIN v ON v.empresa = k.empresa AND v.bodega_id = k.bodega_id AND v.producto_id = k.producto_id
 LEFT JOIN ddmrp.pronostico p ON p.empresa = b.empresa AND p.bodega_id = k.bodega_id AND p.producto_id = k.producto_id
 LEFT JOIN ddmrp.abast_unidad_despacho ud ON ud.empresa = b.empresa AND ud.producto_id = k.producto_id

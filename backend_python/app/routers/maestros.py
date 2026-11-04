@@ -25,10 +25,14 @@ ANCHO = {"producto_id": 6, "empresa": 2, "sucursal": 3, "plan_id": 3, "criterio_
 MAESTROS = {
     "bitacora": dict(
         label="Bitacora: tiendas que se abastecen (nombre, lead time, frecuencia, CEDI y centro de operacion)", tabla="ddmrp.abast_bitacora",
-        llave=["empresa", "bodega_id"], editable={"descripcion": "txt", "frecuencia": "num", "leadtime": "num", "cedi": "txt", "id_co": "txt"},
+        llave=["empresa", "bodega_id"], editable={"descripcion": "txt", "frecuencia": "num", "leadtime": "num", "cedi": "txt", "id_co": "txt", "activa": "int"},
         bodega="bodega_id", producto=None, valida_cedi=True,
+        booleanas=("activa",),       # 1 / 0 / si / no: 0 = tienda apagada (no entra al motor, ni a la demanda del CEDI, ni se le traen ventas); vacio = activa
         nombre_en_tabla=True,        # el nombre de la tienda vive en la bitacora (fuente de verdad); un archivo con bodega_nombre / tienda / nombre lo guarda aqui
-        conservar=("descripcion",)), # una celda de nombre vacia en la carga NO borra el nombre que ya tiene
+        conservar=("descripcion", "activa")), # una celda de nombre vacia en la carga NO borra el nombre que ya tiene
+    "bodegas-factura": dict(
+        label="Bodegas que venden por factura: su venta se lee de las facturas (FED/FEM/NED/CFV), no del POS", tabla="ddmrp.bodega_factura",
+        llave=["empresa", "bodega_id"], editable={"nota": "txt"}, bodega=None, producto=None, global_=True, empresa_obligatoria=True),
     "cedis": dict(
         label="CEDIs: bodegas desde donde se abastece a las tiendas", tabla="ddmrp.maestro_cedi",
         llave=["empresa", "bodega_id"], editable={"descripcion": "txt"}, bodega=None, producto=None, global_=True, empresa_obligatoria=True),

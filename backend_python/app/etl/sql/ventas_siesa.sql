@@ -6,14 +6,15 @@
 -- Tablas sin prefijo de BD: se consulta la BD de la conexion (SIESA_DB para la 05, SIESA_DB_S para la 21).
 -- Origen: misma logica del procedimiento Abastecimiento_Consulta_Ventas (el que alimentaba FUNATLAB), con estos cambios:
 --   * agrega por mes en vez de traer lineas; filtra por la fecha del documento >= :desde
---   * solo bodegas de la empresa (:bodegas) y compania (:cia)
+--   * solo bodegas de la empresa (:bodegas) y compania (:cia): TODAS las tablas con compania se filtran por :cia (en la empresa 05 existe la compania 2 y no se toca)
 --   * solo items del maestro: los que tienen alguno de los criterios de SIESA_CRITERIOS_ITEMS (o son REC); lo demas (materia prima...) no se trae
 --   * solo extensiones ACTIVAS de Siesa (t121.f121_ind_estado) y los REC, que se suman a su original: el ETL reemplaza cada marcador ACTIVO por la condicion
 --     de criterios del maestro y la de estado (esta, por nada si la regla solo_items_activos esta en No o la columna de estado no existe)
 --   * incluye el tipo NCP (nota credito) en los POS archivados; el original solo lo tenia en los POS vigentes
 -- Tres ramas, sin traslape: POS vigente (t9820/t9830), POS archivado (t9920/t9930) y facturas de las bodegas que no pasan
 -- por POS (t350/t470).
--- MBG01 (Melonn) vende por facturas FED/NED, no por POS: sin estar en la lista de la tercera rama su venta no entraba y la tienda quedaba con ADU 0.
+-- :facturas = bodegas que venden por factura (FED/FEM/NED/CFV) y no por POS, de la empresa: maestro «Bodegas que venden por factura» (ddmrp.bodega_factura).
+-- Una bodega de factura que no este ahi queda con venta 0 (le paso a MBG01: Melonn).
 SELECT mes, bodega, referencia, CONVERT(float, SUM(cantidad)) AS cantidad, CONVERT(float, SUM(valor)) AS valor
 FROM (
   SELECT CONVERT(char(6), F1.f9820_id_fecha_docto, 112) AS mes, RTRIM(B.f150_id) AS bodega, RTRIM(i.f120_referencia) AS referencia,
@@ -26,7 +27,7 @@ FROM (
   JOIN dbo.t150_mc_bodegas B ON B.f150_rowid = F2.f9830_rowid_bodega
   WHERE F1.f9820_id_tipo_docto IN ('PFA', 'PFM', 'PNA', 'FEP', 'NCP', 'FMC', 'PFE', 'EFB', 'NC2', 'FM2')
     AND F1.f9820_ind_estado = 1 AND F1.f9820_id_fecha_docto >= :desde
-    AND i.f120_id_cia = :cia AND B.f150_id IN :bodegas /*ACTIVO:ext,i*/
+    AND i.f120_id_cia = :cia AND B.f150_id_cia = :cia AND B.f150_id IN :bodegas /*ACTIVO:ext,i*/
   UNION ALL
   SELECT CONVERT(char(6), F1.f9920_id_fecha_docto, 112), RTRIM(B.f150_id), RTRIM(i.f120_referencia),
          CASE WHEN F2.f9930_ind_naturaleza = 1 THEN -F2.f9930_cant_1 ELSE F2.f9930_cant_1 END,
@@ -38,7 +39,7 @@ FROM (
   JOIN dbo.t150_mc_bodegas B ON B.f150_rowid = F2.f9930_rowid_bodega
   WHERE F1.f9920_id_tipo_docto IN ('PFA', 'PFM', 'PNA', 'FEP', 'NCP', 'FMC', 'PFE', 'EFB', 'NC2', 'FM2')
     AND F1.f9920_ind_estado = 1 AND F1.f9920_id_fecha_docto >= :desde
-    AND i.f120_id_cia = :cia AND B.f150_id IN :bodegas /*ACTIVO:ext,i*/
+    AND i.f120_id_cia = :cia AND B.f150_id_cia = :cia AND B.f150_id IN :bodegas /*ACTIVO:ext,i*/
   UNION ALL
   SELECT CONVERT(char(6), enc.f350_fecha, 112), RTRIM(bod.f150_id), RTRIM(ite.f120_referencia),
          CASE WHEN det.f470_ind_naturaleza = 1 THEN -det.f470_cant_1 ELSE det.f470_cant_1 END,
@@ -48,8 +49,9 @@ FROM (
   JOIN dbo.t150_mc_bodegas bod ON bod.f150_rowid = det.f470_rowid_bodega
   JOIN dbo.t121_mc_items_extensiones ext ON ext.f121_rowid = det.f470_rowid_item_ext
   JOIN dbo.t120_mc_items ite ON ite.f120_rowid = ext.f121_rowid_item
-  WHERE enc.f350_id_tipo_docto IN ('CFV', 'FED', 'FEM', 'NED')
-    AND bod.f150_id IN ('DM039', 'DM040', 'DM140', 'DM240', 'DM340', 'TC001', 'MBG01')
+  WHERE enc.f350_id_cia = :cia AND enc.f350_ind_estado = 1 AND det.f470_id_cia = :cia AND bod.f150_id_cia = :cia
+    AND enc.f350_id_tipo_docto IN ('CFV', 'FED', 'FEM', 'NED', 'NCM', 'NCB', 'WEB', 'NYR', 'YR1', 'OVI', 'ARK', 'FML', 'ML', 'FAL')
+    AND bod.f150_id IN :facturas
     AND bod.f150_id IN :bodegas AND ite.f120_id_cia = :cia AND enc.f350_fecha >= :desde /*ACTIVO:ext,ite*/
 ) v
 GROUP BY mes, bodega, referencia

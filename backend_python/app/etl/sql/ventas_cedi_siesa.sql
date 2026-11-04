@@ -21,5 +21,5 @@ JOIN dbo.t150_mc_bodegas bod ON bod.f150_rowid = det.f470_rowid_bodega
 JOIN dbo.t121_mc_items_extensiones ext ON ext.f121_rowid = det.f470_rowid_item_ext
 JOIN dbo.t120_mc_items ite ON ite.f120_rowid = ext.f121_rowid_item
 WHERE enc.f350_id_cia = :cia AND enc.f350_ind_estado = 1 AND enc.f350_fecha >= :desde
-  AND bod.f150_id IN :bodegas AND ite.f120_id_cia = :cia /*ACTIVO:ext,ite*/
+  AND bod.f150_id_cia = :cia AND bod.f150_id IN :bodegas AND ite.f120_id_cia = :cia /*ACTIVO:ext,ite*/
 GROUP BY CONVERT(char(6), enc.f350_fecha, 112), RTRIM(bod.f150_id), RTRIM(ite.f120_referencia)

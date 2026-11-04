@@ -38,7 +38,7 @@ FROM t400_cm_existencia e
 JOIN t150_mc_bodegas b ON b.f150_rowid = e.f400_rowid_bodega
 JOIN t121_mc_items_extensiones x ON x.f121_rowid = e.f400_rowid_item_ext
 JOIN t120_mc_items i ON i.f120_rowid = x.f121_rowid_item
-WHERE i.f120_id_cia = :cia AND b.f150_id IN :bodegas /*ACTIVO:x,i*/
+WHERE e.f400_id_cia = :cia AND b.f150_id_cia = :cia AND i.f120_id_cia = :cia AND b.f150_id IN :bodegas /*ACTIVO:x,i*/
 GROUP BY i.f120_referencia, b.f150_id"""
 
 def _sql_costo() -> str:
@@ -64,7 +64,7 @@ SELECT referencia, costo FROM (
   JOIN t121_mc_items_extensiones x ON x.f121_rowid = e.f400_rowid_item_ext
   JOIN t120_mc_items i ON i.f120_rowid = x.f121_rowid_item
   {union}
-  WHERE i.f120_id_cia = :cia AND b.f150_id IN :bodegas AND {origen}.{col} > 0 /*ACTIVO:x,i*/
+  WHERE e.f400_id_cia = :cia AND b.f150_id_cia = :cia AND i.f120_id_cia = :cia AND b.f150_id IN :bodegas AND {origen}.{col} > 0 /*ACTIVO:x,i*/
   GROUP BY RTRIM(i.f120_referencia), e.f400_rowid_item_ext) q
 WHERE rn = 1"""
 
@@ -206,7 +206,7 @@ JOIN t150_mc_bodegas be ON be.f150_rowid = t.f406_rowid_bodega_ent
 JOIN t150_mc_bodegas bs ON bs.f150_rowid = t.f406_rowid_bodega_sal
 JOIN t121_mc_items_extensiones x ON x.f121_rowid = t.f406_rowid_item_ext
 JOIN t120_mc_items i ON i.f120_rowid = x.f121_rowid_item
-WHERE t.f406_ind_estado = 0 AND t.f406_id_cia = :cia AND be.f150_id IN :bodegas /*ACTIVO:x,i*/
+WHERE t.f406_ind_estado = 0 AND t.f406_id_cia = :cia AND be.f150_id_cia = :cia AND bs.f150_id_cia = :cia AND be.f150_id IN :bodegas /*ACTIVO:x,i*/
 GROUP BY i.f120_referencia, be.f150_id, bs.f150_id
 HAVING SUM(t.f406_cant_base_pendiente) > 0"""
 
@@ -226,7 +226,7 @@ JOIN t421_cm_oc_movto m ON m.f421_rowid_oc_docto = d.f420_rowid
 JOIN t150_mc_bodegas b ON b.f150_rowid = m.f421_rowid_bodega
 JOIN t121_mc_items_extensiones x ON x.f121_rowid = m.f421_rowid_item_ext
 JOIN t120_mc_items i ON i.f120_rowid = x.f121_rowid_item
-WHERE d.f420_id_cia = :cia AND d.f420_fecha >= :desde_oc AND b.f150_id IN :bodegas
+WHERE d.f420_id_cia = :cia AND b.f150_id_cia = :cia AND d.f420_fecha >= :desde_oc AND b.f150_id IN :bodegas
   AND d.f420_ind_estado <> 9 AND m.f421_ind_estado IN (1, 2) /*ACTIVO:x,i*/
 GROUP BY i.f120_referencia, b.f150_id, d.f420_id_tipo_docto, d.f420_consec_docto
 HAVING SUM(m.f421_cant_pedida - m.f421_cant_entrada) > 0"""
@@ -330,8 +330,9 @@ def _primer_mes(hoy: date, meses: int = MESES_VENTANA) -> date:
 
 def _stream(engine, sql, params=None, expanding=None):
     stmt = text(sql)
-    if expanding:
-        stmt = stmt.bindparams(bindparam(expanding, expanding=True))
+    if expanding:   # un nombre o varios (listas para IN :nombre)
+        for nom in ([expanding] if isinstance(expanding, str) else expanding):
+            stmt = stmt.bindparams(bindparam(nom, expanding=True))
     with engine.connect().execution_options(stream_results=True, yield_per=CHUNK) as c:
         for r in c.execute(stmt, params or {}):
             yield tuple(r)
@@ -392,7 +393,7 @@ def diagnostico_inventario(bodega: str, producto: str) -> dict:
            "JOIN t150_mc_bodegas b ON b.f150_rowid = e.f400_rowid_bodega "
            "JOIN t121_mc_items_extensiones x ON x.f121_rowid = e.f400_rowid_item_ext "
            "JOIN t120_mc_items i ON i.f120_rowid = x.f121_rowid_item "
-           "WHERE i.f120_id_cia = :cia AND RTRIM(b.f150_id) = :b AND RTRIM(i.f120_referencia) = :p")
+           "WHERE e.f400_id_cia = :cia AND b.f150_id_cia = :cia AND i.f120_id_cia = :cia AND RTRIM(b.f150_id) = :b AND RTRIM(i.f120_referencia) = :p")
     for empresa, db in (("05", settings.siesa_db), ("21", settings.siesa_db_s)):
         if not db:
             continue
@@ -971,19 +972,42 @@ def _sincronizar_ventas() -> dict:
                 meses = _param(cur, "meses_historia")
                 desde = _primer_mes(date.today(), min(max(int(meses), 2), 12) if meses else MESES_VENTANA)
                 solo = _solo_activos(cur)
-                cur.execute("SELECT empresa, bodega_id FROM ddmrp.abast_bitacora")
+                cur.execute("SELECT empresa, bodega_id FROM ddmrp.abast_bitacora WHERE COALESCE(activa, 1) = 1")   # las apagadas en la bitacora no cuentan
                 por_empresa: dict[str, list[str]] = {}
                 for emp, b in cur.fetchall():
                     por_empresa.setdefault(emp, []).append(b)
-                if not por_empresa:
-                    raise RuntimeError("abast_bitacora esta vacia: cargala en Maestros antes de traer las ventas")
                 cur.execute("SELECT empresa, bodega_id FROM ddmrp.maestro_cedi")
                 cedis_por_empresa: dict[str, list[str]] = {}
                 for emp, b in cur.fetchall():
                     cedis_por_empresa.setdefault(emp, []).append(b)
+                # regla ventas_todas_tiendas: ademas de la bitacora, todas las tiendas del catalogo de Siesa (maestro_bodega), sin los CEDI (esos van aparte)
+                cur.execute("SELECT empresa, bodega_id FROM ddmrp.bodega_factura")
+                factura_por_empresa: dict[str, list[str]] = {}
+                for emp, b in cur.fetchall():
+                    factura_por_empresa.setdefault(emp, []).append(b)
+                cur.execute("SELECT empresa, bodega_id FROM ddmrp.abast_bitacora WHERE COALESCE(activa, 1) = 0")
+                apagadas_b = {(e, b) for e, b in cur.fetchall()}
+                for emp, lst in factura_por_empresa.items():   # las bodegas de factura se leen siempre (salvo apagadas en la bitacora)
+                    for b in lst:
+                        pe = por_empresa.setdefault(emp, [])
+                        if b not in pe and b not in cedis_por_empresa.get(emp, []) and (emp, b) not in apagadas_b:
+                            pe.append(b)
+                todas = _param(cur, "ventas_todas_tiendas")
+                if todas is None or todas >= 1:
+                    cur.execute("SELECT empresa, bodega_id FROM ddmrp.abast_bitacora WHERE COALESCE(activa, 1) = 0")
+                    apagadas = {(e, b) for e, b in cur.fetchall()}
+                    cur.execute("SELECT empresa, bodega_id FROM ddmrp.maestro_bodega")
+                    for emp, b in cur.fetchall():
+                        lista = por_empresa.setdefault(emp, [])
+                        if b not in lista and b not in cedis_por_empresa.get(emp, []) and (emp, b) not in apagadas:
+                            lista.append(b)
+                    res["tiendas_leidas"] = {e: len(v) for e, v in por_empresa.items()}
+                if not por_empresa:
+                    raise RuntimeError("No hay tiendas: carga la Bitacora o usa 'Traer tiendas de Siesa' en Maestros antes de traer las ventas")
                 csql = _ventas_sql(VENTAS_CEDI_SQL_FILE)   # ventas directas del CEDI (PT001); su rotacion tambien cuenta para la necesidad de compra
                 cur.execute("CREATE TEMP TABLE stg_vm (empresa text, mes char(6), bodega_id text, producto_id text, cantidad numeric, valor numeric) ON COMMIT DROP")
                 leidas: list[str] = []
+                tiendas_l: list[tuple] = []   # solo tiendas (sin CEDI): para avisar cuales no trajeron ninguna venta
                 for empresa, db in (("05", settings.siesa_db), ("21", settings.siesa_db_s)):
                     bodegas = por_empresa.get(empresa, [])
                     cedis = cedis_por_empresa.get(empresa, []) if csql else []
@@ -1000,14 +1024,22 @@ def _sincronizar_ventas() -> dict:
                         n = 0
                         progreso.avance(f"Leyendo ventas de {db} desde {desde:%Y-%m} ({len(bods)} bodegas{' CEDI' if 'cedi' in clave else ''})… puede tardar varios minutos")
                         with cur.copy("COPY stg_vm (empresa, mes, bodega_id, producto_id, cantidad, valor) FROM STDIN") as cp:
-                            for r in _stream(eng, _con_estado(sql_v, filtrar), {"cia": settings.siesa_cia, "bodegas": bods, "desde": desde}, expanding="bodegas"):
+                            for r in _stream(eng, _con_estado(sql_v, filtrar), {"cia": settings.siesa_cia, "bodegas": bods, "desde": desde, "facturas": factura_por_empresa.get(empresa) or ["-"]},
+                                         expanding=("bodegas", "facturas") if ":facturas" in sql_v else "bodegas"):
                                 cp.write_row((empresa,) + tuple(r)); n += 1
                                 if n % 50000 == 0:
                                     progreso.avance(f"Leyendo ventas de {db}: {n:,} filas…")
                         res[clave] = n
                         leidas += [(empresa, b) for b in bods]
+                        if "cedi" not in clave:
+                            tiendas_l += [(empresa, b) for b in bods]
                 if not leidas:
                     raise RuntimeError("No hay bodegas para leer (revisa SIESA_DB / SIESA_DB_S y la bitacora)")
+                cur.execute("SELECT DISTINCT empresa, bodega_id FROM stg_vm")
+                con_ventas = {(e, b) for e, b in cur.fetchall()}
+                # tiendas que se leyeron y no trajeron NI UNA venta: o no vendieron, o venden por factura y falta ponerlas en Maestros > Bodegas que venden por factura
+                sin = sorted(f"{e}/{b}" for e, b in set(tiendas_l) - con_ventas)
+                res["tiendas_sin_ventas"] = sin[:80]; res["n_tiendas_sin_ventas"] = len(sin)
                 progreso.avance("Guardando las ventas en la base…")
                 cur.execute("DELETE FROM ddmrp.ventas_mensual v WHERE v.mes >= %s AND (v.empresa || '|' || v.bodega_id) = ANY(%s)",
                             (f"{desde:%Y%m}", [f"{e}|{b}" for e, b in leidas]))
@@ -1054,7 +1086,7 @@ def _correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
             fila = cur.fetchone()
             desde = _primer_mes(date.today(), min(max(int(fila[0]), 2), 12) if fila else MESES_VENTANA)
             res["tiendas"] = sincronizar_bodegas(cur)
-            cur.execute("SELECT empresa, bodega_id FROM ddmrp.abast_bitacora")
+            cur.execute("SELECT empresa, bodega_id FROM ddmrp.abast_bitacora WHERE COALESCE(activa, 1) = 1")
             por_empresa: dict[str, list[str]] = {}
             for emp, b in cur.fetchall():
                 por_empresa.setdefault(emp, []).append(b)

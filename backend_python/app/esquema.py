@@ -93,6 +93,7 @@ SENTENCIAS = [
     "CREATE TABLE IF NOT EXISTS ddmrp.laboratorio (codigo TEXT PRIMARY KEY, nombre TEXT)",
     # estado de cada item en Siesa por empresa (1 activo, 0 inactivo, 2 bloqueado): solo los activos entran al modelo
     "CREATE TABLE IF NOT EXISTS ddmrp.item_estado (empresa TEXT NOT NULL, producto_id TEXT NOT NULL, estado SMALLINT NOT NULL, PRIMARY KEY (empresa, producto_id))",
+    "INSERT INTO ddmrp.parametro VALUES ('ventas_todas_tiendas', 1, 'Demanda del CEDI y ventas por mes: 1 = de TODAS las tiendas de Siesa (catalogo de tiendas), esten o no en la Bitacora; 0 = solo las de la Bitacora') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('solo_items_activos', 1, 'Solo los items ACTIVOS de Siesa entran al modelo (ETL, motor, matriz, controles): 1 = si, 0 = tambien inactivos y bloqueados') ON CONFLICT DO NOTHING",
     # items REC: su inventario y ventas se suman al item original (referencia sin el primer digito); origen auto = lo deduce el ETL de la descripcion
     "CREATE TABLE IF NOT EXISTS ddmrp.item_rec (empresa TEXT NOT NULL, rec_id TEXT NOT NULL, original_id TEXT NOT NULL, descripcion TEXT, origen TEXT NOT NULL DEFAULT 'manual', PRIMARY KEY (empresa, rec_id))",
@@ -271,11 +272,35 @@ SENTENCIAS_CEDI = [
     # de donde sale la demanda de cada CEDI: TODAS las tiendas de la bitacora de su empresa (su venta) y el propio CEDI (venta directa mayorista / digital).
     # Un CEDI por empresa (el primero del maestro), igual que el reparto y la matriz de despacho, que tampoco miran la columna cedi de la bitacora:
     # asi una tienda con la columna cedi vacia o distinta no deja al CEDI sin su demanda (le pasaba al CEDI de Stores: salia «sin venta»).
+    # bodegas cuya venta NO pasa por el POS sino por facturas (FED/FEM/NED/CFV): de ahi lee el ETL su venta (antes la lista estaba fija en la consulta de ventas).
+    # Van antes de la vista porque esta las lee. Sembrado inicial por empresa (se edita en Maestros): 05 Funat con domicilios, TC001 y Melonn; 21 Stores con Melonn
+    "CREATE TABLE IF NOT EXISTS ddmrp.bodega_factura (empresa TEXT NOT NULL, bodega_id TEXT NOT NULL, nota TEXT, PRIMARY KEY (empresa, bodega_id))",
+    """INSERT INTO ddmrp.bodega_factura (empresa, bodega_id, nota) VALUES
+       ('05', 'DM039', 'Domicilios'), ('05', 'DM040', 'Domicilios'), ('05', 'DM140', 'Domicilios'), ('05', 'DM240', 'Domicilios'), ('05', 'DM340', 'Domicilios'),
+       ('05', 'TC001', 'Tienda de confianza'), ('05', 'TC002', 'Tienda de confianza'), ('05', 'SV036', 'Vende por factura manual (FEM)'),
+       ('05', 'MBG01', 'Melonn (e-commerce)'),
+       ('05', 'SVM01', 'Sol Verde por factura'), ('05', 'SVS01', 'Sol Verde por factura'), ('05', 'WB001', 'Web / e-commerce'), ('05', 'CD002', 'Web / e-commerce'), ('05', 'YR001', 'Canal YR'), ('05', 'YR002', 'Canal YR'), ('05', 'YR003', 'Canal YR'), ('05', 'YR004', 'Canal YR'), ('05', 'YR005', 'Canal YR'), ('05', 'ML001', 'Canal ML'), ('05', 'FL001', 'Canal FL'), ('05', 'PT005', 'Producto terminado'), ('05', 'PT006', 'Producto terminado'), ('05', 'PT007', 'Producto terminado'), ('05', 'PT008', 'Producto terminado'), ('05', 'PT200', 'Producto terminado'), ('05', 'ZF001', 'Zona Franca'), ('05', 'ZF002', 'Zona Franca'), ('05', 'BG005', 'Bodega BG'), ('05', 'MBQ01', 'Melonn Barranquilla'), ('05', 'MCA01', 'Melonn Cali'), ('05', 'MMD01', 'Melonn Medellin'),
+       ('21', 'MBG01', 'Melonn Bogota'), ('21', 'MBQ01', 'Melonn Barranquilla'), ('21', 'MCA01', 'Melonn Cali'), ('21', 'MMD01', 'Melonn Medellin')
+       ON CONFLICT DO NOTHING""",
+    # la primera siembra puso la misma lista en las dos empresas: se quitan de la 21 las que no son suyas (solo las que llevan la nota sembrada)
+    "DELETE FROM ddmrp.bodega_factura WHERE empresa = '21' AND bodega_id IN ('DM039', 'DM040', 'DM140', 'DM240', 'DM340', 'TC001') AND nota IN ('Domicilios', 'Tienda de confianza')",
+    "ALTER TABLE ddmrp.abast_bitacora ADD COLUMN IF NOT EXISTS activa SMALLINT DEFAULT 1 CHECK (activa IS NULL OR activa IN (0, 1))",   # 0 = tienda apagada: no cuenta (vacio = activa)
     """CREATE OR REPLACE VIEW ddmrp.v_origen_cedi AS
        WITH cedis AS (SELECT empresa, min(bodega_id) AS bodega_id FROM ddmrp.maestro_cedi GROUP BY empresa)
-       SELECT b.empresa, c.bodega_id AS cedi, b.bodega_id AS origen FROM ddmrp.abast_bitacora b JOIN cedis c ON c.empresa = b.empresa
+       SELECT b.empresa, c.bodega_id AS cedi, b.bodega_id AS origen FROM ddmrp.abast_bitacora b JOIN cedis c ON c.empresa = b.empresa WHERE COALESCE(b.activa, 1) = 1
        UNION
-       SELECT empresa, bodega_id AS cedi, bodega_id AS origen FROM cedis""",
+       SELECT empresa, bodega_id AS cedi, bodega_id AS origen FROM cedis
+       UNION
+       -- regla ventas_todas_tiendas: tambien las tiendas del catalogo de Siesa (maestro_bodega) aunque no esten en la bitacora (su venta suma a la demanda del CEDI)
+       SELECT mb.empresa, c.bodega_id AS cedi, mb.bodega_id AS origen FROM ddmrp.maestro_bodega mb JOIN cedis c ON c.empresa = mb.empresa
+       WHERE COALESCE((SELECT valor FROM ddmrp.parametro WHERE clave = 'ventas_todas_tiendas'), 1) >= 1
+         AND NOT EXISTS (SELECT 1 FROM ddmrp.maestro_cedi mc WHERE mc.empresa = mb.empresa AND mc.bodega_id = mb.bodega_id)
+         AND NOT EXISTS (SELECT 1 FROM ddmrp.abast_bitacora bx WHERE bx.empresa = mb.empresa AND bx.bodega_id = mb.bodega_id AND COALESCE(bx.activa, 1) = 0)
+       UNION
+       -- las bodegas que venden por factura (maestro «Bodegas que venden por factura») cuentan siempre, esten o no en la bitacora, salvo que la bitacora las apague
+       SELECT bf.empresa, c.bodega_id AS cedi, bf.bodega_id AS origen FROM ddmrp.bodega_factura bf JOIN cedis c ON c.empresa = bf.empresa
+       WHERE NOT EXISTS (SELECT 1 FROM ddmrp.maestro_cedi mc WHERE mc.empresa = bf.empresa AND mc.bodega_id = bf.bodega_id)
+         AND NOT EXISTS (SELECT 1 FROM ddmrp.abast_bitacora bx WHERE bx.empresa = bf.empresa AND bx.bodega_id = bf.bodega_id AND COALESCE(bx.activa, 1) = 0)""",
     # lo que leen los Informes: tiendas + CEDI. Cual de los dos se ve lo decide app/modo.py (por defecto solo tiendas)
     f"""CREATE OR REPLACE VIEW ddmrp.v_sugerencias_informe AS
         SELECT {COLS_SUG} FROM ddmrp.sugerencias_envio UNION ALL SELECT {COLS_SUG} FROM ddmrp.sugerencias_cedi""",

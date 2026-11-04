@@ -26,8 +26,8 @@ def dias(empresa: str | None = None, user=Depends(requiere("ver_despacho"))):
         por_dia: dict[int, list[str]] = {}
         for dia, b in c.execute(text("SELECT dia, bodega_id FROM ddmrp.bodega_dia WHERE (CAST(:e AS text) IS NULL OR empresa = :e) ORDER BY dia, bodega_id"), {"e": empresa}).all():
             por_dia.setdefault(dia, []).append(b)
-        todas = [r[0] for r in c.execute(text("SELECT bodega_id FROM ddmrp.abast_bitacora WHERE (CAST(:e AS text) IS NULL OR empresa = :e) ORDER BY bodega_id"), {"e": empresa}).all()]
-        emp = {b: e for b, e in c.execute(text("SELECT bodega_id, empresa FROM ddmrp.abast_bitacora WHERE (CAST(:e AS text) IS NULL OR empresa = :e)"), {"e": empresa}).all()}
+        todas = [r[0] for r in c.execute(text("SELECT bodega_id FROM ddmrp.abast_bitacora WHERE COALESCE(activa, 1) = 1 AND (CAST(:e AS text) IS NULL OR empresa = :e) ORDER BY bodega_id"), {"e": empresa}).all()]
+        emp = {b: e for b, e in c.execute(text("SELECT bodega_id, empresa FROM ddmrp.abast_bitacora WHERE COALESCE(activa, 1) = 1 AND (CAST(:e AS text) IS NULL OR empresa = :e)"), {"e": empresa}).all()}
     return {"dias": [{"dia": k, "bodegas": v} for k, v in sorted(por_dia.items())], "bodegas": todas, "empresa_de": emp}
 
 
