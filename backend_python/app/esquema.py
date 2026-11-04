@@ -21,7 +21,7 @@ SENTENCIAS = [
     "ALTER TABLE ddmrp.sugerencias_envio ADD COLUMN IF NOT EXISTS cantidad_necesaria NUMERIC(14,3), ADD COLUMN IF NOT EXISTS stock_cedi NUMERIC(14,3)",
     "CREATE TABLE IF NOT EXISTS ddmrp.inventario_cedi (producto_id TEXT PRIMARY KEY, disponible NUMERIC(14,3) NOT NULL, fecha_corte DATE NOT NULL)",
     "CREATE TABLE IF NOT EXISTS ddmrp.reserva_cedi (producto_id TEXT PRIMARY KEY, porcentaje NUMERIC(8,4) NOT NULL CHECK (porcentaje >= 0 AND porcentaje <= 1))",
-    "INSERT INTO ddmrp.parametro VALUES ('cedi_regla_reparto', 1, 'Si el inventario del CEDI no alcanza: 0 no limita, 1 proporcional a la rotacion (ADU), 4 proporcional a la necesidad, 2 parejo, 3 prioridad al mas critico') ON CONFLICT DO NOTHING",
+    "INSERT INTO ddmrp.parametro VALUES ('cedi_regla_reparto', 1, 'Si el inventario del CEDI no alcanza: 0 no limita, 1 proporcional a la rotacion (ADU), 4 proporcional a la necesidad, 2 parejo, 3 prioridad al mas critico, 5 por clase de tienda: A primero, luego B y C') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('etl_traer_ventas', 0, 'El ETL tambien trae las ventas por mes de Siesa (1 = si, 0 = solo con el boton)') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('meses_retencion_ventas', 36, 'Meses de ventas por mes que se conservan en la base (los anteriores se borran al traer ventas)') ON CONFLICT DO NOTHING",
     """CREATE TABLE IF NOT EXISTS ddmrp.consulta_log (
@@ -468,6 +468,14 @@ SENTENCIAS_APERTURA = [
          PRIMARY KEY (empresa, bodega_id))""",
     "INSERT INTO ddmrp.parametro VALUES ('apertura_meses_defecto', 4, 'Apertura de tienda: meses que dura el espejo por defecto. El motor usa el pronostico del maestro mientras la tienda tenga menos meses de venta que esto (el mes de apertura cuenta completo)') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('apertura_factor_defecto', 1, 'Apertura de tienda: factor por defecto sobre la venta de la tienda espejo (1 = igual, 0.8 = 20 % menos)') ON CONFLICT DO NOTHING",
+    """CREATE TABLE IF NOT EXISTS ddmrp.tienda_clase (
+         empresa TEXT NOT NULL, bodega_id TEXT NOT NULL, clase_calc CHAR(1) CHECK (clase_calc IN ('A','B','C')),
+         venta NUMERIC(18,2), pct_acum NUMERIC(6,2), clase_manual CHAR(1) CHECK (clase_manual IN ('A','B','C')),
+         calculada TIMESTAMPTZ, PRIMARY KEY (empresa, bodega_id))""",
+    "CREATE OR REPLACE VIEW ddmrp.v_tienda_clase AS SELECT empresa, bodega_id, COALESCE(clase_manual, clase_calc) AS clase, clase_calc, clase_manual, venta, pct_acum FROM ddmrp.tienda_clase",
+    "INSERT INTO ddmrp.parametro VALUES ('clase_tienda_meses', 6, 'Clasificacion ABC de tiendas: meses cerrados de venta que se miden') ON CONFLICT DO NOTHING",
+    "INSERT INTO ddmrp.parametro VALUES ('clase_tienda_corte_a', 80, 'Clasificacion ABC de tiendas: % acumulado de la venta que cubre la clase A') ON CONFLICT DO NOTHING",
+    "INSERT INTO ddmrp.parametro VALUES ('clase_tienda_corte_b', 95, 'Clasificacion ABC de tiendas: % acumulado de la venta que cubre hasta la clase B (el resto es C)') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('apertura_base_meses', 6, 'Apertura de tienda: meses cerrados de venta de la espejo que se promedian para proponer el pronostico') ON CONFLICT DO NOTHING",
 ]
 

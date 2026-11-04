@@ -6,6 +6,7 @@ export const AYUDA: Record<string, string> = {
   // niveles / agrupaciones
   Empresa: 'Funat (05) o Stores (21).',
   Tienda: 'Punto de venta. Se identifica por su código de Siesa (ej. SV021).',
+  'Clase de tienda': 'A, B o C según lo que vende la tienda (últimos meses cerrados) frente a las demás de su empresa: A = las que juntan el 80 % de la venta, B hasta el 95 %, C el resto. Se ajusta en Reglas de pedido y se puede fijar a mano en Maestros > Clase de tienda. Es el desempate del reparto del CEDI.',
   Laboratorio: 'Laboratorio o marca del item (plan 006 de Siesa).',
   'Criterio de items': 'Cualquier clasificación de Siesa del item: línea, acción, uso… Elige primero el criterio y luego sus valores.',
   Item: 'Referencia del producto.',

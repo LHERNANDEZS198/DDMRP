@@ -53,8 +53,9 @@ def matriz(empresa: str, bodega_id: str | None = None, bodegas: str | None = Non
     sql = f"""SELECT s.ejecucion_id, s.empresa, s.producto_id, mi.descripcion, mi.categoria, s.bodega_id, s.zona::text zona,
                      s.inventario, s.en_transito, s.flujo_neto, s.tor, s.toy_aj, s.tog_aj, s.unidad_despacho,
                      s.vectorizacion, s.cantidad_sugerida::float8 cantidad_sugerida, s.cantidad_aprobada, s.estado::text estado, s.cantidad_necesaria::float8 cantidad_necesaria, s.stock_cedi::float8 stock_cedi,
-                     ci.costo::float8 AS costo, s.regla_objetivo
+                     ci.costo::float8 AS costo, s.regla_objetivo, tc.clase AS clase_tienda
               FROM ddmrp.sugerencias_envio s LEFT JOIN ddmrp.maestro_item mi USING (producto_id)
+                   LEFT JOIN ddmrp.v_tienda_clase tc ON tc.empresa = s.empresa AND tc.bodega_id = s.bodega_id
                    LEFT JOIN ddmrp.costo_item ci ON ci.producto_id = s.producto_id
               WHERE {f} ORDER BY s.bodega_id, s.pct_buffer"""
     # Lo que se reparte de cada item (suma de lo sugerido a todas las tiendas de la empresa) se calcula aparte y se cruza aqui: dentro del mismo SELECT, con

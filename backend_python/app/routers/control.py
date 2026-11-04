@@ -17,6 +17,7 @@ ZONAS = ("ROJA", "AMARILLA", "VERDE", "EXCESO")
 FROM = """FROM ddmrp.v_sugerencias_informe s
           LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = s.producto_id
           LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = s.bodega_id AND mb.empresa = s.empresa
+          LEFT JOIN ddmrp.v_tienda_clase tc ON tc.bodega_id = s.bodega_id AND tc.empresa = s.empresa
           LEFT JOIN ddmrp.laboratorio lb ON lb.codigo = mi.categoria"""
 
 
@@ -63,7 +64,7 @@ def filtros(user=Depends(usuario_actual)):
     with pg.connect() as c:
         ej = c.execute(text(f"SELECT id, fecha_calculo, fin FROM ddmrp.ejecucion_motor WHERE id = {ULTIMA}")).mappings().first()
         tiendas = [dict(r) for r in c.execute(text(
-            f"SELECT s.bodega_id, string_agg(DISTINCT mb.descripcion, ' / ') AS nombre, string_agg(DISTINCT s.empresa, ',') AS empresa {base} GROUP BY s.bodega_id ORDER BY 1"), p).mappings()]
+            f"SELECT s.bodega_id, string_agg(DISTINCT mb.descripcion, ' / ') AS nombre, string_agg(DISTINCT s.empresa, ',') AS empresa, max(tc.clase) AS clase {base} GROUP BY s.bodega_id ORDER BY 1"), p).mappings()]
         labs = [dict(r) for r in c.execute(text(
             f"SELECT DISTINCT COALESCE(mi.categoria, '') AS codigo, lb.nombre {base} ORDER BY 1"), p).mappings()]
         empresas = [r[0] for r in c.execute(text(f"SELECT DISTINCT s.empresa {base} ORDER BY 1"), p)]
@@ -89,6 +90,7 @@ AGRUP = {
     "criterio": ("COALESCE(ic.criterio_id, '(sin criterio)')", "cr.nombre"),
     "empresa": ("s.empresa", "CASE s.empresa WHEN '05' THEN 'Funat' WHEN '21' THEN 'Stores' ELSE s.empresa END"),
     "bodega": ("s.bodega_id", "mb.descripcion"),
+    "clase": ("COALESCE(tc.clase, '(sin clase)')", "CASE WHEN tc.clase IS NULL THEN 'Sin clasificar' ELSE 'Tiendas ' || tc.clase END"),
     "laboratorio": ("COALESCE(mi.categoria, '(sin laboratorio)')", "lb.nombre"),
     "item": ("s.producto_id", "mi.descripcion"),
 }
@@ -104,7 +106,7 @@ def resumen(agrupar: str = "bodega", bodegas: str | None = None, labs: str | Non
     frm = FROM
     if agrupar == "criterio":
         frm = FROM + CRIT_JOIN.format(a="s"); p["g_plan"] = plan or ""
-    sql = f"""SELECT {clave} AS clave, MAX({nombre}) AS nombre, count(*) AS n,
+    sql = f"""SELECT {clave} AS clave, MAX({nombre}) AS nombre, MAX(tc.clase) AS clase_tienda, count(*) AS n,
                      count(*) FILTER (WHERE s.zona = 'ROJA') AS roja, count(*) FILTER (WHERE s.zona = 'AMARILLA') AS amarilla,
                      count(*) FILTER (WHERE s.zona = 'VERDE') AS verde, count(*) FILTER (WHERE s.zona = 'EXCESO') AS exceso,
                      round(avg(LEAST(COALESCE(s.pct_buffer, 0), 200)), 1) AS pct_prom,
@@ -126,7 +128,7 @@ def resumen(agrupar: str = "bodega", bodegas: str | None = None, labs: str | Non
 
 
 def _sql_detalle(w: str) -> str:
-    return f"""SELECT s.bodega_id, mb.descripcion AS bodega_nombre, s.producto_id, mi.descripcion,
+    return f"""SELECT s.bodega_id, mb.descripcion AS bodega_nombre, tc.clase AS clase_tienda, s.producto_id, mi.descripcion,
                      COALESCE(mi.categoria, '(sin laboratorio)') AS laboratorio, s.zona::text AS zona, s.pct_buffer,
                      s.inventario, s.en_transito, s.flujo_neto, s.tor, s.toy_aj, s.tog_aj, s.adu, s.cantidad_sugerida, s.condenado,
                      (SELECT ci.costo::float8 FROM ddmrp.costo_item ci WHERE ci.producto_id = s.producto_id) AS costo
@@ -178,6 +180,7 @@ XCTE = f"""WITH x AS (
 """
 XFROM = """FROM x LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = x.producto_id
           LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = x.bodega_id AND mb.empresa = x.empresa
+          LEFT JOIN ddmrp.v_tienda_clase tc ON tc.bodega_id = x.bodega_id AND tc.empresa = x.empresa
           LEFT JOIN ddmrp.laboratorio lb ON lb.codigo = mi.categoria"""
 
 
@@ -244,7 +247,7 @@ def _cond_cambios_detalle(user, mov, bodegas, labs, q, zonas, dia, empresa, crit
 
 
 def _sql_cambios_detalle(w: str) -> str:
-    return f"""{XCTE} SELECT x.bodega_id, mb.descripcion AS bodega_nombre, x.producto_id, mi.descripcion,
+    return f"""{XCTE} SELECT x.bodega_id, mb.descripcion AS bodega_nombre, tc.clase AS clase_tienda, x.producto_id, mi.descripcion,
                      COALESCE(mi.categoria, '(sin laboratorio)') AS laboratorio, x.zi AS zona_ini, x.zf AS zona_fin,
                      x.pi AS pct_ini, x.pf AS pct_fin, (COALESCE(x.pf, 0) - COALESCE(x.pi, 0)) AS delta
               {XFROM} WHERE {w} ORDER BY (COALESCE(x.rf, -1) - COALESCE(x.ri, 3)), delta, x.bodega_id, x.producto_id"""
@@ -372,7 +375,7 @@ def _dic_filtros(bodegas, labs, q, zonas, dia, empresa, crit):
             ("Zonas", zonas), ("Dia de despacho", dia), ("Solo items activos", "Si (segun la regla solo_items_activos)")]
 
 
-COLS_GRUPO = [{"t": "Clave", "k": "clave", "w": 16}, {"t": "Nombre", "k": "nombre", "w": 32}, {"t": "Combinaciones", "k": "n", "f": "int"},
+COLS_GRUPO = [{"t": "Clave", "k": "clave", "w": 16}, {"t": "Nombre", "k": "nombre", "w": 32}, {"t": "Clase tienda", "k": "clase_tienda", "w": 8}, {"t": "Combinaciones", "k": "n", "f": "int"},
               {"t": "Rojo", "k": "roja", "f": "int"}, {"t": "Amarillo", "k": "amarilla", "f": "int"}, {"t": "Verde", "k": "verde", "f": "int"},
               {"t": "Exceso", "k": "exceso", "f": "int"}, {"t": "% buffer prom", "k": "pct_prom", "f": "dec1"},
               {"t": "A pedir", "k": "a_pedir", "f": "int"}, {"t": "Unidades sugeridas", "k": "unidades", "f": "int"},
@@ -388,7 +391,7 @@ def _con_cobertura(filas):
         yield r
 
 
-COLS_DETALLE = [{"t": "Tienda", "k": "bodega_id", "w": 10}, {"t": "Nombre tienda", "k": "bodega_nombre", "w": 26},
+COLS_DETALLE = [{"t": "Tienda", "k": "bodega_id", "w": 10}, {"t": "Nombre tienda", "k": "bodega_nombre", "w": 26}, {"t": "Clase tienda", "k": "clase_tienda", "w": 8},
                 {"t": "Item", "k": "producto_id", "w": 12}, {"t": "Descripcion", "k": "descripcion", "w": 44},
                 {"t": "Laboratorio", "k": "laboratorio", "w": 16}, {"t": "Zona", "k": "zona", "w": 11, "zona": True},
                 {"t": "% buffer", "k": "pct_buffer", "f": "dec1"}, {"t": "Inventario", "k": "inventario", "f": "int"},
@@ -405,7 +408,7 @@ COLS_CAMBIOS_G = [{"t": "Clave", "k": "clave", "w": 16}, {"t": "Nombre", "k": "n
                   {"t": "Entraron a rojo", "k": "entraron_rojo", "f": "int"}, {"t": "Salieron de rojo", "k": "salieron_rojo", "f": "int"},
                   {"t": "Entraron a exceso", "k": "entraron_exceso", "f": "int"}, {"t": "Salieron de exceso", "k": "salieron_exceso", "f": "int"},
                   {"t": "Empeoraron", "k": "empeoraron", "f": "int"}, {"t": "Mejoraron", "k": "mejoraron", "f": "int"}]
-COLS_CAMBIOS_D = [{"t": "Tienda", "k": "bodega_id", "w": 10}, {"t": "Nombre tienda", "k": "bodega_nombre", "w": 26},
+COLS_CAMBIOS_D = [{"t": "Tienda", "k": "bodega_id", "w": 10}, {"t": "Nombre tienda", "k": "bodega_nombre", "w": 26}, {"t": "Clase tienda", "k": "clase_tienda", "w": 8},
                   {"t": "Item", "k": "producto_id", "w": 12}, {"t": "Descripcion", "k": "descripcion", "w": 44},
                   {"t": "Laboratorio", "k": "laboratorio", "w": 16}, {"t": "Zona inicio", "k": "zona_ini", "w": 11, "zona": True},
                   {"t": "Zona fin", "k": "zona_fin", "w": 11, "zona": True}, {"t": "% buffer inicio", "k": "pct_ini", "f": "dec1"},

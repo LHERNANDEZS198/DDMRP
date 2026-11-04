@@ -30,6 +30,7 @@ const cols: ColDef[] = [
   { checkboxSelection: true, headerCheckboxSelection: true, width: 50, pinned: 'left' },
   { headerName: 'Control', width: 80, cellRenderer: verEnControl, sortable: false, pinned: 'left' },
   { field: 'bodega_id', headerName: 'Bodega', filter: true },
+  { field: 'clase_tienda', headerName: 'Clase', width: 80, filter: true, headerTooltip: 'Clase de la tienda por venta (A/B/C). Es el desempate del reparto del CEDI y la prioridad de la regla «Por clase de tienda».' },
   { field: 'producto_id', headerName: 'Producto', filter: true },
   { field: 'descripcion', flex: 1, minWidth: 220, filter: true },
   { field: 'zona', filter: true },

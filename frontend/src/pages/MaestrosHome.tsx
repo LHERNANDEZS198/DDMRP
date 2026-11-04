@@ -4,6 +4,7 @@ import Search from '@mui/icons-material/Search'
 import Storefront from '@mui/icons-material/Storefront'
 import Store from '@mui/icons-material/Store'
 import Receipt from '@mui/icons-material/Receipt'
+import Grade from '@mui/icons-material/Grade'
 import Warehouse from '@mui/icons-material/Warehouse'
 import Event from '@mui/icons-material/Event'
 import TrendingUp from '@mui/icons-material/TrendingUp'
@@ -33,7 +34,7 @@ type Tarjeta = { clave: string; titulo: string; desc: string; icono: ReactElemen
 const SECCIONES = ['Tiendas y CEDI', 'Demanda y pronóstico', 'Buffer y reglas de reposición', 'Ítems y exclusiones', 'Otros']
 const COL: Record<string, string> = { 'Tiendas y CEDI': '#1565c0', 'Demanda y pronóstico': '#2e7d32', 'Buffer y reglas de reposición': '#6a1b9a', 'Ítems y exclusiones': '#ef6c00', 'Otros': '#546e7a' }
 const META: Record<string, [string, ReactElement]> = {   // clave -> [sección, logo]
-  'bitacora': ['Tiendas y CEDI', <Store />], 'cedis': ['Tiendas y CEDI', <Warehouse />], 'dias-bodega': ['Tiendas y CEDI', <Event />], 'bodegas-factura': ['Tiendas y CEDI', <Receipt />],
+  'bitacora': ['Tiendas y CEDI', <Store />], 'cedis': ['Tiendas y CEDI', <Warehouse />], 'dias-bodega': ['Tiendas y CEDI', <Event />], 'bodegas-factura': ['Tiendas y CEDI', <Receipt />], 'clase-tienda': ['Tiendas y CEDI', <Grade />],
   'pronostico': ['Demanda y pronóstico', <TrendingUp />], 'ventas-mensual': ['Demanda y pronóstico', <BarChart />], 'promocion': ['Demanda y pronóstico', <LocalOffer />],
   'demanda-calificada': ['Demanda y pronóstico', <Assignment />], 'vectorizacion': ['Demanda y pronóstico', <CallSplit />],
   'control-referencias': ['Buffer y reglas de reposición', <Height />], 'factores': ['Buffer y reglas de reposición', <Tune />], 'parametros': ['Buffer y reglas de reposición', <Functions />],

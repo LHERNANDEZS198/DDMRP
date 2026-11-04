@@ -3,9 +3,10 @@ Es una funcion pura (repartir) mas el cargador de datos; se usa en la Matriz de 
 import math
 from sqlalchemy import text
 from .activos import solo_activos
+from . import clase_tienda
 
 EPS = 1e-9
-REGLAS = {0: "No limitar", 1: "Proporcional a la rotacion", 4: "Proporcional a la necesidad", 2: "Parejo", 3: "Prioridad al mas critico"}
+REGLAS = {0: "No limitar", 1: "Proporcional a la rotacion", 4: "Proporcional a la necesidad", 2: "Parejo", 3: "Prioridad al mas critico", 5: "Por clase de tienda (A primero)"}
 
 
 def _bloques(x: float, u: float) -> float:
@@ -14,14 +15,23 @@ def _bloques(x: float, u: float) -> float:
 
 
 def repartir(filas: list[tuple], disponible: float, regla: int) -> dict:
-    """filas = [(clave, necesidad, unidad_despacho, prioridad, rotacion)]. prioridad menor = mas critico; rotacion = ADU.
-    regla: 0 no limita | 1 proporcional a la rotacion | 4 proporcional a la necesidad | 2 parejo | 3 prioridad.
+    """filas = [(clave, necesidad, unidad_despacho, prioridad, rotacion[, clase])]. prioridad menor = mas critico; rotacion = ADU; clase = A/B/C de la tienda.
+    regla: 0 no limita | 1 proporcional a la rotacion | 4 proporcional a la necesidad | 2 parejo | 3 prioridad | 5 por clase de tienda (A, luego B, luego C).
+    Desempate (mismo % de buffer): mejor clase de tienda y, al final, el codigo de bodega.
     Si la necesidad total cabe en lo disponible, cada tienda recibe lo que pide. Si no, se reparte segun la regla,
     siempre en multiplos de la unidad de despacho, sin pasar lo disponible ni la necesidad de cada tienda."""
     total = sum(f[1] for f in filas)
     if regla == 0 or total <= disponible + EPS:
         return {f[0]: f[1] for f in filas}
-    orden = sorted(filas, key=lambda f: (f[3], str(f[0])))
+    rk = {f[0]: clase_tienda.rango(f[5] if len(f) > 5 else None) for f in filas}
+    if regla == 5:                                   # por clase: se cubre toda la clase A antes de pasar a la B; dentro de cada clase, proporcional a la rotacion
+        a5: dict = {}; resto5 = max(disponible, 0.0)
+        for r in sorted(set(rk.values())):
+            sub = [f for f in filas if rk[f[0]] == r]
+            res = repartir(sub, resto5, 1)
+            a5.update(res); resto5 -= sum(res.values())
+        return a5
+    orden = sorted(filas, key=lambda f: (f[3], rk[f[0]], str(f[0])))
     u_de = {f[0]: (f[2] if f[2] and f[2] > 0 else 1.0) for f in filas}
     q = {f[0]: f[1] for f in filas}
     a = {f[0]: 0.0 for f in filas}
@@ -79,7 +89,7 @@ def repartir(filas: list[tuple], disponible: float, regla: int) -> dict:
         for k in pend:
             a[k] = min(q[k], _bloques(crudo[k], u_de[k]))
         resto = max(disponible, 0.0) - sum(a.values())
-        sobrantes(sorted(pend, key=lambda k: (-(crudo[k] - a[k]), next(f[3] for f in filas if f[0] == k), str(k))) + [k for k in fijos])
+        sobrantes(sorted(pend, key=lambda k: (-(crudo[k] - a[k]), next(f[3] for f in filas if f[0] == k), rk[k], str(k))) + [k for k in fijos])
     return a
 
 
@@ -109,13 +119,19 @@ def aplicar_a_ejecucion(c, eid: int) -> dict:
     (lo disponible de la referencia en el CEDI de su empresa: inventario menos la reserva; 0 si el CEDI no la tiene).
     Una empresa sin inventario del CEDI no se limita. Los laboratorios sin envio no compiten por el stock."""
     regla = regla_actual(c)
+    try:
+        with c.begin_nested():
+            clase_tienda.recalcular(c)               # la clase de tienda se calcula con cada corrida (desempate y regla 5)
+    except Exception:
+        pass
     c.execute(text("UPDATE ddmrp.sugerencias_envio SET cantidad_necesaria = cantidad_sugerida, stock_cedi = NULL WHERE ejecucion_id = :e"), {"e": eid})
     d = datos_cedi(c)
     if regla == 0 or not d["stock"]:
         return {"limitadas": 0, "regla": regla, "aplicado": False}
     dias = dias_alcance(c)
     filas = c.execute(text("SELECT s.empresa, s.producto_id, s.bodega_id, s.cantidad_sugerida::float8, s.unidad_despacho::float8, "
-                           "COALESCE(s.pct_buffer::float8, 1e9), COALESCE(s.adu::float8, 0) FROM ddmrp.sugerencias_envio s "
+                           "COALESCE(s.pct_buffer::float8, 1e9), COALESCE(s.adu::float8, 0), tc.clase FROM ddmrp.sugerencias_envio s "
+                           "LEFT JOIN ddmrp.v_tienda_clase tc ON tc.empresa = s.empresa AND tc.bodega_id = s.bodega_id "
                            "WHERE s.ejecucion_id = :e AND s.cantidad_sugerida > 0 AND NOT s.condenado AND s.empresa = ANY(CAST(:em AS text[])) "
                            "AND NOT EXISTS (SELECT 1 FROM ddmrp.maestro_item mi JOIN ddmrp.laboratorio_sin_envio ls ON ls.laboratorio = mi.categoria "
                            "                WHERE mi.producto_id = s.producto_id) "
@@ -123,8 +139,8 @@ def aplicar_a_ejecucion(c, eid: int) -> dict:
                            "AND (cardinality(CAST(:d AS int[])) = 0 OR (s.empresa, s.bodega_id) IN (SELECT empresa, bodega_id FROM ddmrp.bodega_dia WHERE dia = ANY(CAST(:d AS int[]))))"),
                      {"e": eid, "d": dias, "em": d["empresas"]}).all()
     por_item: dict = {}
-    for emp, prod, bod, q, ud, pct, adu in filas:
-        por_item.setdefault((emp, prod), []).append((bod, q, ud, pct, adu))
+    for emp, prod, bod, q, ud, pct, adu, clase in filas:
+        por_item.setdefault((emp, prod), []).append((bod, q, ud, pct, adu, clase))
     cambios = []
     for (emp, prod), grupo in por_item.items():
         util = float(max(0, math.floor(d["stock"].get((emp, prod), 0.0) * (1 - d["reserva"].get(prod, 0.0)) + EPS)))

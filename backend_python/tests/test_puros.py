@@ -4,7 +4,7 @@ from datetime import date, timedelta
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app import apertura_calc, lanzamientos, mapa_calor, rec  # noqa: E402
+from app import apertura_calc, clase_tienda, lanzamientos, mapa_calor, rec, reparto  # noqa: E402
 
 
 def test_rec_pares_y_sin_original():
@@ -186,3 +186,28 @@ def test_apertura_pronostico_y_meses_con_venta():
     # como lo cuenta el motor: del mes de la primera venta al mes en curso, ambos incluidos
     assert apertura_calc.meses_con_venta("202611", date(2026, 11, 3)) == 1 and apertura_calc.meses_con_venta("202609", date(2026, 11, 3)) == 3
     assert apertura_calc.meses_con_venta(None, date(2026, 11, 3)) == 0
+
+
+def test_clase_tienda_abc():
+    r = clase_tienda.clasificar([("T1", 700), ("T2", 150), ("T3", 100), ("T4", 40), ("T5", 10), ("T6", 0)], 80, 95)
+    assert [r[k][0] for k in ("T1", "T2", "T3", "T4", "T5", "T6")] == ["A", "A", "B", "C", "C", "C"]   # T2 empieza en 70 % (< 80): entra en A
+    assert r["T6"][1] == 0 and abs(r["T5"][2] - 100.0) < 1e-6
+    assert clase_tienda.clasificar([("X", 0), ("Y", 0)])["X"][0] == "C"                                  # sin ventas: todas C
+    assert clase_tienda.clasificar([("B1", 5), ("A1", 5)], 50, 90)["A1"][0] == "A"                       # empate de venta: por codigo
+
+
+def test_reparto_desempate_y_regla_clase():
+    # dos tiendas con el mismo ADU y mismo % de buffer: 3 bloques de 1, alcanzan 3 de 4 pedidos
+    filas = [("T_C", 2, 1, 50, 10, "C"), ("T_A", 2, 1, 50, 10, "A")]
+    a = reparto.repartir(filas, 3, 1)
+    assert a["T_A"] == 2 and a["T_C"] == 1                          # el sobrante va a la A, no a la de codigo menor
+    a = reparto.repartir([("T1", 5, 1, 50, 10, "C"), ("T2", 5, 1, 50, 10, "A")], 5, 3)
+    assert a["T2"] == 5 and a["T1"] == 0                            # regla 3, mismo % de buffer: gana la A
+    # regla 5: toda la A antes que la B y la C; lo que sobra baja a la siguiente clase
+    filas = [("A1", 6, 1, 90, 5, "A"), ("B1", 6, 1, 10, 50, "B"), ("C1", 6, 1, 0, 80, "C")]
+    a = reparto.repartir(filas, 8, 5)
+    assert a == {"A1": 6, "B1": 2, "C1": 0}
+    a = reparto.repartir(filas, 20, 5)
+    assert a == {"A1": 6, "B1": 6, "C1": 6} or sum(a.values()) == 18   # cabe todo: cada una lo que pide
+    a = reparto.repartir([("A1", 4, 1, 1, 1, "A"), ("A2", 4, 1, 1, 3, "A")], 4, 5)
+    assert a["A2"] == 3 and a["A1"] == 1                            # dentro de la clase: proporcional a la rotacion

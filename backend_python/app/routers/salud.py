@@ -3,7 +3,9 @@ y su rotacion, para decidir que atender primero. Usa la misma clasificacion de /
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
+from sqlalchemy import text
 from .. import clasificacion as cl, excel
+from ..db import pg
 from ..security import usuario_actual, requiere
 from ..modo import fijar_modo
 from .clasificacion import _calcular
@@ -15,7 +17,10 @@ ORDEN_DIAG = ["prioridad", "reponer", "vigilar", "exceso_clave", "exceso", "dorm
 
 def _datos(user, criterio, meses, empresa, bodegas, labs, crit, q, zonas, diag):
     items, meta = _calcular(user, "tienda_item", criterio, meses, 80, 95, empresa, bodegas, labs, crit, q)
+    with pg.connect() as c:      # clase de la TIENDA (A/B/C por venta), distinta de la clase ABC×XYZ del item
+        ct = {(e, b): k for e, b, k in c.execute(text("SELECT empresa, bodega_id, clase FROM ddmrp.v_tienda_clase")).all()}
     for i in items:
+        i["clase_tienda"] = ct.get((i.get("empresa"), i.get("bodega_id")))
         i["diag"] = cl.diagnostico(i)
         a = (i.get("adu") or 0) / 30      # ADU es mensual: cobertura en dias de venta del flujo neto y del tope verde
         i["cob_dias"] = i["flujo_neto"] / a if a > 0 and i.get("flujo_neto") is not None else None
@@ -38,7 +43,7 @@ def salud(criterio: str = "margen", meses: int = 12, empresa: str | None = None,
     return {"meta": meta, "resumen": resumen, "filas": vis[:limit], "total": len(vis), "truncado": len(vis) > limit}
 
 
-COLS = [{"t": "Atender", "k": "etq", "w": 24}, {"t": "Empresa", "k": "empresa", "w": 9}, {"t": "Tienda", "k": "bodega_id", "w": 9}, {"t": "Nombre tienda", "k": "bodega_nombre", "w": 24},
+COLS = [{"t": "Atender", "k": "etq", "w": 24}, {"t": "Empresa", "k": "empresa", "w": 9}, {"t": "Tienda", "k": "bodega_id", "w": 9}, {"t": "Nombre tienda", "k": "bodega_nombre", "w": 24}, {"t": "Clase tienda", "k": "clase_tienda", "w": 9},
         {"t": "Item", "k": "producto_id", "w": 11}, {"t": "Descripcion", "k": "descripcion", "w": 44}, {"t": "Laboratorio", "k": "laboratorio", "w": 14},
         {"t": "Zona hoy", "k": "zona", "w": 11, "zona": True}, {"t": "% buffer", "k": "pct_buffer", "f": "dec1"}, {"t": "Clase", "k": "clase", "w": 8},
         {"t": "Ranking", "k": "puesto", "f": "int"}, {"t": "Inventario (u.)", "k": "inventario", "f": "int"}, {"t": "Flujo neto", "k": "flujo_neto", "f": "int"},

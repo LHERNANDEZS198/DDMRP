@@ -30,6 +30,9 @@ MAESTROS = {
         booleanas=("activa",),       # 1 / 0 / si / no: 0 = tienda apagada (no entra al motor, ni a la demanda del CEDI, ni se le traen ventas); vacio = activa
         nombre_en_tabla=True,        # el nombre de la tienda vive en la bitacora (fuente de verdad); un archivo con bodega_nombre / tienda / nombre lo guarda aqui
         conservar=("descripcion", "activa")), # una celda de nombre vacia en la carga NO borra el nombre que ya tiene
+    "clase-tienda": dict(
+        label="Clase de tienda (A/B/C): la calcula el motor por venta; aqui puedes fijarla a mano (A, B o C) y manda sobre la calculada", tabla="ddmrp.tienda_clase",
+        llave=["empresa", "bodega_id"], editable={"clase_manual": "txt"}, bodega="bodega_id", producto=None, global_=True, empresa_obligatoria=True),
     "bodegas-factura": dict(
         label="Bodegas que venden por factura: su venta se lee de las facturas (FED/FEM/NED/CFV), no del POS", tabla="ddmrp.bodega_factura",
         llave=["empresa", "bodega_id"], editable={"nota": "txt"}, bodega=None, producto=None, global_=True, empresa_obligatoria=True),
@@ -146,6 +149,9 @@ SIN_VACIAR = {"items", "factores", "parametros", "items-compras"}   # se llenan 
 OPS = {"eq": "=", "ne": "<>", "gt": ">", "lt": "<", "ge": ">=", "le": "<="}
 
 AYUDA = {
+    "clase-tienda": "Clase A/B/C de cada tienda según su venta neta (sin IVA) de los últimos meses cerrados, comparada con las demás tiendas de su empresa (Reglas de pedido: meses y cortes 80 % / 95 %). "
+                    "Se recalcula en cada corrida del motor. Si escribes A, B o C en «Clase fija» manda sobre la calculada; vacía = la calculada. Se usa de desempate en el reparto del CEDI "
+                    "(mismo % de buffer: gana la mejor clase), en la regla «Por clase de tienda» y se muestra en los reportes y filtros.",
     "bitacora": "Las tiendas que se abastecen y su nombre: ESTA es la fuente de verdad de las tiendas (el nombre que escribas aquí es el que se ve en todo el sistema; Siesa solo se usa si no hay nombre). Solo las que tú metas aquí (nada se agrega solo). Por tienda: nombre, lead time (días que tarda el producto en llegar a la tienda), frecuencia (cada cuántos días se abastece), "
                 "CEDI que la abastece (código de bodega del maestro CEDIs, ej. PT001) y centro de operación para el archivo plano de Siesa (si lo dejas vacío, el ETL lo completa desde Siesa y si no hay, se deduce con la regla del ejemplo). "
                 "El lead time × la venta diaria da la zona amarilla y la frecuencia × la venta diaria da la verde; además el lead time define el factor de la zona roja (maestro Factores). "
@@ -416,6 +422,8 @@ def leer(nombre: str, response: Response, bodega_id: str | None = None, producto
         sel += ", mi.descripcion"
     if nombre == "criterios-filtros":
         sel += ", t.nombre AS descripcion"
+    if nombre == "clase-tienda":    # lo calcula el motor: clase por venta, venta de los meses medidos y % acumulado (solo lectura)
+        sel += ", t.clase_calc, t.venta::float8 AS venta, t.pct_acum::float8 AS pct_acum, COALESCE(t.clase_manual, t.clase_calc) AS clase"
     if d.get("lectura"):   # items-compras: solo items vigentes (en el maestro de su empresa) y activos, con sus columnas de solo lectura
         j, s_, _ = _lectura_compras(); join += j; sel += s_
         w += " AND EXISTS (SELECT 1 FROM ddmrp.item_empresa ie WHERE ie.empresa = t.empresa AND ie.producto_id = t.producto_id) AND " + solo_activos("t")

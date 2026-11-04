@@ -15,11 +15,11 @@ const METRICAS_MAPA = [{ k: 'inventario', label: 'Inventario (u.)' }, { k: 'fluj
 const ZONAS = ['ROJA', 'AMARILLA', 'VERDE', 'EXCESO']
 const KEY: Record<string, string> = { ROJA: 'roja', AMARILLA: 'amarilla', VERDE: 'verde', EXCESO: 'exceso' }
 const NIVELES = [
-  { k: 'empresa', label: 'Empresa' }, { k: 'bodega', label: 'Tienda' }, { k: 'laboratorio', label: 'Laboratorio' }, { k: 'criterio', label: 'Criterio de items' },
+  { k: 'empresa', label: 'Empresa' }, { k: 'bodega', label: 'Tienda' }, { k: 'clase', label: 'Clase de tienda' }, { k: 'laboratorio', label: 'Laboratorio' }, { k: 'criterio', label: 'Criterio de items' },
   { k: 'item', label: 'Item' }, { k: 'detalle', label: 'Tienda × item' },
 ] as const
 type Nivel = typeof NIVELES[number]['k']
-const SIGUIENTE: Record<Nivel, Nivel> = { empresa: 'bodega', bodega: 'laboratorio', laboratorio: 'item', criterio: 'item', item: 'detalle', detalle: 'detalle' }
+const SIGUIENTE: Record<Nivel, Nivel> = { empresa: 'bodega', clase: 'bodega', bodega: 'laboratorio', laboratorio: 'item', criterio: 'item', item: 'detalle', detalle: 'detalle' }
 type F = { empresa: string[]; bodegas: string[]; labs: string[]; q: string; zonas: string[]; dia: string; plan: string; crit: string[] }
 const VACIO: F = { empresa: [], bodegas: [], labs: [], q: '', zonas: [], dia: '', plan: '', crit: [] }
 
@@ -160,8 +160,12 @@ export default function Control() {
   const planNombre = (p: string) => opc.criterios?.find((x: any) => x.plan_id === p)?.nombre ?? p
   const critNombre = (p: string, v: string) => opc.criterios?.find((x: any) => x.plan_id === p)?.valores.find((y: any) => y.id === v)?.nombre ?? v
   const nombreTienda = (id: string) => opc.tiendas.find((t: any) => t.bodega_id === id)?.nombre
+  const claseTienda = (id: string) => opc.tiendas.find((t: any) => t.bodega_id === id)?.clase
+  const [clases, setClases] = useState<string[]>([])   // filtro por clase de tienda: marca las tiendas de esa clase en el filtro Tienda
+  const elegirClases = (v: string[]) => { setClases(v); setF(x => ({ ...x, bodegas: v.length ? tiendasDeEmpresa(opc.tiendas, x.empresa).filter((t: any) => v.includes(t.clase)).map((t: any) => t.bodega_id) : [] })) }
   const entrar = (clave: string) => {   // zoom in: aplica el filtro del grupo y baja un nivel
     setF(x => nivel === 'empresa' ? { ...x, empresa: [clave] } : nivel === 'bodega' ? { ...x, bodegas: [clave] }
+      : nivel === 'clase' ? { ...x, bodegas: tiendasDeEmpresa(opc.tiendas, x.empresa).filter((t: any) => (t.clase ?? '(sin clase)') === clave).map((t: any) => t.bodega_id) }
       : nivel === 'laboratorio' ? { ...x, labs: [clave] } : nivel === 'criterio' ? { ...x, plan: x.plan || opc.criterios?.[0]?.plan_id || '', crit: [clave] } : nivel === 'item' ? { ...x, q: clave } : x)
     if (nivel === 'item') setQTxt(clave)
     setNivel(SIGUIENTE[nivel])
@@ -175,6 +179,7 @@ export default function Control() {
   const colsGrupo: ColDef[] = useMemo(() => [
     { field: 'clave', headerName: NIVELES.find(n => n.k === nivel)?.label, width: 130, pinned: 'left' },
     { field: 'nombre', headerName: 'Nombre', flex: 1, minWidth: 180 },
+    { field: 'clase_tienda', headerName: 'Clase', width: 80, filter: true, hide: nivel !== 'bodega', headerTooltip: AYUDA['Clase de tienda'] },
     { field: 'n', headerName: 'Combinaciones', type: 'numericColumn', width: 130, headerTooltip: 'Pares tienda × item que tiene el motor en este grupo: cada fila de buffer que calcula' },
     { field: 'inventario', headerName: 'Inventario', type: 'numericColumn', width: 115, valueFormatter: p => Math.round(p.value ?? 0).toLocaleString(), headerTooltip: 'Unidades en inventario hoy (suma de lo filtrado)' },
     { field: 'en_transito', headerName: 'Tránsito', type: 'numericColumn', width: 100, valueFormatter: p => Math.round(p.value ?? 0).toLocaleString() },
@@ -205,6 +210,7 @@ export default function Control() {
   const colsDetCambios: ColDef[] = [
     { field: 'bodega_id', headerName: 'Tienda', width: 100, pinned: 'left', filter: true },
     { field: 'bodega_nombre', headerName: 'Nombre tienda', width: 160, filter: true },
+    { field: 'clase_tienda', headerName: 'Clase', width: 80, filter: true, headerTooltip: AYUDA['Clase de tienda'] },
     { field: 'producto_id', headerName: 'Item', width: 100, filter: true },
     { field: 'descripcion', headerName: 'Descripción', flex: 1, minWidth: 220, filter: true },
     { field: 'laboratorio', headerName: 'Lab.', width: 90, filter: true },
@@ -217,6 +223,7 @@ export default function Control() {
   const colsDet: ColDef[] = [
     { field: 'bodega_id', headerName: 'Tienda', width: 100, pinned: 'left', filter: true },
     { field: 'bodega_nombre', headerName: 'Nombre tienda', width: 160, filter: true },
+    { field: 'clase_tienda', headerName: 'Clase', width: 80, filter: true, headerTooltip: AYUDA['Clase de tienda'] },
     { field: 'producto_id', headerName: 'Item', width: 100, filter: true },
     { field: 'descripcion', headerName: 'Descripción', flex: 1, minWidth: 220, filter: true },
     { field: 'laboratorio', headerName: 'Lab.', width: 90, filter: true },
@@ -292,8 +299,11 @@ export default function Control() {
       {/* Filtros */}
       <Paper variant="outlined" sx={{ flexShrink: 0, p: 1.25, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
         <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 240, flex: '2 1 240px' }} options={tiendasDeEmpresa(opc.tiendas, f.empresa).map((t: any) => t.bodega_id)} value={f.bodegas}
-          getOptionLabel={(o: string) => nombreTienda(o) ? `${o} · ${nombreTienda(o)}` : o}
+          getOptionLabel={(o: string) => (nombreTienda(o) ? `${o} · ${nombreTienda(o)}` : o) + (claseTienda(o) ? ` [${claseTienda(o)}]` : '')}
           onChange={(_, v) => setF(x => ({ ...x, bodegas: v }))} renderInput={p => <TextField {...p} label="Tienda" />} />
+        <Autocomplete multiple size="small" limitTags={3} sx={{ minWidth: 150, flex: '0 1 170px' }} options={['A', 'B', 'C']} value={clases}
+          getOptionLabel={(o: string) => `Clase ${o}`} onChange={(_, v) => elegirClases(v)}
+          renderInput={p => <TextField {...p} label="Clase de tienda" />} />
         <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 240, flex: '2 1 240px' }} options={opc.laboratorios.map((l: any) => l.codigo)} value={f.labs}
           getOptionLabel={(o: string) => { const l = opc.laboratorios.find((x: any) => x.codigo === o); return l?.nombre ? `${o} · ${l.nombre}` : o }}
           onChange={(_, v) => setF(x => ({ ...x, labs: v }))} renderInput={p => <TextField {...p} label="Laboratorio" />} />
@@ -313,7 +323,7 @@ export default function Control() {
           slotProps={{ select: { native: true }, inputLabel: { shrink: true } }}>
           <option value="">Todos</option>{opc.dias.map((d: number) => <option key={d} value={d}>{d}</option>)}
         </TextField>
-        {hayFiltros && <Button size="small" onClick={() => { setF(VACIO); setQTxt('') }}>Toda la empresa</Button>}
+        {hayFiltros && <Button size="small" onClick={() => { setF(VACIO); setQTxt(''); setClases([]) }}>Toda la empresa</Button>}
       </Paper>
 
       {(cambiosModo || tendModo || mapaModo) && (
