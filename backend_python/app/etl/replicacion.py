@@ -1058,6 +1058,12 @@ def _sincronizar_ventas() -> dict:
             raise
         finally:
             raw.close()
+    try:        # la clase A/B/C de las tiendas depende de estas ventas: se recalcula al traerlas (el motor tambien la recalcula)
+        from ..clase_tienda import recalcular
+        with pg.begin() as c:
+            res["clase_tienda"] = recalcular(c)
+    except Exception:
+        log.exception("No se pudo recalcular la clase de las tiendas")
     return res
 
 
