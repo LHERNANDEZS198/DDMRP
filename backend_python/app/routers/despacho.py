@@ -1,7 +1,7 @@
 from datetime import date
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from ..db import pg
@@ -99,6 +99,84 @@ def cedi(user=Depends(requiere("ver_despacho"))):
         dias_reparto = reparto.dias_alcance(c)
     return {"minimo_envio": minimo, "con_costos": con_costos, "dias_reparto": dias_reparto, "bodega": settings.siesa_cedi_bodega, "por_empresa": por_empresa, "productos": n, "con_stock": con, "corte": corte, "regla": regla,
             "regla_nombre": reparto.REGLAS.get(regla, "?"), "items_con_reserva": res, "limitadas": ult, "activo": regla != 0 and n > 0}
+
+class FilaPedido(BaseModel):
+    b: str            # bodega
+    p: str            # producto
+    q: float          # cantidad a enviar tal como se ve en pantalla (incluye lo editado a mano)
+
+
+class ExcelPedido(BaseModel):
+    empresa: str
+    filas: list[FilaPedido] = Field(min_length=1, max_length=50000)
+
+
+@router.post("/excel-pedido")
+def excel_pedido(req: ExcelPedido, user=Depends(requiere("ver_despacho"))):
+    """Excel de lo que se ve en la matriz: tienda, referencia, descripcion, cantidad, COSTO UNITARIO y COSTO TOTAL (costo promedio), con totales y un resumen por tienda.
+    No es el plano de Siesa (ese no cambia): es para revisar o compartir el pedido. Solo salen filas de la ultima corrida a las que el usuario tiene acceso."""
+    from io import BytesIO
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+    if req.empresa not in ("05", "21"):
+        raise HTTPException(400, "Elige la empresa (05 o 21)")
+    perm = empresas_permitidas(user["id"])
+    if perm and req.empresa not in perm:
+        raise HTTPException(403, f"Tu usuario no tiene asignada la empresa {req.empresa}")
+    w, p = filtro_sql_permisos(user, "s.bodega_id", "mi.categoria")
+    cant = {(f.b, f.p): f.q for f in req.filas}
+    llaves = list(cant)
+    p.update(emp=req.empresa, k_b=[k[0] for k in llaves], k_p=[k[1] for k in llaves])
+    with pg.connect() as c:
+        datos = c.execute(text(f"""SELECT s.bodega_id, s.producto_id, mi.descripcion, mi.categoria AS laboratorio, ci.costo::float8 AS costo
+                                   FROM ddmrp.sugerencias_envio s LEFT JOIN ddmrp.maestro_item mi USING (producto_id)
+                                        LEFT JOIN ddmrp.costo_item ci ON ci.producto_id = s.producto_id
+                                   WHERE s.ejecucion_id = {ULTIMA} AND s.empresa = :emp AND {w}
+                                     AND (s.bodega_id, s.producto_id) IN (SELECT k.b, k.p FROM unnest(CAST(:k_b AS text[]), CAST(:k_p AS text[])) k(b, p))
+                                   ORDER BY s.bodega_id, s.producto_id"""), p).all()
+    if not datos:
+        raise HTTPException(404, "Ninguna de esas filas está en la última corrida del motor (¿cambió la corrida?). Recarga la matriz.")
+    wb = Workbook(); ws = wb.active; ws.title = "Pedido"
+    enc = ["CodBodega", "Referencia", "Desc. item", "Laboratorio", "Total", "Costo unitario", "Costo total"]
+    ws.append(enc)
+    for i, (b, pid, desc, lab, costo) in enumerate(datos, start=2):
+        ws.append([b, pid, desc, lab, cant[(b, pid)], costo, f"=IF(F{i}=\"\",\"\",E{i}*F{i})"])
+    n = len(datos) + 1
+    ws.append(["TOTAL", None, None, None, f"=SUM(E2:E{n})", None, f"=SUM(G2:G{n})"])
+    ws.append([]); ws.append(["Costo unitario = costo promedio del maestro de costos. Las filas sin costo quedan vacías y no suman al costo total."])
+    azul = PatternFill("solid", fgColor="1F4E78")
+    for c_ in ws[1]:
+        c_.font = Font(bold=True, color="FFFFFF"); c_.fill = azul; c_.alignment = Alignment(horizontal="center")
+    for c_ in ws[n + 1]:
+        c_.font = Font(bold=True)
+    for r in range(2, n + 2):
+        ws.cell(r, 5).number_format = "#,##0"; ws.cell(r, 6).number_format = '"$"#,##0.00'; ws.cell(r, 7).number_format = '"$"#,##0'
+    for col, ancho in zip("ABCDEFG", (11, 12, 44, 16, 10, 16, 16)):
+        ws.column_dimensions[col].width = ancho
+    ws.freeze_panes = "A2"; ws.auto_filter.ref = f"A1:G{n}"
+    rs = wb.create_sheet("Resumen por tienda")
+    rs.append(["CodBodega", "Referencias", "Unidades", "Costo total"])
+    tiendas = sorted({d[0] for d in datos})
+    for i, b in enumerate(tiendas, start=2):
+        rs.append([b, f"=COUNTIF(Pedido!A$2:A${n},A{i})", f"=SUMIF(Pedido!A$2:A${n},A{i},Pedido!E$2:E${n})", f"=SUMIF(Pedido!A$2:A${n},A{i},Pedido!G$2:G${n})"])
+    m = len(tiendas) + 1
+    rs.append(["TOTAL", f"=SUM(B2:B{m})", f"=SUM(C2:C{m})", f"=SUM(D2:D{m})"])
+    for c_ in rs[1]:
+        c_.font = Font(bold=True, color="FFFFFF"); c_.fill = azul; c_.alignment = Alignment(horizontal="center")
+    for c_ in rs[m + 1]:
+        c_.font = Font(bold=True)
+    for r in range(2, m + 2):
+        rs.cell(r, 3).number_format = "#,##0"; rs.cell(r, 4).number_format = '"$"#,##0'
+    for i, ancho in enumerate((12, 13, 12, 16), start=1):
+        rs.column_dimensions[get_column_letter(i)].width = ancho
+    out = BytesIO(); wb.save(out)
+    sin_costo = sum(1 for d in datos if d[4] is None)
+    bitacora.evento("excel_pedido", bitacora.usuario_de(user), f"Excel del pedido (matriz de despacho, empresa {req.empresa}): {len(datos)} filas, {len(tiendas)} tiendas",
+                    {"filas": len(datos), "tiendas": len(tiendas), "sin_costo": sin_costo})
+    h = {"Content-Disposition": f'attachment; filename="Pedido_matriz_{date.today():%Y%m%d}.xlsx"', "X-Filas": str(len(datos)), "X-Sin-Costo": str(sin_costo)}
+    return Response(out.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers=h)
+
 
 
 class Aprobacion(BaseModel):

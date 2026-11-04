@@ -13,6 +13,7 @@
 --   * incluye el tipo NCP (nota credito) en los POS archivados; el original solo lo tenia en los POS vigentes
 -- Tres ramas, sin traslape: POS vigente (t9820/t9830), POS archivado (t9920/t9930) y facturas de las bodegas que no pasan
 -- por POS (t350/t470).
+-- MBG01 (Melonn) vende por facturas FED/NED, no por POS: sin estar en la lista de la tercera rama su venta no entraba y la tienda quedaba con ADU 0.
 SELECT mes, bodega, referencia, CONVERT(float, SUM(cantidad)) AS cantidad, CONVERT(float, SUM(valor)) AS valor
 FROM (
   SELECT CONVERT(char(6), F1.f9820_id_fecha_docto, 112) AS mes, RTRIM(B.f150_id) AS bodega, RTRIM(i.f120_referencia) AS referencia,
@@ -48,7 +49,7 @@ FROM (
   JOIN dbo.t121_mc_items_extensiones ext ON ext.f121_rowid = det.f470_rowid_item_ext
   JOIN dbo.t120_mc_items ite ON ite.f120_rowid = ext.f121_rowid_item
   WHERE enc.f350_id_tipo_docto IN ('CFV', 'FED', 'FEM', 'NED')
-    AND bod.f150_id IN ('DM039', 'DM040', 'DM140', 'DM240', 'DM340', 'TC001')
+    AND bod.f150_id IN ('DM039', 'DM040', 'DM140', 'DM240', 'DM340', 'TC001', 'MBG01')
     AND bod.f150_id IN :bodegas AND ite.f120_id_cia = :cia AND enc.f350_fecha >= :desde /*ACTIVO:ext,ite*/
 ) v
 GROUP BY mes, bodega, referencia

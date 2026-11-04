@@ -10,7 +10,8 @@ from ..auditoria_xlsx import construir
 from ..bitacora import evento, usuario_de
 from ..db import pg
 from ..security import empresas_permitidas, filtro_sql_permisos, requiere
-from .control import FROM, ULTIMA, _filtros
+from ..modo import fijar_modo
+from .control import FROM, ULTIMA, _filtros, filtros as _filtros_control
 
 router = APIRouter(prefix="/auditoria", tags=["auditoria"])
 TOPE = 20000
@@ -33,6 +34,13 @@ def _donde(user, bodegas, labs, q, zonas, dia, empresa, crit, solo_sugerido):
     if solo_sugerido:
         cond.append("(s.cantidad_sugerida > 0 OR COALESCE(s.cantidad_necesaria, 0) > 0)")
     return " AND ".join(cond), p
+
+
+@router.get("/filtros", dependencies=[Depends(fijar_modo)])
+def filtros_auditoria(user=Depends(requiere("ver_auditoria"))):
+    """Opciones de los filtros de la pagina (tiendas, laboratorios, empresas). Son las mismas de Control, pero con el permiso de Auditoria: /control/filtros pide
+    «ver_control» y un usuario que solo audita se quedaba con las listas vacias. Siempre en modo tiendas, igual que la vista."""
+    return _filtros_control(user)
 
 
 @router.get("/vista")

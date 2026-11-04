@@ -42,7 +42,7 @@ export default function Auditoria() {
   const [d, setD] = useState<{ total: number; filas: any[]; tope_excel: number; ejecucion: any } | null>(null)
   const [cargando, setCargando] = useState(true)
   const [msg, setMsg] = useState(''); const [bajando, setBajando] = useState(false)
-  useEffect(() => { api('/control/filtros').then(setOpc).catch(() => {}) }, [])
+  useEffect(() => { api('/auditoria/filtros').then(setOpc).catch(e => setMsg('No se pudieron cargar las tiendas y laboratorios: ' + e.message)) }, [])
   const qs = useMemo(() => {
     const p = new URLSearchParams()
     if (f.empresas.length) p.set('empresa', f.empresas.join(','))

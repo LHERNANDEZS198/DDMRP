@@ -67,7 +67,7 @@ export default function Despacho() {
   // empresa obligatoria (05 Funat / 21 Stores): cada una tiene su CEDI, su matriz y su plano
   const { una: empresa } = useEmpresa()
   // filtros de la lista (en pantalla): texto, laboratorio, zona, solo lo limitado por el CEDI
-  const [fTexto, setFTexto] = useState(''); const [fLab, setFLab] = useState(''); const [fZona, setFZona] = useState(''); const [fLim, setFLim] = useState(true)   // por defecto solo lo que el CEDI no alcanzó a cubrir
+  const [fTexto, setFTexto] = useState(''); const [fLab, setFLab] = useState(''); const [fZona, setFZona] = useState(''); const [fLim, setFLim] = useState(false)   // apagado por defecto: ver todo lo que se enviará (marcarlo deja solo lo que el CEDI no alcanzó a cubrir)
   const [fTienda, setFTienda] = useState<string | null>(null)   // ver el detalle de los items de una sola tienda
   const [fCero, setFCero] = useState(false)   // filas con 0 a enviar: ocultas por defecto (a la tienda no le llega nada)
   const [porTienda, setPorTienda] = useState(false)
@@ -143,6 +143,15 @@ export default function Despacho() {
       setMsg(`Excel de auditoría descargado: ${filas.length.toLocaleString('es-CO')} filas`
         + (vista.length > TOPE_AUD ? ` (de ${vista.length.toLocaleString('es-CO')}: el Excel lleva las primeras ${TOPE_AUD.toLocaleString('es-CO')}, filtra más para el resto)` : ''))
     } catch (x: any) { setMsg('Error: ' + x.message) } finally { setBajandoAud(false) }
+  }
+  const [bajandoPed, setBajandoPed] = useState(false)
+  const excelPedido = async () => {
+    if (!vista.length) return
+    setBajandoPed(true); setMsg('Armando el Excel del pedido…')
+    try {
+      await descargar('/despacho/excel-pedido', { empresa, filas: vista.map((x: any) => ({ b: x.bodega_id, p: x.producto_id, q: unidades(x) })) })
+      setMsg(`Excel del pedido descargado: ${vista.length.toLocaleString('es-CO')} filas, con costo unitario y total` + (tot.sinCosto ? ` · ${tot.sinCosto} filas sin costo` : ''))
+    } catch (x: any) { setMsg('Error: ' + x.message) } finally { setBajandoPed(false) }
   }
   const textoCedi: string = !cedi ? '' : (
     cedi.regla === 0 ? 'El reparto del inventario del CEDI está apagado: se sugiere todo lo que pide el buffer.'
@@ -251,6 +260,8 @@ export default function Despacho() {
         <Chip label={`${tot.lista.length} tiendas`} size="small" />
         {bajoMin.size > 0 && <Tooltip title={`En gris: ${[...bajoMin].join(', ')}. No salen en el plano ni se marcan como enviadas.`}><Chip label={`${bajoMin.size} tiendas bajo el mínimo`} size="small" /></Tooltip>}
         {tot.sinCosto > 0 && <Chip label={`${tot.sinCosto} filas sin costo`} size="small" color="warning" />}
+        <Tooltip title="Descarga a Excel lo que ves ahora: tienda, referencia, cantidad, costo unitario y costo total, con totales y resumen por tienda (no es el plano de Siesa)">
+          <span><Button size="small" variant="outlined" startIcon={<Download />} onClick={excelPedido} disabled={bajandoPed || !vista.length || !empresa}>Excel pedido</Button></span></Tooltip>
         {pAudit && <Tooltip title="Descarga a Excel, con todas las fórmulas del cálculo, exactamente las filas que ves ahora (con los filtros de la pantalla)">
           <span><Button size="small" variant="outlined" startIcon={<Download />} onClick={auditoria} disabled={bajandoAud || !vista.length || !empresa}>Excel auditoría</Button></span></Tooltip>}
         <Button size="small" variant={porTienda ? 'contained' : 'outlined'} endIcon={<ExpandMore sx={{ transform: porTienda ? 'rotate(180deg)' : 'none' }} />} onClick={() => setPorTienda(!porTienda)}>{porTienda ? 'Volver a la vista por ítem' : 'Por tienda'}</Button>
