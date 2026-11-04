@@ -117,7 +117,7 @@ function ConfigTabla({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
       ? { field: k, editable: pCarga, sort: srt(k) }
       : { field: k, editable: pCarga, type: 'numericColumn', sort: srt(k) })
     // items: una columna por plan de criterios (el nombre del plan es el encabezado, el criterio es el valor)
-    const conocidas = new Set([...def.llave, ...def.editable, 'descripcion', 'bodega_nombre', 'costo', 'estado', 'clase_calc', 'clase', 'venta', 'pct_acum', ...(def.lectura ?? []).map(c => c.k)])
+    const conocidas = new Set([...def.llave, ...def.editable, 'descripcion', 'bodega_nombre', 'costo', 'estado', 'clase_calc', 'clase', 'venta', 'pct_venta', 'pct_acum', ...(def.lectura ?? []).map(c => c.k)])
     const extra: ColDef[] = def.clave === 'items' && rows[0]
       ? Object.keys(rows[0]).filter(k => !conocidas.has(k)).map(k => ({ field: k, headerName: k, width: 190 })) : []
     const ed2 = def.clave === 'items-compras' ? ed.map(c => c.field === 'cotizacion' ? { ...c, headerName: 'Cotización manual', headerTooltip: 'Solo si quieres pisar la cotización de Siesa. Vacía = se usa la de Siesa', width: 150 } : c.field === 'unidad_pedido' ? { ...c, headerName: 'Unidad de pedido', width: 140 } : c.field === 'unidad_empaque' ? { ...c, headerName: 'Unidad de empaque', width: 150 } : c.field === 'moq' ? { ...c, headerName: 'MOQ (u.)', width: 110, headerTooltip: 'Cantidad mínima de compra en unidades (por defecto 1). Si el pedido queda por debajo, se sube a este mínimo al múltiplo de pedido' } : c) : def.clave === 'bitacora' ? ed.map(c => c.field === 'descripcion' ? { ...c, headerName: 'Tienda (nombre)', width: 240 } : c) : def.clave === 'items' ? ed.map(c => c.field === 'categoria' ? { ...c, headerName: 'Laboratorio (código)', width: 150 } : c.field === 'descripcion' ? { ...c, width: 300 } : c) : ed
@@ -125,10 +125,11 @@ function ConfigTabla({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
       valueFormatter: p => p.value == null ? '' : '$' + Math.round(p.value).toLocaleString('es-CO'), headerTooltip: 'Costo promedio por instalación (lo trae el ETL desde Siesa). Solo lectura.' }] : []
     const est: ColDef[] = def.clave === 'items' ? [{ field: 'estado', headerName: 'Estado Siesa', width: 120, headerTooltip: 'Estado del item en Siesa (extensión del item). Solo lectura; sin dato = activo.' }] : []
     const clasT: ColDef[] = def.clave === 'clase-tienda' ? [
-      { field: 'clase_calc', headerName: 'Clase calculada', width: 130, headerTooltip: 'La que sale de la venta de los meses medidos. Solo lectura.' },
-      { field: 'clase', headerName: 'Clase vigente', width: 120, headerTooltip: 'La fija si la hay; si no, la calculada. Es la que usan el reparto y los reportes.' },
-      { field: 'venta', headerName: 'Venta medida', type: 'numericColumn', width: 150, valueFormatter: p => p.value == null ? '' : '$' + Math.round(p.value).toLocaleString('es-CO') },
-      { field: 'pct_acum', headerName: '% acumulado', type: 'numericColumn', width: 120, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(1) + ' %' }] : []
+      { field: 'clase_calc', headerName: 'Clase calculada', width: 130, headerTooltip: 'La que sale de la venta: se ordenan las tiendas de su empresa de la que más vende a la que menos y se acumula el % de la venta. A = hasta el 80 % acumulado, B = hasta el 95 %, C = el resto (cortes y meses en Reglas de pedido). La recalcula el motor en cada corrida. Solo lectura.' },
+      { field: 'clase', headerName: 'Clase vigente', width: 120, headerTooltip: 'La que realmente se usa en el reparto del CEDI, los reportes y los filtros: la «Clase fija» si la escribiste; si no, la calculada. Si coinciden, no hay clase fija.' },
+      { field: 'venta', headerName: 'Venta medida', type: 'numericColumn', width: 150, headerTooltip: 'Venta neta (sin IVA) de la tienda en los meses cerrados que se miden (Reglas de pedido).', valueFormatter: p => p.value == null ? '' : '$' + Math.round(p.value).toLocaleString('es-CO') },
+      { field: 'pct_venta', headerName: '% de la venta', type: 'numericColumn', width: 125, headerTooltip: 'Lo que esta tienda vende frente al total de las tiendas de su empresa en los meses medidos.', valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(1) + ' %' },
+      { field: 'pct_acum', headerName: '% acumulado', type: 'numericColumn', width: 120, headerTooltip: 'Suma del % de la venta de esta tienda y de todas las que venden más que ella. Con él se corta A / B / C.', valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(1) + ' %' }] : []
     // columnas de solo lectura que declara el maestro (p.ej. items de compras: laboratorio, línea, exhibición, costo, proveedor)
     const lect: ColDef[] = (def.lectura ?? []).map((c): ColDef => {
       const base = { field: c.k, headerName: c.t, headerTooltip: 'Solo lectura (viene de Siesa)' }
@@ -138,7 +139,7 @@ function ConfigTabla({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
         headerTooltip: 'Tarifa estimada del grupo impositivo del item; Siesa calcula el IVA real al crear la OC' }
       return { ...base, width: ['proveedor', 'cotizacion_vigencia', 'ultimo_costo_fecha'].includes(c.k) ? 130 : 180 }
     })
-    const todas = [...llave, ...desc, ...ed2.map(c => def.clave === 'clase-tienda' && c.field === 'clase_manual' ? { ...c, headerName: 'Clase fija (A/B/C)', width: 150 } : c), ...clasT, ...lect, ...costo, ...est, ...extra]
+    const todas = [...llave, ...desc, ...ed2.map(c => def.clave === 'clase-tienda' && c.field === 'clase_manual' ? { ...c, headerName: 'Clase fija (A/B/C)', width: 150, headerTooltip: 'Opcional: escribe A, B o C para forzar la clase de esta tienda sin importar su venta. Vacía = se usa la calculada.' } : c), ...clasT, ...lect, ...costo, ...est, ...extra]
     if (def.clave === 'proveedores') {   // NIT y nombre fijos a la izquierda; la empresa y la sucursal van después
       const g = (f: string) => todas.find(c => c.field === f) as ColDef
       const nit: ColDef = { ...g('proveedor_id'), headerName: 'NIT', width: 130, pinned: 'left', checkboxSelection: pCarga && !def.sin_reemplazo, headerCheckboxSelection: pCarga && !def.sin_reemplazo }
