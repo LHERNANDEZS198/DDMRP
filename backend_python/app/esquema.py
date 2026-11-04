@@ -472,6 +472,7 @@ SENTENCIAS_APERTURA = [
          empresa TEXT NOT NULL, bodega_id TEXT NOT NULL, clase_calc CHAR(1) CHECK (clase_calc IN ('A','B','C')),
          venta NUMERIC(18,2), pct_acum NUMERIC(6,2), clase_manual CHAR(1) CHECK (clase_manual IN ('A','B','C')),
          calculada TIMESTAMPTZ, PRIMARY KEY (empresa, bodega_id))""",
+    "ALTER TABLE ddmrp.tienda_clase ADD COLUMN IF NOT EXISTS meses INT",
     "CREATE OR REPLACE VIEW ddmrp.v_tienda_clase AS SELECT empresa, bodega_id, COALESCE(clase_manual, clase_calc) AS clase, clase_calc, clase_manual, venta, pct_acum FROM ddmrp.tienda_clase",
     "INSERT INTO ddmrp.parametro VALUES ('clase_tienda_meses', 6, 'Clasificacion ABC de tiendas: meses cerrados de venta que se miden') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('clase_tienda_corte_a', 80, 'Clasificacion ABC de tiendas: % acumulado de la venta que cubre la clase A') ON CONFLICT DO NOTHING",

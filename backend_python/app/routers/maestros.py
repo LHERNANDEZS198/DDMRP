@@ -423,7 +423,7 @@ def leer(nombre: str, response: Response, bodega_id: str | None = None, producto
     if nombre == "criterios-filtros":
         sel += ", t.nombre AS descripcion"
     if nombre == "clase-tienda":    # lo calcula el motor: clase por venta, venta de los meses medidos y % acumulado (solo lectura)
-        sel += ", t.clase_calc, t.venta::float8 AS venta, t.pct_acum::float8 AS pct_acum, (100.0 * t.venta / NULLIF((SELECT sum(t2.venta) FROM ddmrp.tienda_clase t2 WHERE t2.empresa = t.empresa), 0))::float8 AS pct_venta, COALESCE(t.clase_manual, t.clase_calc) AS clase"
+        sel += ", t.clase_calc, t.venta::float8 AS venta, t.pct_acum::float8 AS pct_acum, (100.0 * t.venta / NULLIF((SELECT sum(t2.venta) FROM ddmrp.tienda_clase t2 WHERE t2.empresa = t.empresa), 0))::float8 AS pct_venta, (t.venta / NULLIF(t.meses, 0))::float8 AS venta_prom, COALESCE(t.clase_manual, t.clase_calc) AS clase"
     if d.get("lectura"):   # items-compras: solo items vigentes (en el maestro de su empresa) y activos, con sus columnas de solo lectura
         j, s_, _ = _lectura_compras(); join += j; sel += s_
         w += " AND EXISTS (SELECT 1 FROM ddmrp.item_empresa ie WHERE ie.empresa = t.empresa AND ie.producto_id = t.producto_id) AND " + solo_activos("t")

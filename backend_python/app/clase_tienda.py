@@ -51,10 +51,10 @@ def recalcular(c) -> dict:
     c.execute(text("DELETE FROM ddmrp.tienda_clase t WHERE t.clase_manual IS NULL AND NOT EXISTS "
                    "(SELECT 1 FROM ddmrp.abast_bitacora b WHERE b.empresa = t.empresa AND b.bodega_id = t.bodega_id AND COALESCE(b.activa, 1) = 1)"))
     if res:
-        c.execute(text("""INSERT INTO ddmrp.tienda_clase (empresa, bodega_id, clase_calc, venta, pct_acum, calculada)
-                          VALUES (:e, :b, :c, :v, :p, now())
+        c.execute(text("""INSERT INTO ddmrp.tienda_clase (empresa, bodega_id, clase_calc, venta, pct_acum, meses, calculada)
+                          VALUES (:e, :b, :c, :v, :p, :m, now())
                           ON CONFLICT (empresa, bodega_id) DO UPDATE SET clase_calc = EXCLUDED.clase_calc, venta = EXCLUDED.venta,
-                                pct_acum = EXCLUDED.pct_acum, calculada = EXCLUDED.calculada"""),
-                  [{"e": e, "b": b, "c": cl, "v": v, "p": p} for (e, b), (cl, v, p) in res.items()])
+                                pct_acum = EXCLUDED.pct_acum, meses = EXCLUDED.meses, calculada = EXCLUDED.calculada"""),
+                  [{"e": e, "b": b, "c": cl, "v": v, "p": p, "m": meses} for (e, b), (cl, v, p) in res.items()])
     return {"tiendas": len(res), "A": sum(1 for x in res.values() if x[0] == "A"), "B": sum(1 for x in res.values() if x[0] == "B"),
             "C": sum(1 for x in res.values() if x[0] == "C"), "meses": meses}
