@@ -45,6 +45,7 @@ export const NAV = [
   // lo que se agrupa en el menú «Config» (desplegable)
   { to: '/motor', label: 'Motor DDMRP', icon: <Calculate />, req: ['correr_motor'] },
   { to: '/reglas', label: 'Reglas de pedido', icon: <Rule />, req: ['editar_reglas', 'correr_motor'] },
+  { to: '/compras/reglas', label: 'Reglas de compras', icon: <Rule />, req: ['ver_compras', 'cargar_maestros_compras'] },
   { to: '/usuarios', label: 'Usuarios', icon: <ManageAccounts />, req: ['admin_usuarios'] },
   { to: '/log', label: 'Log', icon: <History />, req: ['ver_log'] },
   { to: '/diagnostico', label: 'Diagnóstico', icon: <MonitorHeart />, req: ['ver_diagnostico'] },
@@ -64,7 +65,7 @@ export default function Shell() {
   const [anclaV, setAnclaV] = useState<HTMLElement | null>(null)
   const [menuEmp, setMenuEmp] = useState(false) // con el menú abierto el tooltip se apaga: tapaba la primera opción
   // menú «Config»: motor, reglas de pedido, usuarios, log y diagnóstico en un solo desplegable
-  const CONFIG = ['/motor', '/reglas', '/usuarios', '/log', '/diagnostico']
+  const CONFIG = ['/motor', '/reglas', '/compras/reglas', '/usuarios', '/log', '/diagnostico']
   const CONFIG_OK = NAV_OK.filter(n => CONFIG.includes(n.to))
   const [anclaC, setAnclaC] = useState<HTMLElement | null>(null)
   const enConfig = CONFIG.some(t => loc.pathname.startsWith(t))
@@ -167,7 +168,7 @@ export default function Shell() {
             </>)}
             {[{ titulo: 'Operar', tos: ['/despacho', '/compras/necesidades', '/auditoria'] },
               { titulo: 'Maestros', tos: ['/config', '/compras/maestros'] },
-              { titulo: 'Config', tos: ['/motor', '/reglas', '/usuarios', '/log', '/diagnostico'] }].map(sec => {
+              { titulo: 'Config', tos: ['/motor', '/reglas', '/compras/reglas', '/usuarios', '/log', '/diagnostico'] }].map(sec => {
               const items = NAV_OK.filter(n => sec.tos.includes(n.to))
               return items.length ? [
                 <ListSubheader key={'s' + sec.titulo} disableSticky sx={{ lineHeight: '30px', fontWeight: 700, fontSize: 12, color: 'text.secondary', textTransform: 'uppercase' }}>{sec.titulo}</ListSubheader>,

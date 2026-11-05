@@ -11,6 +11,7 @@ import Config from './pages/Config'
 import Despacho from './pages/Despacho'
 import Auditoria from './pages/Auditoria'
 import Reglas from './pages/Reglas'
+import ReglasCompras from './pages/ReglasCompras'
 import Motor from './pages/Motor'
 import Usuarios from './pages/Usuarios'
 import Log from './pages/Log'
@@ -38,6 +39,7 @@ export const PANTALLAS = [
   { to: '/apertura-tienda', req: ['ver_maestros', 'cargar_maestros'] },
   { to: '/compras/necesidades', req: ['ver_compras'] },
   { to: '/compras/maestros', req: ['ver_compras', 'cargar_maestros_compras'] },
+  { to: '/compras/reglas', req: ['ver_compras', 'cargar_maestros_compras'] },
   { to: '/usuarios', req: ['admin_usuarios'] },
   { to: '/log', req: ['ver_log'] },
   { to: '/diagnostico', req: ['ver_diagnostico'] },
@@ -83,6 +85,7 @@ export default function App() {
           <Route path="/auditoria" element={<Req to="/auditoria"><Auditoria /></Req>} />
           <Route path="/motor" element={<Req to="/motor"><Motor /></Req>} />
           <Route path="/reglas" element={<Req to="/reglas"><Reglas /></Req>} />
+          <Route path="/compras/reglas" element={<Req to="/compras/reglas"><ReglasCompras /></Req>} />
           <Route path="/config" element={<Req to="/config"><Config key="ddmrp" grupo="ddmrp" /></Req>} />
           <Route path="/apertura-tienda" element={<Req to="/apertura-tienda"><Apertura /></Req>} />
           <Route path="/compras/necesidades" element={<Req to="/compras/necesidades"><Necesidades /></Req>} />

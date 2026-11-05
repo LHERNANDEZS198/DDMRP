@@ -475,6 +475,7 @@ SENTENCIAS_APERTURA = [
          calculada TIMESTAMPTZ, PRIMARY KEY (empresa, bodega_id))""",
     "ALTER TABLE ddmrp.tienda_clase ADD COLUMN IF NOT EXISTS meses INT",
     "CREATE OR REPLACE VIEW ddmrp.v_tienda_clase AS SELECT empresa, bodega_id, COALESCE(clase_manual, clase_calc) AS clase, clase_calc, clase_manual, venta, pct_acum FROM ddmrp.tienda_clase",
+    f"INSERT INTO ddmrp.compras_config (clave, valor, detalle) VALUES ('oc_destino', {2 if settings.oc_destino == 'bpm' else 1}, 'OC: a donde se envian: 0 = pausado (no se envia nada), 1 = directo a Siesa, 2 = al BPM (aprueba, crea en Siesa, PDF y correo al proveedor)') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('pipeline_auto', 1, 'Corrida automatica del ETL + motor: 1 = corre sola a la hora indicada, 0 = solo cuando alguien la lance a mano') ON CONFLICT DO NOTHING",
     f"INSERT INTO ddmrp.parametro VALUES ('pipeline_hora', {int(settings.etl_cron_hour)}, 'Hora (0-23, hora de Colombia) de la corrida automatica') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('pipeline_minuto', 0, 'Minuto (0-59) de la corrida automatica') ON CONFLICT DO NOTHING",

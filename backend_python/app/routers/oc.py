@@ -90,6 +90,23 @@ def _bloquea_minimo() -> bool:
     return bool(v and float(v) >= 1)
 
 
+def _destino() -> str:
+    """A donde se envian las OC: se elige en Reglas de compras (compras_config.oc_destino: 0 pausado, 1 directo a Siesa, 2 BPM). Si esa fila no existe o esta vacia, el .env (OC_DESTINO)."""
+    try:
+        with pg.connect() as c:
+            v = c.execute(text("SELECT valor FROM ddmrp.compras_config WHERE clave = 'oc_destino'")).scalar()
+        if v is not None:
+            return {0: "pausado", 1: "directo", 2: "bpm"}.get(int(v), settings.oc_destino)
+    except Exception:    # noqa: BLE001
+        pass
+    return settings.oc_destino
+
+
+def _exigir_envio_activo() -> None:
+    if _destino() == "pausado":
+        raise HTTPException(409, "El envío de órdenes de compra está pausado (Reglas de compras). Puedes armar la vista previa, pero no enviar.")
+
+
 def _cfg_revision() -> dict:
     """Reglas de revision desde Configuracion de compras (tabla compras_config), no del .env. Los defectos aplican si la fila no existe o esta vacia."""
     cfg = {"oc_umbral_total": 0.0, "oc_desvio_cant_pct": 30.0, "oc_desvio_cant_min": 15.0, "oc_desvio_costo_pct": 30.0, "oc_exigir_entiendo": 1.0, "oc_listado_dias": 30.0}
@@ -245,18 +262,21 @@ def _enviar_bpm(oc_id: int, usuario: str | None) -> dict:
 
 
 def _despachar(oc_id: int, usuario: str | None) -> dict:
-    return _enviar_bpm(oc_id, usuario) if settings.oc_destino == "bpm" else _enviar(oc_id, usuario)
+    _exigir_envio_activo()
+    return _enviar_bpm(oc_id, usuario) if _destino() == "bpm" else _enviar(oc_id, usuario)
 
 
 @router.get("/config")
 def config_oc():
     cfg = _cfg_revision()
-    return {"destino": settings.oc_destino, "revision": cfg, "exigir_entiendo": cfg["oc_exigir_entiendo"] >= 1, "listado_dias": int(cfg["oc_listado_dias"])}
+    return {"destino": _destino(), "revision": cfg, "exigir_entiendo": cfg["oc_exigir_entiendo"] >= 1, "listado_dias": int(cfg["oc_listado_dias"])}
 
 
 @router.post("/enviar")
 def enviar(b: EnviarIn, user=Depends(requiere("gestionar_compras"))):
     """Crea en Siesa una OC por proveedor y empresa con los items elegidos (cantidad y costo salen del servidor). `solo_plano`: devuelve el plano sin enviar."""
+    if not b.solo_plano:
+        _exigir_envio_activo()      # antes de crear nada en la base
     comprador = _comprador(user)
     if not b.items:
         raise HTTPException(400, "No elegiste ningún ítem")

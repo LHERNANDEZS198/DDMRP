@@ -144,6 +144,62 @@ class Cambio(BaseModel):
     valor: float
 
 
+# ---- Reglas de compras: viven en ddmrp.compras_config (las leen Necesidades de compra y las OC) ----
+REGLAS_COMPRAS = [
+    dict(grupo="Necesidades de compra", clave="pedido_minimo_bloquea", titulo="Proveedores bajo su pedido mínimo",
+         ayuda="Qué pasa con un proveedor cuyo valor a pedir no llega a su pedido mínimo (se configura por proveedor en Maestros de compras).",
+         opciones=[{"valor": 0, "label": "Se muestran con alerta (no se bloquean)"}, {"valor": 1, "label": "Se bloquean y no se muestran"}]),
+    dict(grupo="Necesidades de compra", clave="poca_historia_meses", titulo="Poca historia: meses con venta",
+         ayuda="Un ítem con menos de estos meses con venta (en los últimos 12) se marca «poca historia». Es solo una alerta, no bloquea.", opciones=None, min=1, max=12, entero=True),
+    dict(grupo="Necesidades de compra", clave="frecuencia_defecto", titulo="Frecuencia de compra por defecto (días)",
+         ayuda="Cada cuántos días se le compra a un proveedor que no tiene la suya. Define el tamaño de la zona verde del buffer del CEDI.", opciones=None, min=1, max=365, entero=True),
+    dict(grupo="Órdenes de compra (revisión en el BPM)", clave="oc_destino", titulo="Envío de las OC",
+         ayuda="A dónde van las OC al enviarlas desde Necesidades de compra. Pausado: no se envía nada (útil en pruebas; la vista previa sigue funcionando). Directo a Siesa: se crean en Siesa ya aprobadas, sin pasar por nadie. Al BPM: allí se revisa y aprueba, se crea en Siesa, se genera el PDF y se envía el correo al proveedor.",
+         opciones=[{"valor": 0, "label": "Pausado: no se envía ninguna OC"}, {"valor": 1, "label": "Directo a Siesa (sin BPM, sin correo al proveedor)"}, {"valor": 2, "label": "Al BPM (revisión, Siesa, PDF y correo al proveedor)"}]),
+    dict(grupo="Órdenes de compra (revisión en el BPM)", clave="oc_umbral_total", titulo="Total hasta el cual una OC sin desvíos no se revisa ($)",
+         ayuda="Total (con IVA, en pesos) hasta el cual una OC SIN desvíos se crea sin revisión en el BPM. 0 = toda OC pasa por revisión.", opciones=None, min=0, max=1e12),
+    dict(grupo="Órdenes de compra (revisión en el BPM)", clave="oc_desvio_cant_pct", titulo="Desvío de cantidad que manda a revisión (%)",
+         ayuda="Una línea pasa a revisión si la cantidad se aparta más de este % de la cantidad calculada (sugerida).", opciones=None, min=0, max=1000),
+    dict(grupo="Órdenes de compra (revisión en el BPM)", clave="oc_desvio_cant_min", titulo="Desvío de cantidad: solo si la sugerida supera (unidades)",
+         ayuda="La regla de cantidad solo se evalúa si la cantidad calculada (sugerida) supera estas unidades; así pedir 2 en vez de 1 no dispara revisión.", opciones=None, min=0, max=1e9),
+    dict(grupo="Órdenes de compra (revisión en el BPM)", clave="oc_desvio_costo_pct", titulo="Subida de costo que manda a revisión (%)",
+         ayuda="Una línea pasa a revisión si el costo editado sube más de este % frente a la cotización (manual › Siesa › última compra).", opciones=None, min=0, max=1000),
+    dict(grupo="Órdenes de compra (revisión en el BPM)", clave="oc_exigir_entiendo", titulo="Confirmar antes de enviar la OC",
+         ayuda="Si: para enviar una OC hay que marcar la casilla «Entiendo que se envía al BPM». No: no se pide esa confirmación.",
+         opciones=[{"valor": 1, "label": "Sí: pedir la confirmación"}, {"valor": 0, "label": "No"}]),
+    dict(grupo="Órdenes de compra (revisión en el BPM)", clave="oc_listado_dias", titulo="OC enviadas: días que muestra el listado",
+         ayuda="Días hacia atrás que muestra por defecto el listado de OC enviadas (se puede cambiar con los filtros de la pantalla).", opciones=None, min=1, max=3650, entero=True),
+]
+CLAVES_COMPRAS = {r["clave"]: r for r in REGLAS_COMPRAS}
+
+
+@router.get("/compras")
+def listar_compras(user=Depends(requiere("ver_compras", "cargar_maestros_compras"))):
+    with pg.connect() as c:
+        vals = dict(c.execute(text("SELECT clave, valor::float8 FROM ddmrp.compras_config")).all())
+    return [{**r, "valor": vals.get(r["clave"])} for r in REGLAS_COMPRAS]
+
+
+@router.put("/compras/{clave}")
+def cambiar_compras(clave: str, body: Cambio, user=Depends(requiere("cargar_maestros_compras"))):
+    r = CLAVES_COMPRAS.get(clave)
+    if not r:
+        raise HTTPException(404, "Regla desconocida")
+    if r["opciones"] and body.valor not in {o["valor"] for o in r["opciones"]}:
+        raise HTTPException(400, "Valor no permitido")
+    if body.valor < r.get("min", 0) or body.valor > r.get("max", 1e12):
+        raise HTTPException(400, f"Debe estar entre {r.get('min', 0)} y {r.get('max', 'sin tope')}")
+    if r.get("entero") and body.valor != int(body.valor):
+        raise HTTPException(400, "Debe ser un numero entero")
+    with pg.begin() as c:
+        ant = c.execute(text("SELECT valor::text FROM ddmrp.compras_config WHERE clave = :c"), {"c": clave}).scalar()
+        c.execute(text("INSERT INTO ddmrp.compras_config (clave, valor, detalle) VALUES (:c, :v, :d) ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor"),
+                  {"c": clave, "v": body.valor, "d": r["ayuda"]})
+        c.execute(text("INSERT INTO ddmrp.config_audit (tabla, llave, campo, valor_anterior, valor_nuevo, usuario) "
+                       "VALUES ('reglas_compras', :c, 'valor', :a, :n, :u)"), {"c": clave, "a": ant, "n": str(body.valor), "u": user["nombre"]})
+    return {"ok": True, "aviso": "Se aplica de inmediato."}
+
+
 @router.put("/{clave}")
 def cambiar(clave: str, body: Cambio, user=Depends(requiere("editar_reglas"))):
     r = CLAVES.get(clave)

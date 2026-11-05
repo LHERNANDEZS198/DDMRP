@@ -401,7 +401,9 @@ export default function Necesidades() {
               })}
             </TableBody>
           </Table>
-          <Alert severity="warning" sx={{ mt: 1.5 }}>{ocDestino === 'bpm'
+          <Alert severity="warning" sx={{ mt: 1.5 }}>{ocDestino === 'pausado'
+            ? <>El envío de OC está <b>pausado</b> (Reglas de compras): puedes armar la «Vista previa», pero no enviar.</>
+            : ocDestino === 'bpm'
             ? <>Al enviar, la OC pasa al <b>BPM</b>: allí se revisa/aprueba y se crea en Siesa (verás el estado en «OC enviadas»). La cantidad y el costo se recalculan en el servidor. «Vista previa» arma el plano sin enviar nada.</>
             : <>Al enviar, la OC se crea <b>en Siesa real</b> (queda aprobada). Si algo sale mal se anula en Siesa. La cantidad y el costo se recalculan en el servidor al enviar. «Vista previa» arma el plano sin enviar nada.</>}</Alert>
           {ocErr && <Alert severity="error" sx={{ mt: 1 }}>{ocErr}</Alert>}
@@ -426,7 +428,7 @@ export default function Necesidades() {
           {ocRes && !ocRes.ordenes.every(o => o.estado === 'plano') && <Button variant="outlined" onClick={irAEnviadas}>Ir a OC enviadas a Siesa</Button>}
           <Button onClick={() => setOcAbierta(false)}>Cerrar</Button>
           <Button disabled={ocEnviando || !elegidas.length} onClick={() => enviarOC(true)}>Vista previa del plano</Button>
-          <Button variant="contained" disabled={ocEnviando || (ocExigir && !ocEntiendo) || !elegidas.length} startIcon={<SendIcon />} onClick={() => enviarOC(false)}>{ocEnviando ? 'Enviando…' : ocDestino === 'bpm' ? 'Enviar al BPM' : 'Crear OC en Siesa'}</Button>
+          <Button variant="contained" disabled={ocEnviando || ocDestino === 'pausado' || (ocExigir && !ocEntiendo) || !elegidas.length} startIcon={<SendIcon />} onClick={() => enviarOC(false)}>{ocEnviando ? 'Enviando…' : ocDestino === 'bpm' ? 'Enviar al BPM' : 'Crear OC en Siesa'}</Button>
         </DialogActions>
       </Dialog>
       <Dialog open={histAbierta} onClose={() => setHistAbierta(false)} maxWidth="xl" fullWidth>

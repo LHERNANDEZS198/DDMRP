@@ -65,11 +65,6 @@ MAESTROS = {
         booleanas=("activo",),                  # 1 / 0 / si / no
         valores={"redondeo": ("arriba", "cercano", "abajo")},   # como se redondea la cantidad al multiplo de pedido
         conservar=("activo", "redondeo", "frecuencia", "cond_pago")),                 # celda vacia en la carga = no cambia
-    "config-compras": dict(
-        label="Configuracion de compras: pedido minimo, poca historia y revision de OC", tabla="ddmrp.compras_config",
-        llave=["clave"], editable={"valor": "num", "detalle": "txt"},
-        bodega=None, producto=None, global_=True, grupo="compras",
-        solo_existentes=True, sin_reemplazo=True, sin_eliminar=True, conservar=("valor", "detalle")),
     "criterios-comprables": dict(
         label="Criterios comprables: que categorias se compran en cada empresa", tabla="ddmrp.categoria_compra",
         llave=["empresa", "plan_id", "criterio_id"], editable={"nombre": "txt", "se_compra": "int"},
