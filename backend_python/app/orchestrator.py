@@ -204,6 +204,36 @@ def _recalcular_compras() -> dict:
     return {"ejecucion_id": eid, "cedi": cedi, "oc": oc, "cedi_motor": cm}
 
 
+def revisar_pipeline():
+    """Se llama cada minuto: corre el ETL + motor a la hora configurada en Reglas de pedido (pipeline_auto / pipeline_hora / pipeline_minuto / pipeline_cada_dias).
+    Con pipeline_auto en 0 no corre nada solo. Tolera ~30 min de retraso (si el backend estaba reiniciando justo a esa hora); como maximo una vez por dia programado."""
+    from datetime import datetime
+    import pytz      # ya viene con APScheduler: no depende de que el sistema tenga la base de zonas horarias
+    try:
+        with pg.begin() as c:
+            p = {k: float(v) for k, v in c.execute(text("SELECT clave, valor FROM ddmrp.parametro WHERE clave IN "
+                 "('pipeline_auto', 'pipeline_hora', 'pipeline_minuto', 'pipeline_cada_dias', 'pipeline_ultima_auto')")).all()}
+            if p.get("pipeline_auto", 1) < 1:
+                return
+            ahora = datetime.now(pytz.timezone("America/Bogota"))
+            objetivo = int(p.get("pipeline_hora", settings.etl_cron_hour)) * 60 + int(p.get("pipeline_minuto", 0))
+            minutos = ahora.hour * 60 + ahora.minute
+            if not (objetivo <= minutos < objetivo + 30):
+                return
+            hoy = ahora.date()
+            ult = int(p.get("pipeline_ultima_auto", 0))
+            if ult:
+                dif = (hoy - date(ult // 10000, ult // 100 % 100, ult % 100)).days
+                if dif < max(int(p.get("pipeline_cada_dias", 1)), 1):
+                    return
+            c.execute(text("INSERT INTO ddmrp.parametro (clave, valor, detalle) VALUES ('pipeline_ultima_auto', :v, 'Ultimo dia (AAAAMMDD) en que corrio sola la corrida automatica') "
+                           "ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor"), {"v": hoy.year * 10000 + hoy.month * 100 + hoy.day})
+    except Exception:
+        log.exception("No se pudo revisar la corrida automatica")
+        return
+    pipeline_nocturno("auto")
+
+
 def pipeline_nocturno(origen: str = "auto", usuario: str | None = None):
     """Programado (origen 'auto') o lanzado a mano desde la pantalla (origen 'manual')."""
     try:

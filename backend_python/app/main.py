@@ -8,7 +8,7 @@ from .config import settings
 from .esquema import asegurar_esquema
 from .bitacora import cerrar_huerfanas
 from .progreso import Ocupado
-from .orchestrator import pipeline_nocturno
+from .orchestrator import revisar_pipeline
 from .routers import auth, alertas, maestros, despacho, admin, reglas, control, usuarios, log, auditoria, lanzamientos, clasificacion, salud, vistas, diagnostico, compras, oc, bpm_oc, apertura
 from . import consultas
 
@@ -21,7 +21,8 @@ async def lifespan(app: FastAPI):
     cerrar_huerfanas()
     consultas.arrancar()
     sch = BackgroundScheduler(timezone="America/Bogota")
-    sch.add_job(pipeline_nocturno, "cron", hour=settings.etl_cron_hour, minute=0, id="nocturno")
+    # cada minuto mira en Reglas de pedido si toca correr (si esta activa, la hora y cada cuantos dias); asi se prende, apaga o mueve sin reiniciar
+    sch.add_job(revisar_pipeline, "cron", minute="*", id="nocturno", max_instances=1, coalesce=True)
     sch.start()
     yield
     sch.shutdown()

@@ -17,6 +17,7 @@ const grupos: [string, string[]][] = [
   ['Datos de Siesa', ['etl_traer_ventas', 'ventas_todas_tiendas', 'inv_tiendas_resta_comprometido', 'inv_tiendas_resta_sin_acumular']],
   ['Parámetros del modelo (hoja Modelo)', ['meses_historia', 'meses_adu', 'pron_calculado', 'pron_divisor', 'pron_meses_minimos', 'mult_cota_max_promo', 'mult_cota_min_promo', 'adu_bajo_min', 'adu_bajo_max']],
   ['Apertura de tienda (valores por defecto de la pantalla)', ['apertura_meses_defecto', 'apertura_factor_defecto', 'apertura_base_meses']],
+  ['Corrida automática (ETL + motor)', ['pipeline_auto', 'pipeline_hora', 'pipeline_minuto', 'pipeline_cada_dias']],
   ['Historial (vistas de cambios y tendencia)', ['retener_dias']],
 ]
 

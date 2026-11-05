@@ -1,6 +1,7 @@
 """Cambios de esquema idempotentes que se aplican al arrancar el backend (la base puede ser anterior al cambio)."""
 import logging
 from sqlalchemy import text
+from .config import settings
 from .db import pg
 
 log = logging.getLogger("esquema")
@@ -474,6 +475,10 @@ SENTENCIAS_APERTURA = [
          calculada TIMESTAMPTZ, PRIMARY KEY (empresa, bodega_id))""",
     "ALTER TABLE ddmrp.tienda_clase ADD COLUMN IF NOT EXISTS meses INT",
     "CREATE OR REPLACE VIEW ddmrp.v_tienda_clase AS SELECT empresa, bodega_id, COALESCE(clase_manual, clase_calc) AS clase, clase_calc, clase_manual, venta, pct_acum FROM ddmrp.tienda_clase",
+    "INSERT INTO ddmrp.parametro VALUES ('pipeline_auto', 1, 'Corrida automatica del ETL + motor: 1 = corre sola a la hora indicada, 0 = solo cuando alguien la lance a mano') ON CONFLICT DO NOTHING",
+    f"INSERT INTO ddmrp.parametro VALUES ('pipeline_hora', {int(settings.etl_cron_hour)}, 'Hora (0-23, hora de Colombia) de la corrida automatica') ON CONFLICT DO NOTHING",
+    "INSERT INTO ddmrp.parametro VALUES ('pipeline_minuto', 0, 'Minuto (0-59) de la corrida automatica') ON CONFLICT DO NOTHING",
+    "INSERT INTO ddmrp.parametro VALUES ('pipeline_cada_dias', 1, 'Cada cuantos dias corre sola (1 = todos los dias, 2 = un dia por medio...)') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('clase_tienda_meses', 6, 'Clasificacion ABC de tiendas: meses cerrados de venta que se miden') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('clase_tienda_corte_a', 80, 'Clasificacion ABC de tiendas: % acumulado de la venta que cubre la clase A') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('clase_tienda_corte_b', 95, 'Clasificacion ABC de tiendas: % acumulado de la venta que cubre hasta la clase B (el resto es C)') ON CONFLICT DO NOTHING",

@@ -85,6 +85,12 @@ REGLAS = [
          ayuda="Si: los items inactivos o bloqueados en Siesa (extension del item, f121_ind_estado) no entran al ETL, al motor, a la matriz de despacho ni a los controles. No: entran todos. Un item REC se trata como su original, aunque el REC este inactivo. Tras cambiarla corre el ETL y el motor.", opciones=SI_NO),
     dict(clave="rec_suma_original", titulo="Items REC se suman a su original",
          ayuda="Si: un item cuya descripcion empieza por REC cuenta como su original (el SKU sin el primer digito: 2190340 -> 190340): su inventario, transito y ventas se suman al original y el REC sale del calculo. Los pares se ven y se corrigen en Maestros > Items REC. Tras cambiarla corre el motor.", opciones=SI_NO),
+    dict(clave="pipeline_auto", titulo="Corrida automática (ETL + motor)",
+         ayuda="Si: el ETL y el motor corren solos a la hora indicada. No: no corre nada solo; el personal lo lanza cuando lo necesite (botón de correr el pipeline). Útil mientras se hacen pruebas. Se aplica en menos de un minuto, sin reiniciar.",
+         opciones=[{"valor": 1, "label": "Sí: corre sola a la hora indicada"}, {"valor": 0, "label": "No: solo cuando alguien la lance a mano"}]),
+    dict(clave="pipeline_hora", titulo="Corrida automática: hora", ayuda="Hora de Colombia (0 a 23) a la que corre sola. Si el backend está apagado a esa hora, la corrida se pierde ese día (tolera hasta 30 minutos de retraso).", opciones=None, min=0, max=23, entero=True),
+    dict(clave="pipeline_minuto", titulo="Corrida automática: minuto", ayuda="Minuto (0 a 59) de esa hora.", opciones=None, min=0, max=59, entero=True),
+    dict(clave="pipeline_cada_dias", titulo="Corrida automática: cada cuántos días", ayuda="1 = todos los días, 2 = un día por medio, 7 = una vez por semana. Cuenta desde la última vez que corrió sola.", opciones=None, min=1, max=30, entero=True),
     dict(clave="retener_dias", titulo="Dias de historial que se conservan", ayuda="Para la vista de cambios en un periodo: se guarda la ultima corrida de cada dia. 7 a 730.", opciones=None, min=7, max=730, entero=True),
     dict(clave="mult_cota_max_promo", titulo="Multiplicador de cota maxima en promocion", ayuda="Hoja Modelo AZ.", opciones=None),
     dict(clave="mult_cota_min_promo", titulo="Multiplicador de cota minima en promocion", ayuda="Hoja Modelo BA.", opciones=None),
@@ -158,5 +164,7 @@ def cambiar(clave: str, body: Cambio, user=Depends(requiere("editar_reglas"))):
         c.execute(text("INSERT INTO ddmrp.config_audit (tabla, llave, campo, valor_anterior, valor_nuevo, usuario) "
                        "VALUES ('reglas', :c, 'valor', :a, :n, :u)"),
                   {"c": clave, "a": ant, "n": str(body.valor), "u": user["nombre"]})
+    if clave.startswith("pipeline_"):
+        return {"ok": True, "aviso": "Se aplica en menos de un minuto: no hace falta reiniciar."}
     return {"ok": True, "aviso": "Se aplica en la proxima corrida del motor (o con 'Recalcular ahora')."}
 
