@@ -13,6 +13,14 @@ import { useYo } from '../Yo'
 import { useEmpresa } from '../Empresa'
 import { GuiaNecesidades } from '../guias'
 
+// Fecha y hora de Colombia (UTC-5, sin horario de verano) a partir de un timestamp de la base (UTC; si viene sin zona se toma como UTC)
+const fechaBog = (v: any) => {
+  if (!v) return ''
+  const t = String(v); const d = new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(t) ? t : t.replace(' ', 'T') + 'Z')
+  if (isNaN(d.getTime())) return t.slice(0, 16).replace('T', ' ')
+  const b = new Date(d.getTime() - 5 * 36e5).toISOString()
+  return b.slice(0, 10) + ' ' + b.slice(11, 16)
+}
 const haceDias = (n: number) => new Date(Date.now() - n * 864e5 - 5 * 36e5).toISOString().slice(0, 10)      // fecha de Colombia (UTC-5)
 const ESTADOS_OC = ['en_bpm', 'en_revision', 'aprobada', 'rechazada', 'creada', 'anulada', 'error', 'incierta', 'cancelada']
 const num = (p: any) => p.value == null ? '' : Number(p.value).toLocaleString('es-CO', { maximumFractionDigits: 2 })
@@ -451,7 +459,7 @@ export default function Necesidades() {
             <TableHead><TableRow>{['#', 'Fecha', 'Emp.', 'Proveedor', 'Ítems', 'Total', 'Estado', 'OC Siesa', 'En Siesa', 'Referencia', 'Creó', 'Grupo / tomó', 'Mensaje', ''].map(h => <TableCell key={h} sx={{ fontWeight: 700 }}>{h}</TableCell>)}</TableRow></TableHead>
             <TableBody>{hist.map(o => (
               <TableRow key={o.id}>
-                <TableCell>{o.id}</TableCell><TableCell>{String(o.creado).slice(0, 16).replace('T', ' ')}</TableCell><TableCell>{o.empresa}</TableCell><TableCell>{o.proveedor_nombre}</TableCell><TableCell>{o.items}</TableCell>
+                <TableCell>{o.id}</TableCell><TableCell sx={{ whiteSpace: 'nowrap' }}>{fechaBog(o.creado)}</TableCell><TableCell>{o.empresa}</TableCell><TableCell>{o.proveedor_nombre}</TableCell><TableCell>{o.items}</TableCell>
                 <TableCell>{COP({ value: Number(o.total) })}</TableCell>
                 <TableCell sx={{ fontWeight: 700, color: colorOC(o.estado) }}>{o.estado}</TableCell>
                 <TableCell>{o.siesa_consecutivo ?? ''}</TableCell><TableCell>{o.estado_siesa ?? ''}</TableCell><TableCell>{o.referencia}</TableCell><TableCell>{o.creado_por}</TableCell><TableCell>{[o.grupo, o.tomada_por].filter(Boolean).join(' · ')}</TableCell>

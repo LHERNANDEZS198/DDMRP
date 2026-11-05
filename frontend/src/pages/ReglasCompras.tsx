@@ -8,7 +8,7 @@ type Regla = { grupo: string; clave: string; titulo: string; ayuda: string; opci
 
 /** Reglas de compras: pedido mínimo, poca historia, frecuencia por defecto y revisión de las OC. Antes eran el maestro «Configuración de compras». */
 export default function ReglasCompras() {
-  const { puede } = useYo(); const editar = puede('cargar_maestros_compras')
+  const { puede } = useYo(); const editar = puede('cargar_maestros_compras', 'editar_reglas_compras')
   const [reglas, setReglas] = useState<Regla[]>([])
   const [msg, setMsg] = useState('')
   const cargar = () => api('/reglas/compras').then(setReglas).catch(e => setMsg('Error: ' + e.message))

@@ -39,7 +39,7 @@ export const PANTALLAS = [
   { to: '/apertura-tienda', req: ['ver_maestros', 'cargar_maestros'] },
   { to: '/compras/necesidades', req: ['ver_compras'] },
   { to: '/compras/maestros', req: ['ver_compras', 'cargar_maestros_compras'] },
-  { to: '/compras/reglas', req: ['ver_compras', 'cargar_maestros_compras'] },
+  { to: '/compras/reglas', req: ['ver_compras', 'cargar_maestros_compras', 'editar_reglas_compras'] },
   { to: '/usuarios', req: ['admin_usuarios'] },
   { to: '/log', req: ['ver_log'] },
   { to: '/diagnostico', req: ['ver_diagnostico'] },

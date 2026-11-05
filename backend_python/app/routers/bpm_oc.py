@@ -94,11 +94,11 @@ def detalle(oc_id: int):
                    l.costo_calculado::float8 AS costo_cotizado,
                    COALESCE(l.costo_original, l.costo)::float8 AS costo_comprador,
                    COALESCE(mi.categoria, '') AS lab_cod, COALESCE(lb.nombre, '') AS lab_nombre,
-                   z.zona, z.inventario::float8 AS saldo_cedi, z.en_transito::float8 AS en_transito
+                   z.zona, z.inventario::float8 AS saldo_cedi, z.en_transito::float8 AS en_transito, z.adu::float8 AS rotacion_mensual
             FROM ddmrp.orden_compra_linea l
             LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = l.producto_id
             LEFT JOIN ddmrp.laboratorio lb ON lb.codigo = mi.categoria
-            LEFT JOIN LATERAL (SELECT s.zona::text AS zona, s.inventario, s.en_transito FROM ddmrp.sugerencias_cedi s
+            LEFT JOIN LATERAL (SELECT s.zona::text AS zona, s.inventario, s.en_transito, s.adu FROM ddmrp.sugerencias_cedi s
                                WHERE s.ejecucion_id = {ULTIMA} AND s.empresa = :e AND s.producto_id = l.producto_id LIMIT 1) z ON true
             WHERE l.oc_id = :i ORDER BY l.nro"""), {"i": oc_id, "e": r["empresa"]}).mappings()]
         creado = c.execute(text("SELECT ((creado AT TIME ZONE 'UTC') - interval '5 hours')::date::text FROM ddmrp.orden_compra WHERE id = :i"), {"i": oc_id}).scalar()
@@ -116,7 +116,10 @@ def detalle(oc_id: int):
         l["desviada"] = bool(mot)
         l["motivo_desvio"] = "; ".join(mot)
     entregas = [l["fecha_entrega"] for l in lineas if l.get("fecha_entrega")]
-    extra = {"fecha_montaje": creado, "fecha_necesidad": max(entregas) if entregas else None, "fecha_necesidad_min": min(entregas) if entregas else None}
+    # Laboratorio de la OC para el encabezado (una OC por laboratorio): el BPM muestra «Nombre (codigo)»
+    lab = next(((l["lab_cod"], l.get("lab_nombre") or "") for l in lineas if l.get("lab_cod")), ("", ""))
+    extra = {"laboratorio": lab[0], "laboratorio_nombre": lab[1],
+             "fecha_montaje": creado, "fecha_necesidad": max(entregas) if entregas else None, "fecha_necesidad_min": min(entregas) if entregas else None}
     return dict(r) | extra | {"lineas": lineas}
 
 

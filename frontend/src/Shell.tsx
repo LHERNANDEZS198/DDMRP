@@ -45,7 +45,7 @@ export const NAV = [
   // lo que se agrupa en el menú «Config» (desplegable)
   { to: '/motor', label: 'Motor DDMRP', icon: <Calculate />, req: ['correr_motor'] },
   { to: '/reglas', label: 'Reglas de pedido', icon: <Rule />, req: ['editar_reglas', 'correr_motor'] },
-  { to: '/compras/reglas', label: 'Reglas de compras', icon: <Rule />, req: ['ver_compras', 'cargar_maestros_compras'] },
+  { to: '/compras/reglas', label: 'Reglas de compras', icon: <Rule />, req: ['ver_compras', 'cargar_maestros_compras', 'editar_reglas_compras'] },
   { to: '/usuarios', label: 'Usuarios', icon: <ManageAccounts />, req: ['admin_usuarios'] },
   { to: '/log', label: 'Log', icon: <History />, req: ['ver_log'] },
   { to: '/diagnostico', label: 'Diagnóstico', icon: <MonitorHeart />, req: ['ver_diagnostico'] },

@@ -174,14 +174,14 @@ CLAVES_COMPRAS = {r["clave"]: r for r in REGLAS_COMPRAS}
 
 
 @router.get("/compras")
-def listar_compras(user=Depends(requiere("ver_compras", "cargar_maestros_compras"))):
+def listar_compras(user=Depends(requiere("ver_compras", "cargar_maestros_compras", "editar_reglas_compras"))):
     with pg.connect() as c:
         vals = dict(c.execute(text("SELECT clave, valor::float8 FROM ddmrp.compras_config")).all())
     return [{**r, "valor": vals.get(r["clave"])} for r in REGLAS_COMPRAS]
 
 
 @router.put("/compras/{clave}")
-def cambiar_compras(clave: str, body: Cambio, user=Depends(requiere("cargar_maestros_compras"))):
+def cambiar_compras(clave: str, body: Cambio, user=Depends(requiere("cargar_maestros_compras", "editar_reglas_compras"))):
     r = CLAVES_COMPRAS.get(clave)
     if not r:
         raise HTTPException(404, "Regla desconocida")
