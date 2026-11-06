@@ -36,13 +36,12 @@ const cols: ColDef[] = [
   { field: 'descripcion', flex: 1, minWidth: 220, filter: true },
   { field: 'zona', filter: true },
   { field: 'estado', filter: true, width: 115 },
-  { field: 'inventario', type: 'numericColumn' },
-  { field: 'en_transito', headerName: 'Transito', type: 'numericColumn' },
-  { field: 'rit_dias', headerName: 'RIT abierto (d)', type: 'numericColumn', width: 120, filter: true, headerTooltip: 'Días del RIT (requisición de abastecimiento) más viejo que sigue abierto para este item en esta tienda (umbral: rit_alerta_dias). Hay que despacharlo o anularlo en Siesa', tooltipField: 'rit_detalle', cellStyle: p => p.value != null ? { color: '#b71c1c', fontWeight: 700 } : undefined },
-  { field: 'tog_aj', headerName: 'TOG aj.', type: 'numericColumn' },
-  { field: 'unidad_despacho', headerName: 'Und. desp.', type: 'numericColumn' },
-  { field: 'vectorizacion', headerName: 'Derrame', type: 'numericColumn' },
-  { field: 'cantidad_necesaria', headerName: 'Necesario', type: 'numericColumn' },
+  { field: 'inventario', type: 'numericColumn', width: 130, },
+  { field: 'en_transito', headerName: 'Transito', type: 'numericColumn', width: 130 },
+  { field: 'tog_aj', headerName: 'TOG aj.', type: 'numericColumn', width: 130 },
+  { field: 'unidad_despacho', headerName: 'Und. desp.', type: 'numericColumn', width: 130 },
+  { field: 'vectorizacion', headerName: 'Derrame', type: 'numericColumn', width: 130 },
+  { field: 'cantidad_necesaria', headerName: 'Necesario', type: 'numericColumn', width: 130 },
   { field: 'stock_cedi', headerName: 'CEDI antes', type: 'numericColumn', headerTooltip: 'Stock del CEDI de la empresa para este ítem (menos la reserva), antes de repartir', valueFormatter: p => p.value == null ? '' : Math.round(p.value).toLocaleString() },
   { field: 'cantidad_sugerida', headerName: 'Asignado', type: 'numericColumn',
     cellStyle: p => p.data?.limitado ? { color: '#c62828', fontWeight: 700 } : null },
@@ -54,6 +53,7 @@ const cols: ColDef[] = [
   { field: 'costo', headerName: 'Costo prom.', type: 'numericColumn', width: 115, valueFormatter: p => p.value == null ? 'sin costo' : cop(p.value),
     cellStyle: p => p.value == null ? { color: '#c62828' } : null },
   { colId: 'valor', headerName: 'Valor a enviar', type: 'numericColumn', width: 130, valueGetter: p => valorDe(p.data), valueFormatter: p => cop(p.value ?? 0) },
+  { field: 'rit_dias', headerName: 'RIT abierto (d)', type: 'numericColumn', width: 100, filter: true, headerTooltip: 'Días del RIT (requisición de abastecimiento) más viejo que sigue abierto para este item en esta tienda (umbral: rit_alerta_dias). Hay que despacharlo o anularlo en Siesa', tooltipField: 'rit_detalle', cellStyle: p => p.value != null ? { color: '#b71c1c', fontWeight: 700 } : undefined },
 ]
 
 export default function Despacho() {
@@ -111,7 +111,7 @@ export default function Despacho() {
   const [nombres, setNombres] = useState<Record<string, string>>({})   // código de tienda -> nombre (Éxito Envigado…)
   useEffect(() => { api('/control/filtros').then(r => setNombres(Object.fromEntries((r.tiendas ?? []).map((t: any) => [t.bodega_id, t.nombre ?? ''])))).catch(() => {}) }, [])
   const tiendasEnFilas = useMemo(() => [...new Set(rows.map(r => r.bodega_id).filter(Boolean))].sort() as string[], [rows])
-  useEffect(() => { if (fTienda && !tiendasEnFilas.includes(fTienda)) setFTienda(null) }, [tiendasEnFilas])   // cambió la corrida o la empresa
+  useEffect(() => { if (!cargando && rows.length && fTienda && !tiendasEnFilas.includes(fTienda)) setFTienda(null) }, [tiendasEnFilas, cargando])   // cambió la corrida o la empresa (no mientras recarga: al recargar las filas quedan vacías un momento y se perdía el filtro)
   const labs = useMemo(() => [...new Set(rows.map(r => r.categoria).filter(Boolean))].sort() as string[], [rows])
   const vista = useMemo(() => {
     const t = fTexto.trim().toLowerCase()
