@@ -155,7 +155,7 @@ export default function Control() {
       : api(`${base}?agrupar=${nivel}&${qs(f)}${extra}`).then(r => vivo && setGrupos({ m: cambiosModo, v: r.grupos }))
     p.catch(e => vivo && setErr(e.message)).finally(() => vivo && setCargando(false))
     return () => { vivo = false }
-  }, [clave, f.plan, opc.criterios, nivel, cambiosModo, tendModo, mapaModo, desde, hasta, mov, paso, metrica, orden, ignorarVacios])
+  }, [clave, f.plan, nivel === 'criterio' ? opc.criterios : null, nivel, cambiosModo, tendModo, mapaModo, desde, hasta, mov, paso, metrica, orden, ignorarVacios])
 
   const total = (cambiosModo ? kpi?.n_fin : kpi?.n) || 1
   const planNombre = (p: string) => opc.criterios?.find((x: any) => x.plan_id === p)?.nombre ?? p
