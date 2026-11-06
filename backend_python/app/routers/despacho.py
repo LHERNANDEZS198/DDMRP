@@ -33,7 +33,7 @@ def dias(empresa: str | None = None, user=Depends(requiere("ver_despacho"))):
 
 @router.get("/matriz")
 def matriz(empresa: str, bodega_id: str | None = None, bodegas: str | None = None, solo_pendientes: bool = True,
-           estado: str | None = None, user=Depends(requiere("ver_despacho"))):
+           estado: str | None = None, sin_necesidad: bool = False, user=Depends(requiere("ver_despacho"))):
     """empresa (05 o 21) es obligatoria: cada empresa tiene su CEDI y su matriz. bodegas = lista separada por comas (las tiendas
     elegidas para la corrida del dia). No se sugieren los items sin stock en el CEDI ni los laboratorios sin envio."""
     if empresa not in ("05", "21"):
@@ -42,7 +42,7 @@ def matriz(empresa: str, bodega_id: str | None = None, bodegas: str | None = Non
     if perm and empresa not in perm:
         raise HTTPException(403, f"Tu usuario no tiene asignada la empresa {empresa}")
     w, p = filtro_sql_permisos(user)
-    f = f"s.ejecucion_id = {ULTIMA} AND s.empresa = :emp AND (s.cantidad_sugerida > 0 OR s.cantidad_necesaria > 0) AND {w} AND {CON_CEDI} AND {SIN_ENVIO} AND {ACTIVO}"
+    f = f"s.ejecucion_id = {ULTIMA} AND s.empresa = :emp {'' if sin_necesidad else 'AND (s.cantidad_sugerida > 0 OR s.cantidad_necesaria > 0)'} AND {w} AND {CON_CEDI} AND {SIN_ENVIO} AND {ACTIVO}"
     p["emp"] = empresa
     if bodega_id: f += " AND s.bodega_id=:b"; p["b"] = bodega_id
     if bodegas: f += " AND s.bodega_id = ANY(:bs)"; p["bs"] = [x.strip() for x in bodegas.split(",") if x.strip()]

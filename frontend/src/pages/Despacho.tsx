@@ -72,6 +72,7 @@ export default function Despacho() {
   // filtros de la lista (en pantalla): texto, laboratorio, zona, solo lo limitado por el CEDI
   const [fTexto, setFTexto] = useState(''); const [fLab, setFLab] = useState(''); const [fZona, setFZona] = useState(''); const [fLim, setFLim] = useState(false)   // apagado por defecto: ver todo lo que se enviará (marcarlo deja solo lo que el CEDI no alcanzó a cubrir)
   const [fTienda, setFTienda] = useState<string | null>(null)   // ver el detalle de los items de una sola tienda
+  const [fSin, setFSin] = useState(false)   // trae del servidor TAMBIEN lo que no necesita nada (consulta pesada): para ver items cubiertos por inventario o transito
   const [fCero, setFCero] = useState(false)   // filas con 0 a enviar: ocultas por defecto (a la tienda no le llega nada)
   const [porTienda, setPorTienda] = useState(false)
   const [bajandoAud, setBajandoAud] = useState(false)
@@ -101,12 +102,12 @@ export default function Despacho() {
   const cargar = () => {
     const n = ++peticion.current
     if (!empresa) { setRows([]); setCargando(false); return Promise.resolve() }
-    return api('/despacho/matriz?empresa=' + empresa + '&estado=' + ver + (filtrar ? '&bodegas=' + encodeURIComponent(tiendas.join(',') || '-') : ''))
+    return api('/despacho/matriz?empresa=' + empresa + '&estado=' + ver + (fSin ? '&sin_necesidad=true' : '') + (filtrar ? '&bodegas=' + encodeURIComponent(tiendas.join(',') || '-') : ''))
       .then(r => { if (n === peticion.current) setRows(r) })
       .finally(() => { if (n === peticion.current) setCargando(false) })
   }
   useEffect(() => { setDia(''); setFiltrar(false); setTiendas([]) }, [empresa])
-  useEffect(() => { setRows([]); setCargando(true); cargar() }, [filtrar, tiendas.join(','), ver, empresa])
+  useEffect(() => { setRows([]); setCargando(true); cargar() }, [filtrar, tiendas.join(','), ver, empresa, fSin])
   const [nombres, setNombres] = useState<Record<string, string>>({})   // código de tienda -> nombre (Éxito Envigado…)
   useEffect(() => { api('/control/filtros').then(r => setNombres(Object.fromEntries((r.tiendas ?? []).map((t: any) => [t.bodega_id, t.nombre ?? ''])))).catch(() => {}) }, [])
   const tiendasEnFilas = useMemo(() => [...new Set(rows.map(r => r.bodega_id).filter(Boolean))].sort() as string[], [rows])
@@ -115,7 +116,7 @@ export default function Despacho() {
   const vista = useMemo(() => {
     const t = fTexto.trim().toLowerCase()
     return rows.filter(r => (!t || `${r.producto_id} ${r.descripcion ?? ''} ${r.bodega_id}`.toLowerCase().includes(t)) && (!fLab || r.categoria === fLab) && (!fTienda || r.bodega_id === fTienda)
-      && (!fZona || r.zona === fZona) && (!fLim || r.limitado) && (fCero || fLim || unidades(r) > 0))   // 'solo limitadas' muestra tambien las de 0: son justo las que el CEDI no alcanzo a cubrir
+      && (!fZona || r.zona === fZona) && (!fLim || r.limitado) && (fCero || fSin || fLim || unidades(r) > 0))   // 'solo limitadas' muestra tambien las de 0: son justo las que el CEDI no alcanzo a cubrir
   }, [rows, fTexto, fLab, fTienda, fZona, fLim, fCero])
   const hayFiltro = !!(fTexto || fLab || fTienda || fZona || fLim)
   // totales de lo que se ve: unidades y costo, en total y por tienda
@@ -260,7 +261,9 @@ export default function Despacho() {
           <MenuItem value="">Todas</MenuItem>{['ROJA', 'AMARILLA', 'VERDE', 'EXCESO'].map(z => <MenuItem key={z} value={z}>{z}</MenuItem>)}</TextField>
         <FormControlLabel control={<Checkbox size="small" checked={fLim} onChange={e => setFLim(e.target.checked)} />} label="Solo limitadas por el CEDI" />
         <Tooltip placement="top" title={fLim ? 'Con “Solo limitadas por el CEDI” se ven también las que quedaron en 0' : 'Filas en las que no se le enviará nada a la tienda (A enviar = 0). Ocultas por defecto.'}><span>
-          <FormControlLabel control={<Checkbox size="small" checked={fCero || fLim} disabled={fLim} onChange={e => setFCero(e.target.checked)} />} label="Mostrar items con enviar en 0" /></span></Tooltip>
+          <FormControlLabel control={<Checkbox size="small" checked={fCero || fLim || fSin} disabled={fLim || fSin} onChange={e => setFCero(e.target.checked)} />} label="Mostrar items con enviar en 0" /></span></Tooltip>
+        <Tooltip placement="top" title="Trae también los items que no necesitan nada (cubiertos por inventario o tránsito). Son miles de filas más: úsalo con una tienda elegida. Apagado por defecto."><span>
+          <FormControlLabel control={<Checkbox size="small" checked={fSin} onChange={e => setFSin(e.target.checked)} />} label="Mostrar items sin necesidad (consulta pesada y demorada)" /></span></Tooltip>
         {hayFiltro && <Button size="small" onClick={() => { setFTexto(''); setFLab(''); setFTienda(null); setFZona(''); setFLim(false) }}>Quitar filtros</Button>}
         <Box sx={{ flex: 1 }} />
         <Chip label={`${vista.length.toLocaleString()}${vista.length !== rows.length ? ` de ${rows.length.toLocaleString()}` : ''} filas`} size="small" />
