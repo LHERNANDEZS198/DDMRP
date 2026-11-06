@@ -233,6 +233,7 @@ export default function Control() {
     { headerName: 'Buffer', cellRenderer: BufferBar, width: 220, sortable: false },
     { field: 'inventario', type: 'numericColumn', width: 100 },
     { field: 'en_transito', headerName: 'Tránsito', type: 'numericColumn', width: 95 },
+    { field: 'rit_dias', headerName: 'RIT abierto (d)', type: 'numericColumn', width: 120, filter: true, headerTooltip: 'Días del RIT (requisición de abastecimiento) más viejo que sigue abierto para este item en esta tienda. Pasa el umbral de Configuración (rit_alerta_dias): hay que despacharlo o anularlo en Siesa', tooltipField: 'rit_detalle', cellStyle: p => p.value != null ? { color: '#b71c1c', fontWeight: 700 } : undefined },
     { field: 'flujo_neto', headerName: 'Flujo neto', type: 'numericColumn', width: 105 },
     { field: 'adu', headerName: 'ADU', type: 'numericColumn', width: 90 },
     ...colsCobertura(),
@@ -418,7 +419,7 @@ export default function Control() {
       </Box>}
       {!tendModo && !mapaModo && <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 320 }}>
         {nivel === 'detalle'
-          ? <Tabla textoCargando="Calculando…" vacio="Sin resultados con estos filtros" key={'det' + cambiosModo} rowData={det.filas} columnDefs={ayudar(cambiosModo ? colsDetCambios : colsDet)} tooltipShowDelay={300} rowBuffer={20} cargando={cargando} defaultColDef={{ resizable: true, sortable: true }} />
+          ? <Tabla textoCargando="Calculando…" vacio="Sin resultados con estos filtros" key={'det' + cambiosModo} rowData={det.filas} columnDefs={ayudar(cambiosModo ? colsDetCambios : colsDet)} tooltipShowDelay={300} getRowStyle={(p: any) => p.data?.rit_dias != null ? { background: 'rgba(239,108,0,0.14)' } : undefined} rowBuffer={20} cargando={cargando} defaultColDef={{ resizable: true, sortable: true }} />
           : <Tabla textoCargando="Calculando…" vacio="Sin resultados con estos filtros" key={nivel + cambiosModo} rowData={grupos} columnDefs={ayudar(cambiosModo ? colsCambios : colsGrupo)} tooltipShowDelay={300} rowBuffer={20} cargando={cargando} defaultColDef={{ resizable: true, sortable: true }}
               onRowClicked={e => e.data && entrar(String(e.data.clave))} rowStyle={{ cursor: 'pointer' }} rowHeight={40} />}
       </Box>}

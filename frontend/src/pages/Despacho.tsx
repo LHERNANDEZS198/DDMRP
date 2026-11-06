@@ -38,6 +38,7 @@ const cols: ColDef[] = [
   { field: 'estado', filter: true, width: 115 },
   { field: 'inventario', type: 'numericColumn' },
   { field: 'en_transito', headerName: 'Transito', type: 'numericColumn' },
+  { field: 'rit_dias', headerName: 'RIT abierto (d)', type: 'numericColumn', width: 120, filter: true, headerTooltip: 'Días del RIT (requisición de abastecimiento) más viejo que sigue abierto para este item en esta tienda (umbral: rit_alerta_dias). Hay que despacharlo o anularlo en Siesa', tooltipField: 'rit_detalle', cellStyle: p => p.value != null ? { color: '#b71c1c', fontWeight: 700 } : undefined },
   { field: 'tog_aj', headerName: 'TOG aj.', type: 'numericColumn' },
   { field: 'unidad_despacho', headerName: 'Und. desp.', type: 'numericColumn' },
   { field: 'vectorizacion', headerName: 'Derrame', type: 'numericColumn' },
@@ -295,7 +296,7 @@ export default function Despacho() {
       <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 300, display: porTienda ? 'none' : 'block' }}>
         {!empresa && <Alert severity="warning" sx={{ mb: 1 }}>El despacho se trabaja de a una empresa: elige Funat o Stores en la barra de arriba (cada una tiene su CEDI y su plano).</Alert>}
         <Tabla cargando={cargando} textoCargando="Cargando la matriz…" vacio="No hay filas con este filtro" rowData={vista} columnDefs={ayudar(cols)} tooltipShowDelay={300} rowSelection="multiple" rowBuffer={20}
-          getRowStyle={(p: any) => bajoMin.has(p.data?.bodega_id) ? { color: '#9e9e9e', background: 'rgba(158,158,158,0.12)' } : undefined}
+          getRowStyle={(p: any) => bajoMin.has(p.data?.bodega_id) ? { color: '#9e9e9e', background: 'rgba(158,158,158,0.12)' } : p.data?.rit_dias != null ? { background: 'rgba(239,108,0,0.14)' } : undefined}
           context={{ aprobar: pAprobar }} onCellValueChanged={() => setEdiciones(n => n + 1)} onGridReady={e => setGrid(e.api)} defaultColDef={{ resizable: true, sortable: true }} />
       </Box>
       <GuiaDespacho abierta={guia} cerrar={() => setGuia(false)} />

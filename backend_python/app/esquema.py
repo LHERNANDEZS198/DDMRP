@@ -270,6 +270,12 @@ SENTENCIAS_CEDI = [
     "leadtime NUMERIC(8,2) NOT NULL CHECK (leadtime >= 0), PRIMARY KEY (empresa, producto_id))",
     "INSERT INTO ddmrp.abast_leadtime_cedi (empresa, producto_id, leadtime) SELECT e, '*', 8 FROM (VALUES ('05'), ('21')) v(e) ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('oc_dias_historia', 365, 'Antiguedad maxima (dias) de las ordenes de compra abiertas que cuentan como transito: una OC vieja sin cerrar en Siesa no debe inflar el flujo neto') ON CONFLICT DO NOTHING",
+    "INSERT INTO ddmrp.parametro VALUES ('rit_abiertas_transito', 1, 'Requisiciones RIT (abastecimiento) aun no despachadas: 1 = su saldo (requerido - despachado) cuenta como transito hacia la tienda; 0 = solo cuentan los traslados ya despachados') ON CONFLICT DO NOTHING",
+    "INSERT INTO ddmrp.parametro VALUES ('rit_incluir_aprobadas', 0, 'Requisiciones RIT: 1 = tambien cuentan como transito las lineas APROBADAS (el CEDI aun no las compromete, pueden no salir); 0 = solo las COMPROMETIDAS (ya reservadas para despachar)') ON CONFLICT DO NOTHING",
+    "INSERT INTO ddmrp.parametro VALUES ('rit_alerta_dias', 15, 'Alerta en el item (columna y fila resaltada) cuando tiene una requisicion RIT abierta hace mas de estos dias, cuente o no como transito') ON CONFLICT DO NOTHING",
+    "CREATE TABLE IF NOT EXISTS ddmrp.rit_alerta (empresa TEXT NOT NULL, producto_id TEXT NOT NULL, bodega_id TEXT NOT NULL, documento TEXT NOT NULL, fecha DATE NOT NULL, "
+    "saldo NUMERIC(14,4) NOT NULL DEFAULT 0, estado SMALLINT NOT NULL DEFAULT 1, PRIMARY KEY (empresa, producto_id, bodega_id, documento))",
+    "INSERT INTO ddmrp.parametro VALUES ('rit_dias_historia', 30, 'Antiguedad maxima (dias) de las requisiciones RIT abiertas que cuentan como transito: una requisicion vieja sin cerrar en Siesa no debe inflar el flujo neto (0 = sin limite, hasta 365 dias)') ON CONFLICT DO NOTHING",
     # de donde sale la demanda de cada CEDI: TODAS las tiendas de la bitacora de su empresa (su venta) y el propio CEDI (venta directa mayorista / digital).
     # Un CEDI por empresa (el primero del maestro), igual que el reparto y la matriz de despacho, que tampoco miran la columna cedi de la bitacora:
     # asi una tienda con la columna cedi vacia o distinta no deja al CEDI sin su demanda (le pasaba al CEDI de Stores: salia «sin venta»).

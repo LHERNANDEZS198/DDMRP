@@ -231,6 +231,25 @@ WHERE d.f420_id_cia = :cia AND b.f150_id_cia = :cia AND d.f420_fecha >= :desde_o
 GROUP BY i.f120_referencia, b.f150_id, d.f420_id_tipo_docto, d.f420_consec_docto
 HAVING SUM(m.f421_cant_pedida - m.f421_cant_entrada) > 0"""
 
+# Requisiciones inter-bodega (RIT, las que genera el plano de abastecimiento) AUN NO despachadas hacia las tiendas. Hasta que el CEDI las despacha no existe el traslado
+# (t406): el pedido esta hecho pero no salia en transito y la tienda lo volvia a pedir. Saldo = requerido - consumido (consumido = ya despachado como traslado, que
+# entra por SQL_TRANSITOS, asi no se cuenta dos veces). Estados de linea en Siesa: 1 Aprobada (aun sin comprometer: solo cuenta si rit_incluir_aprobadas = 1), 2 Comprometida
+# (el CEDI ya la reservo: cuenta), 3 Cumplida, 9 Anulada. El consecutivo es
+# POR CENTRO DE OPERACION (RIT 433-471 y 011-471 son documentos distintos), por eso el documento lleva el CO. Entran a ddmrp.transitos como 'RQ-<tipo><co>-<consec>'.
+SQL_RIT_ABIERTAS = """
+SELECT RTRIM(i.f120_referencia), RTRIM(be.f150_id),
+       'RQ-' + RTRIM(d.f440_id_tipo_docto) + RTRIM(d.f440_id_co) + '-' + RTRIM(CONVERT(varchar(12), d.f440_consec_docto)),
+       CONVERT(float, SUM(m.f441_cant_requerida_base - m.f441_cant_consumida_base)), CONVERT(date, d.f440_fecha), m.f441_ind_estado
+FROM t440_docto_req_int d
+JOIN t441_movto_req_int m ON m.f441_rowid_docto_req_int = d.f440_rowid
+JOIN t150_mc_bodegas be ON be.f150_rowid = d.f440_rowid_bodega_ent
+JOIN t121_mc_items_extensiones x ON x.f121_rowid = m.f441_rowid_item_ext
+JOIN t120_mc_items i ON i.f120_rowid = x.f121_rowid_item
+WHERE d.f440_id_cia = :cia AND be.f150_id_cia = :cia AND d.f440_id_tipo_docto = :tipo_rit AND d.f440_fecha >= :desde_rit
+  AND d.f440_ind_estado IN (1, 2) AND m.f441_ind_estado IN (1, 2) AND be.f150_id IN :bodegas /*ACTIVO:x,i*/
+GROUP BY i.f120_referencia, be.f150_id, d.f440_id_tipo_docto, d.f440_id_co, d.f440_consec_docto, d.f440_fecha, m.f441_ind_estado
+HAVING SUM(m.f441_cant_requerida_base - m.f441_cant_consumida_base) > 0"""
+
 ACTIVO_RE = re.compile(r"/\*ACTIVO:(\w+),(\w+)\*/")
 
 
@@ -1104,6 +1123,11 @@ def _correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
                 cedis_emp.setdefault(emp, []).append(b)
             oc_dias = _param(cur, "oc_dias_historia")   # las OC mas viejas que esto no cuentan (una OC olvidada sin cerrar inflaria el transito para siempre)
             desde_oc = date.today() - timedelta(days=int(min(max(oc_dias, 30), 1500)) if oc_dias else 365)
+            rit_on = (_param(cur, "rit_abiertas_transito") if _param(cur, "rit_abiertas_transito") is not None else 1) >= 1
+            rit_aprob = (_param(cur, "rit_incluir_aprobadas") or 0) >= 1
+            _rd = _param(cur, "rit_dias_historia")      # mas viejas que esto NO cuentan como transito; 0 = sin limite (todo lo que se lee: hasta 365 dias)
+            rit_dias = 365 if (_rd is not None and _rd <= 0) else int(min(max(_rd or 30, 1), 365))
+            rit_alerta = int(min(max(_param(cur, "rit_alerta_dias") or 15, 1), 365))      # mas viejas que esto generan alerta en el item
             if not settings.siesa_host:
                 log.warning("Siesa no configurado: inventario, transitos y ventas quedan como estaban")
                 raw.commit()
@@ -1111,6 +1135,7 @@ def _correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
 
             cur.execute("TRUNCATE ddmrp.inventario_actual")
             cur.execute("TRUNCATE ddmrp.transitos")
+            cur.execute("TRUNCATE ddmrp.rit_alerta")
             traer_ventas = (_param(cur, "etl_traer_ventas") or 0) >= 1
             resta_comp = (_param(cur, "inv_tiendas_resta_comprometido") or 0) >= 1
             resta_sa = (_param(cur, "inv_tiendas_resta_sin_acumular") or 0) >= 1   # ventas del POS aun sin acumular (salida sin confirmar)
@@ -1137,6 +1162,29 @@ def _correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
                 res[f"transitos_{empresa}"] = _volcar(
                     cur, ((empresa,) + r for r in _stream(eng, _con_estado(SQL_TRANSITOS, filtrar), prm, expanding="bodegas")), "ddmrp.transitos",
                     ["empresa", "producto_id", "bodega_id", "documento", "cantidad"], reemplazar=False)
+                if rit_on:
+                    progreso.avance(f"Leyendo requisiciones RIT pendientes de Siesa ({db})…")
+                    try:   # sin ellas la tienda vuelve a pedir lo ya pedido, pero no se tumba el ETL
+                        hoy_d = date.today()
+                        # se lee un año atras (para poder ALERTAR de las viejas); lo que cuenta como transito se decide aqui
+                        filas_rit = list(_stream(eng, _con_estado(SQL_RIT_ABIERTAS, filtrar), {**prm, "tipo_rit": settings.plano_tipo_docto, "desde_rit": hoy_d - timedelta(days=365)}, expanding="bodegas"))
+                        cuenta: dict[tuple, float] = {}; alertas: dict[tuple, list] = {}
+                        for ref, bod, doc, saldo, fec, est in filas_rit:
+                            fec = fec.date() if hasattr(fec, "date") else fec
+                            edad = (hoy_d - fec).days
+                            if edad <= rit_dias and (int(est) == 2 or rit_aprob):
+                                cuenta[(ref, bod, doc)] = cuenta.get((ref, bod, doc), 0.0) + float(saldo)
+                            if edad > rit_alerta:    # abierta hace mas de X dias: se avisa en el item (cuente o no como transito)
+                                a = alertas.setdefault((ref, bod, doc), [fec, 0.0, int(est)]); a[1] += float(saldo); a[2] = min(a[2], int(est))
+                        res[f"rit_abiertas_{empresa}"] = _volcar(
+                            cur, ((empresa, r, b, d, c) for (r, b, d), c in cuenta.items()), "ddmrp.transitos", ["empresa", "producto_id", "bodega_id", "documento", "cantidad"], reemplazar=False)
+                        res[f"rit_alertas_{empresa}"] = _volcar(
+                            cur, ((empresa, r, b, d, a[0], a[1], a[2]) for (r, b, d), a in alertas.items()), "ddmrp.rit_alerta",
+                            ["empresa", "producto_id", "bodega_id", "documento", "fecha", "saldo", "estado"], reemplazar=False)
+                    except Exception as e:
+                        if isinstance(e, psycopg.Error):
+                            raise
+                        log.warning("Requisiciones RIT de %s no leidas: %s", db, e); res[f"rit_error_{empresa}"] = str(e)[:200]
                 progreso.avance(f"Leyendo órdenes de compra abiertas de Siesa ({db})…")
                 bod_oc = sorted(set(bodegas) | set(cedis_emp.get(empresa, [])))
                 try:   # sin las OC el buffer del CEDI solo pierde el transito: no tumba el ETL

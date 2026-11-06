@@ -131,7 +131,9 @@ def _sql_detalle(w: str) -> str:
     return f"""SELECT s.bodega_id, mb.descripcion AS bodega_nombre, tc.clase AS clase_tienda, s.producto_id, mi.descripcion,
                      COALESCE(mi.categoria, '(sin laboratorio)') AS laboratorio, s.zona::text AS zona, s.pct_buffer,
                      s.inventario, s.en_transito, s.flujo_neto, s.tor, s.toy_aj, s.tog_aj, s.adu, s.cantidad_sugerida, s.condenado,
-                     (SELECT ci.costo::float8 FROM ddmrp.costo_item ci WHERE ci.producto_id = s.producto_id) AS costo
+                     (SELECT ci.costo::float8 FROM ddmrp.costo_item ci WHERE ci.producto_id = s.producto_id) AS costo,
+                     (SELECT max(current_date - r.fecha) FROM ddmrp.rit_alerta r WHERE r.empresa = s.empresa AND r.producto_id = s.producto_id AND r.bodega_id = s.bodega_id) AS rit_dias,
+                     (SELECT string_agg(split_part(r.documento, '-', 2) || '-' || split_part(r.documento, '-', 3) || ' (' || (current_date - r.fecha) || ' d, ' || round(r.saldo) || ' u)', ', ') FROM ddmrp.rit_alerta r WHERE r.empresa = s.empresa AND r.producto_id = s.producto_id AND r.bodega_id = s.bodega_id) AS rit_detalle
               {FROM} WHERE {w} ORDER BY s.pct_buffer NULLS FIRST, s.bodega_id, s.producto_id"""
 
 
