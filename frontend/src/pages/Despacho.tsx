@@ -296,7 +296,7 @@ export default function Despacho() {
       <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 300, display: porTienda ? 'none' : 'block' }}>
         {!empresa && <Alert severity="warning" sx={{ mb: 1 }}>El despacho se trabaja de a una empresa: elige Funat o Stores en la barra de arriba (cada una tiene su CEDI y su plano).</Alert>}
         <Tabla cargando={cargando} textoCargando="Cargando la matriz…" vacio="No hay filas con este filtro" rowData={vista} columnDefs={ayudar(cols)} tooltipShowDelay={300} rowSelection="multiple" rowBuffer={20}
-          getRowStyle={(p: any) => bajoMin.has(p.data?.bodega_id) ? { color: '#9e9e9e', background: 'rgba(158,158,158,0.12)' } : p.data?.rit_dias != null ? { background: 'rgba(239,108,0,0.14)' } : undefined}
+          getRowStyle={(p: any): any => bajoMin.has(p.data?.bodega_id) ? { color: '#9e9e9e', background: 'rgba(158,158,158,0.12)' } : p.data?.rit_dias != null ? { background: 'rgba(239,108,0,0.14)' } : undefined}
           context={{ aprobar: pAprobar }} onCellValueChanged={() => setEdiciones(n => n + 1)} onGridReady={e => setGrid(e.api)} defaultColDef={{ resizable: true, sortable: true }} />
       </Box>
       <GuiaDespacho abierta={guia} cerrar={() => setGuia(false)} />
