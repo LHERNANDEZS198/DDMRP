@@ -95,7 +95,7 @@ REGLAS = [
          ayuda="Una requisición RIT abierta hace más días que esto NO suma al tránsito (una vieja sin cerrar en Siesa inflaría el tránsito para siempre). 0 = sin límite (hasta 365 días). Las viejas igual generan la alerta del item. Se aplica en el siguiente ETL.",
          opciones=None, min=0, max=365, entero=True),
     dict(clave="rit_alerta_dias", titulo="Requisiciones RIT: alerta en el item después de (días)",
-         ayuda="Si un item tiene una requisición RIT abierta hace más de estos días, sale la columna «RIT abierto (d)» y la fila resaltada en el Control y en la Matriz de despacho: hay que despacharla o anularla en Siesa. Cuente o no como tránsito. Se aplica en el siguiente ETL.",
+         ayuda="Si un item tiene una requisición RIT COMPROMETIDA (el CEDI la reservó) hace más de estos días sin despacharse, sale la columna «RIT abierto (d)» y la fila resaltada en el Control y en la Matriz de despacho: hay que despacharla o anularla en Siesa. Las Aprobadas (aún sin comprometer) no generan alerta. Se aplica en el siguiente ETL.",
          opciones=None, min=1, max=365, entero=True),
     dict(clave="pipeline_auto", titulo="Corrida automática (ETL + motor)",
          ayuda="Si: el ETL y el motor corren solos a la hora indicada. No: no corre nada solo; el personal lo lanza cuando lo necesite (botón de correr el pipeline). Útil mientras se hacen pruebas. Se aplica en menos de un minuto, sin reiniciar.",

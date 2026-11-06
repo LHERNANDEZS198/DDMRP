@@ -1174,7 +1174,7 @@ def _correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
                             edad = (hoy_d - fec).days
                             if edad <= rit_dias and (int(est) == 2 or rit_aprob):
                                 cuenta[(ref, bod, doc)] = cuenta.get((ref, bod, doc), 0.0) + float(saldo)
-                            if edad > rit_alerta:    # abierta hace mas de X dias: se avisa en el item (cuente o no como transito)
+                            if edad > rit_alerta and int(est) == 2:    # COMPROMETIDA hace mas de X dias sin despachar: se avisa en el item (las Aprobadas no: son ruido)
                                 a = alertas.setdefault((ref, bod, doc), [fec, 0.0, int(est)]); a[1] += float(saldo); a[2] = min(a[2], int(est))
                         res[f"rit_abiertas_{empresa}"] = _volcar(
                             cur, ((empresa, r, b, d, c) for (r, b, d), c in cuenta.items()), "ddmrp.transitos", ["empresa", "producto_id", "bodega_id", "documento", "cantidad"], reemplazar=False)
