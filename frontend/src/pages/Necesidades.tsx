@@ -130,6 +130,17 @@ export default function Necesidades() {
     return () => { vivo = false }
   }, [qs, recarga])
   const recargar = () => { silenciosa.current = true; setRecarga(x => x + 1) }
+  // Opciones del filtro Proveedor: salen de lo ya calculado, que con un filtro puesto solo trae lo filtrado (y el proveedor elegido era la única opción).
+  // Sin filtros se toma la lista completa; con filtros se conserva lo que ya se había visto y se suma lo nuevo.
+  const [opcProv, setOpcProv] = useState<any[]>([])
+  useEffect(() => {
+    const sinFiltro = !provs.length && !cats.length && !labs.length && !zonas.length && !q.trim()
+    setOpcProv(prev => {
+      const m = new Map<string, any>(sinFiltro ? [] : prev.map(p => [p.proveedor_id, p]))
+      d.proveedores.forEach((p: any) => { if (!m.has(p.proveedor_id)) m.set(p.proveedor_id, p) })
+      return [...m.values()]
+    })
+  }, [d.proveedores])
   const excel = async () => { setBajando(true); setErr(''); try { await bajar('/compras/necesidades/excel?' + qs, 'necesidades_compra.xlsx') } catch (e: any) { setErr(e.message) } finally { setBajando(false) } }
 
   // ---- selección: por proveedor (todos sus ítems) o ítem por ítem; ambas valen a la vez
@@ -342,8 +353,8 @@ export default function Necesidades() {
       </Box>
       <Paper variant="outlined" sx={{ p: 1, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
         <AutoMulti ayuda="Filtra por uno o varios proveedores" label="Proveedor(es)" value={provs} sx={{ minWidth: 240, flex: '1 1 240px', maxWidth: 380 }}
-          options={[...new Map(d.proveedores.map((p: any) => [p.proveedor_id, p])).keys()] as string[]}
-          getOptionLabel={(id: string) => { const p = d.proveedores.find((x: any) => x.proveedor_id === id); return p ? `${id} · ${p.proveedor_nombre ?? ''}` : id }} onChange={setProvs} />
+          options={[...new Set([...opcProv.map((p: any) => p.proveedor_id), ...provs])] as string[]}
+          getOptionLabel={(id: string) => { const p = opcProv.find((x: any) => x.proveedor_id === id); return p ? `${id} · ${p.proveedor_nombre ?? ''}` : id }} onChange={setProvs} />
         <AutoMulti ayuda="Categoría de Siesa: productos Funat, de terceros o maquila" label="Categoría" value={cats} sx={{ minWidth: 200, flex: '0 1 260px' }}
           options={Object.keys(CATEGORIAS)} getOptionLabel={(c: string) => CATEGORIAS[c] ?? c} onChange={setCats} />
         <AutoMulti ayuda="Laboratorio del ítem" label="Laboratorio" value={labs} sx={{ minWidth: 200, flex: '0 1 260px' }} options={opcLabs.map(l => l.codigo)}
