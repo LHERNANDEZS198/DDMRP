@@ -30,10 +30,10 @@ const verEnControl = (p: ICellRendererParams) => (
 const cols: ColDef[] = [
   { checkboxSelection: true, headerCheckboxSelection: true, width: 50, pinned: 'left' },
   { headerName: 'Control', width: 80, cellRenderer: verEnControl, sortable: false, pinned: 'left' },
-  { field: 'bodega_id', headerName: 'Bodega', width: 130, filter: true },
+  { field: 'bodega_id', headerName: 'Bodega', width: 130, filter: true , pinned: 'left'},
+  { field: 'producto_id', headerName: 'Producto', width: 130, filter: true , pinned: 'left'},
+  { field: 'descripcion', flex: 1, minWidth: 220, filter: true , pinned: 'left'},
   { field: 'clase_tienda', headerName: 'Clase', width: 90, filter: true, headerTooltip: 'Clase de la tienda por venta (A/B/C). Es el desempate del reparto del CEDI y la prioridad de la regla «Por clase de tienda».' },
-  { field: 'producto_id', headerName: 'Producto', width: 130, filter: true },
-  { field: 'descripcion', flex: 1, minWidth: 220, filter: true },
   { field: 'zona', filter: true, width: 130 },
   { field: 'estado', filter: true, width: 115 },
   { field: 'inventario', type: 'numericColumn', width: 130, },
