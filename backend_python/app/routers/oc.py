@@ -129,7 +129,9 @@ def _motivos_revision(g: dict, cfg: dict) -> list[str]:
     for l in g["lineas"]:
         calc = l.get("qty_calculada")
         if calc is not None:
-            if calc > cfg["oc_desvio_cant_min"] and abs(l["cantidad"] - calc) > calc * cfg["oc_desvio_cant_pct"] / 100:
+            # calculada sobre el minimo: regla de %. Calculada baja o en 0 (compras pide algo que el motor no pide): se compara en unidades contra el mismo minimo
+            if (calc > cfg["oc_desvio_cant_min"] and abs(l["cantidad"] - calc) > calc * cfg["oc_desvio_cant_pct"] / 100) or \
+               (calc <= cfg["oc_desvio_cant_min"] and l["cantidad"] - calc > cfg["oc_desvio_cant_min"]):
                 m.append(f"{l['producto_id']}: cantidad {l['cantidad']:.0f} vs calculada {calc:.0f}")
         ref = l.get("costo_ref")
         if ref and ref > 0 and l["costo"] > ref * (1 + cfg["oc_desvio_costo_pct"] / 100):

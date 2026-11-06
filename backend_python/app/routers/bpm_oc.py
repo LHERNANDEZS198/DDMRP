@@ -108,7 +108,9 @@ def detalle(oc_id: int):
     for l in lineas:
         mot = []
         calc, cant = l.get("cantidad_sugerida"), l.get("cantidad_comprador")
-        if calc is not None and cant is not None and calc > cfg["oc_desvio_cant_min"] and abs(cant - calc) > calc * cfg["oc_desvio_cant_pct"] / 100:
+        if calc is not None and cant is not None and (
+                (calc > cfg["oc_desvio_cant_min"] and abs(cant - calc) > calc * cfg["oc_desvio_cant_pct"] / 100)
+                or (calc <= cfg["oc_desvio_cant_min"] and cant - calc > cfg["oc_desvio_cant_min"])):     # calculada baja o 0: se compara en unidades contra el mismo minimo
             mot.append(f"cantidad {cant:,.0f} vs calculada {calc:,.0f}")
         ref, costo = l.get("costo_cotizado"), l.get("costo_comprador")
         if ref and ref > 0 and costo is not None and costo > ref * (1 + cfg["oc_desvio_costo_pct"] / 100):
