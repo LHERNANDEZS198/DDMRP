@@ -239,15 +239,15 @@ HAVING SUM(m.f421_cant_pedida - m.f421_cant_entrada) > 0"""
 SQL_RIT_ABIERTAS = """
 SELECT RTRIM(i.f120_referencia), RTRIM(be.f150_id),
        'RQ-' + RTRIM(d.f440_id_tipo_docto) + RTRIM(d.f440_id_co) + '-' + RTRIM(CONVERT(varchar(12), d.f440_consec_docto)),
-       CONVERT(float, SUM(m.f441_cant_requerida_base - m.f441_cant_consumida_base)), CONVERT(date, d.f440_fecha), m.f441_ind_estado
+       CONVERT(float, SUM(m.f441_cant_requerida_base - m.f441_cant_consumida_base)), CONVERT(date, d.f440_id_fecha), m.f441_ind_estado
 FROM t440_docto_req_int d
 JOIN t441_movto_req_int m ON m.f441_rowid_docto_req_int = d.f440_rowid
 JOIN t150_mc_bodegas be ON be.f150_rowid = d.f440_rowid_bodega_ent
 JOIN t121_mc_items_extensiones x ON x.f121_rowid = m.f441_rowid_item_ext
 JOIN t120_mc_items i ON i.f120_rowid = x.f121_rowid_item
-WHERE d.f440_id_cia = :cia AND be.f150_id_cia = :cia AND d.f440_id_tipo_docto = :tipo_rit AND d.f440_fecha >= :desde_rit
+WHERE d.f440_id_cia = :cia AND be.f150_id_cia = :cia AND d.f440_id_tipo_docto = :tipo_rit AND d.f440_id_fecha >= :desde_rit
   AND d.f440_ind_estado IN (1, 2) AND m.f441_ind_estado IN (1, 2) AND be.f150_id IN :bodegas /*ACTIVO:x,i*/
-GROUP BY i.f120_referencia, be.f150_id, d.f440_id_tipo_docto, d.f440_id_co, d.f440_consec_docto, d.f440_fecha, m.f441_ind_estado
+GROUP BY i.f120_referencia, be.f150_id, d.f440_id_tipo_docto, d.f440_id_co, d.f440_consec_docto, d.f440_id_fecha, m.f441_ind_estado
 HAVING SUM(m.f441_cant_requerida_base - m.f441_cant_consumida_base) > 0"""
 
 ACTIVO_RE = re.compile(r"/\*ACTIVO:(\w+),(\w+)\*/")
