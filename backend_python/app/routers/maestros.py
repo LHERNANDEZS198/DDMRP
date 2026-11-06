@@ -44,7 +44,7 @@ MAESTROS = {
         llave=["empresa", "bodega_id", "producto_id"], editable={"cota_maxima": "num", "cota_minima": "num"},
         bodega="bodega_id", producto="producto_id"),
     "vectorizacion": dict(
-        label="Vectorizacion (derrame); NxP = condenar item en esa tienda", tabla="ddmrp.abast_vectorizacion",
+        label="Vectorización; NxP = condenar item en esa tienda", tabla="ddmrp.abast_vectorizacion",
         llave=["empresa", "bodega_id", "producto_id"], editable={"vectorizacion": "num"},
         bodega="bodega_id", producto="producto_id", nxp=True),   # NxP en vectorizacion = condenado (item x tienda): va al maestro de condenados
     "condenados": dict(
@@ -153,7 +153,7 @@ AYUDA = {
                 "Una tienda que no esté aquí no entra al cálculo del motor.",
     "control-referencias": "Cota máxima y mínima por tienda y referencia, como fracción o % (20% = 0.2). Ajustan los topes: TOY ajustado = TOG × cota máx + TOR + ZA, "
                            "TOG ajustado = TOY ajustado + ZV + TOG × cota mín. Con cotas en 0 los topes ajustados quedan iguales a los calculados. No se usan cuando la venta diaria es baja (ADU entre 1 y 4) y no hay promoción.",
-    "vectorizacion": "Unidades extra (derrame) que se suman a lo sugerido de esa tienda y referencia, p. ej. producto nuevo o campaña. Solo cuenta si la regla 'Sumar vectorización' está en Sí. "
+    "vectorizacion": "Unidades extra que se suman a lo sugerido de esa tienda y referencia, p. ej. producto nuevo o campaña. Solo cuenta si la regla 'Sumar vectorización' está en Sí. "
                      "Escribir NxP condena el item en esa tienda (pasa al maestro Condenados).",
     "condenados": "Items que NO se despachan: el buffer se calcula y se ve, pero la cantidad sugerida queda en 0. Tienda * = el item queda condenado en todas las tiendas.",
     "unidad-despacho": "Múltiplo en que se despacha cada referencia (caja o display). Lo sugerido se redondea a este múltiplo (según la regla de redondeo) y también es el mínimo de la zona verde.",

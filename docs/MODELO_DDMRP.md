@@ -10,7 +10,7 @@ Implementacion: `core_rust/src/lib.rs` (con pruebas). Columnas del Excel entre p
 | Lead time (AA), frecuencia (AC) | `abast_bitacora` por bodega |
 | Unidad de despacho (AD) | `abast_unidad_despacho` por referencia |
 | Cotas max / min (AX, AY) | `abast_control_referencias` |
-| Vectorizacion (derrame) | `abast_vectorizacion` |
+| Vectorización | `abast_vectorizacion` |
 | Pronostico (valor estatico) | `pronostico` (se alimenta desde la app) |
 | Promocion (AN: 0/1/2) | `promocion` (por definir) |
 | Factores LT / variabilidad (hoja Factores) | `factor_tramo` |
@@ -38,7 +38,7 @@ Valores por defecto:
 - Se pide (`regla_disparo`): 1 = flujo neto `<= TOY aj` · 2 = `<= TOR` · 3 = `< TOG aj`.
 - Cantidad = objetivo - flujo neto (`regla_objetivo`: 1 = TOG aj, 2 = TOY aj, 3 = TOY aj + la mitad de la zona verde ajustada; un laboratorio o un item puede tener la suya en los maestros `reposicion-laboratorio` / `reposicion-item`: item > laboratorio > regla general), al multiplo de la unidad de despacho
   (`regla_redondeo`: 1 arriba, 2 cercano, 3 abajo). `cantidad_minima` descarta sugeridos pequenos.
-- La vectorizacion (derrame) se suma tal cual (`sumar_vectorizacion`).
+- La vectorización se suma tal cual (`sumar_vectorizacion`).
 - El mes en curso entra completo en el promedio aunque este incompleto (como en el Excel): al inicio de mes el ADU sale subestimado.
 
 ## 4. Archivo plano de Siesa (Fase 2)

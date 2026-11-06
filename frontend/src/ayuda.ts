@@ -66,7 +66,7 @@ export const AYUDA: Record<string, string> = {
   TOR: 'Tope rojo: por debajo o igual a este nivel la referencia está en zona ROJA.',
   'TOY aj.': 'Tope amarillo ajustado por cotas y promoción.',
   'Und. desp.': 'Unidad de despacho: el múltiplo en que se despacha el producto (ej. cajas de 6). Lo sugerido se redondea a ese múltiplo.',
-  Derrame: 'Vectorización: unidades extra que se suman a lo sugerido para productos nuevos o campañas.',
+  Vectorización: 'Vectorización: unidades extra que se suman a lo sugerido para productos nuevos o campañas.',
   'A enviar': 'Cantidad que vas a despachar. Por defecto es lo sugerido; puedes editarla antes de aprobar.',
 }
 

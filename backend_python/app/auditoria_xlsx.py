@@ -85,7 +85,7 @@ def construir(filas: list[dict], meses: list[str], params: dict, factores: list[
     col("promo", "Promoción", "0 no · 1 sí · 2 variante GN (no aplica a TC ni DM)", "e", 9)
     col("mmax", "Mult. cota máx promo", "1 + % de aumento propio de la referencia en el maestro de promociones; sin dato, el multiplicador global (Reglas)", "e", 9, "0.00")
     col("mmin", "Mult. cota mín promo", "1 + % de aumento propio de la referencia en el maestro de promociones; sin dato, el multiplicador global (Reglas)", "e", 9, "0.00")
-    col("vect", "Vectorización", "Unidades de derrame que se suman al pedido", "e", 10, "#,##0.##")
+    col("vect", "Vectorización", "Unidades de vectorización que se suman al pedido", "e", 10, "#,##0.##")
     col("inv", "Inventario", "Disponible en la tienda al correr el motor", "e", 10, "#,##0.##")
     col("tr", "En tránsito", "Traslados abiertos hacia la tienda", "e", 10, "#,##0.##")
     col("dc", "Demanda calificada", "Pedidos ya comprometidos (se resta del flujo neto)", "e", 10, "#,##0.##")

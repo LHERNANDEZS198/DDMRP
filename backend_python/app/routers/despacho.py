@@ -248,9 +248,9 @@ def tiendas_bajo_minimo(c, eid: int, bodegas: list[str] | None = None, empresa: 
     return {b: v for b, v in rows if v < minimo}, minimo, True
 
 
-def consumir_derrame(c, eid, empresa, bodegas):
-    """Regla 'vectorizacion_un_solo_uso' = 1: el derrame (vectorizacion) se pone en 0 en el maestro al marcar la fila como ENVIADA,
-    para que no se vuelva a sumar en la siguiente corrida. Con 0 (por defecto) el derrame se sigue sumando mientras exista en el maestro."""
+def consumir_vectorizacion(c, eid, empresa, bodegas):
+    """Regla 'vectorizacion_un_solo_uso' = 1: la vectorización se pone en 0 en el maestro al marcar la fila como ENVIADA,
+    para que no se vuelva a sumar en la siguiente corrida. Con 0 (por defecto) la vectorización se sigue sumando mientras exista en el maestro."""
     if not (c.execute(text("SELECT valor FROM ddmrp.parametro WHERE clave='vectorizacion_un_solo_uso'")).scalar() or 0) >= 1 or not bodegas:
         return 0
     return c.execute(text("""UPDATE ddmrp.abast_vectorizacion v SET vectorizacion = 0
@@ -284,7 +284,7 @@ def marcar_enviadas(req: MarcarReq, user=Depends(requiere("aprobar_despacho", "d
             exigir(user, b, None, "aprobacion")
         bajo, minimo, _ = tiendas_bajo_minimo(c, eid, req.bodegas, req.empresa)
         ok = [b for b in tiendas if b not in bajo]
-        consumir_derrame(c, eid, req.empresa, ok)
+        consumir_vectorizacion(c, eid, req.empresa, ok)
         n = c.execute(text("""UPDATE ddmrp.sugerencias_envio SET estado = 'ENVIADA'::ddmrp.estado_sugerencia
                               WHERE ejecucion_id = :e AND estado = 'APROBADA' AND bodega_id = ANY(:b) AND empresa = :emp"""), {"e": eid, "b": ok, "emp": req.empresa}).rowcount if ok else 0
     bitacora.evento("aprobacion", bitacora.usuario_de(user), f"Marcó como enviadas {n} filas de {len(ok)} tiendas" + (f"; {len(bajo)} tiendas bajo el mínimo no se enviaron" if bajo else ""),
@@ -335,7 +335,7 @@ def exportar_plano(req: PlanoReq, user=Depends(requiere("descargar_planos"))):
         data = generar_xlsx(lineas, fecha=fecha, consec_inicial=req.consec_inicial,
                             notas=req.notas or notas_por_defecto(fecha, req.dia))
         if req.marcar_enviadas:
-            consumir_derrame(c, eid, req.empresa, sorted({r[0] for r in rows}))
+            consumir_vectorizacion(c, eid, req.empresa, sorted({r[0] for r in rows}))
             c.execute(text("""UPDATE ddmrp.sugerencias_envio SET estado = 'ENVIADA'::ddmrp.estado_sugerencia
                               WHERE ejecucion_id = :e AND estado = 'APROBADA'
                                 AND COALESCE(cantidad_aprobada, cantidad_sugerida) >= 0.5 AND bodega_id = ANY(:b)

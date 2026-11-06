@@ -55,7 +55,7 @@ SENTENCIAS = [
     "INSERT INTO ddmrp.parametro VALUES ('pron_meses_minimos', 3, 'Meses de venta minimos para ajustar el pronostico contra el historial; con menos, se usa el pronostico tal cual (0 = nunca)') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('pron_calculado', 1, 'Forecast: 1 = se calcula del historial (bloque BI..CB del Excel); 0 = valor estatico del maestro de pronosticos') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('pron_divisor', 3, 'Forecast calculado: pronostico = TOY aj + (TOG aj - TOY aj) / este numero (Excel de ejemplo: 3)') ON CONFLICT DO NOTHING",
-    "INSERT INTO ddmrp.parametro VALUES ('vectorizacion_un_solo_uso', 0, 'Derrame (vectorizacion): 0 = se sigue sumando en cada corrida; 1 = un solo uso, se pone en 0 al marcar la fila como enviada') ON CONFLICT DO NOTHING",
+    "INSERT INTO ddmrp.parametro VALUES ('vectorizacion_un_solo_uso', 0, 'Vectorización: 0 = se sigue sumando en cada corrida; 1 = un solo uso, se pone en 0 al marcar la fila como enviada') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('inv_tiendas_resta_sin_acumular', 1, 'Inventario de las tiendas: 1 = resta las ventas del POS aun sin acumular (salida sin confirmar), como el disponible de Siesa; 0 = no') ON CONFLICT DO NOTHING",
     # CEDI por empresa: el inventario del CEDI se guarda por (empresa, item) y solo se reparte entre las tiendas de esa empresa
     "ALTER TABLE ddmrp.promocion ADD COLUMN IF NOT EXISTS aum_cota_max NUMERIC(8,4), ADD COLUMN IF NOT EXISTS aum_cota_min NUMERIC(8,4)",   # % de aumento de cota por referencia en promocion (1 = 100%); vacio = multiplicador global de Reglas
@@ -275,6 +275,7 @@ SENTENCIAS_CEDI = [
     "INSERT INTO ddmrp.parametro VALUES ('rit_alerta_dias', 15, 'Alerta en el item (columna y fila resaltada) cuando tiene una requisicion RIT COMPROMETIDA hace mas de estos dias sin despacharse (las Aprobadas no alertan)') ON CONFLICT DO NOTHING",
     "CREATE TABLE IF NOT EXISTS ddmrp.rit_alerta (empresa TEXT NOT NULL, producto_id TEXT NOT NULL, bodega_id TEXT NOT NULL, documento TEXT NOT NULL, fecha DATE NOT NULL, "
     "saldo NUMERIC(14,4) NOT NULL DEFAULT 0, estado SMALLINT NOT NULL DEFAULT 1, PRIMARY KEY (empresa, producto_id, bodega_id, documento))",
+    "INSERT INTO ddmrp.parametro VALUES ('vectorizacion_en_adu', 1, 'Vectorizacion como piso del ADU: 1 = en una referencia con promocion (indicativo 1) cuyo promedio de ultimos meses + forecast es menor que la vectorizacion, el ADU parte de la vectorizacion (como la columna Promedio ADU del Excel); 0 = no') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('rit_dias_historia', 30, 'Antiguedad maxima (dias) de las requisiciones RIT abiertas que cuentan como transito: una requisicion vieja sin cerrar en Siesa no debe inflar el flujo neto (0 = sin limite, hasta 365 dias)') ON CONFLICT DO NOTHING",
     # de donde sale la demanda de cada CEDI: TODAS las tiendas de la bitacora de su empresa (su venta) y el propio CEDI (venta directa mayorista / digital).
     # Un CEDI por empresa (el primero del maestro), igual que el reparto y la matriz de despacho, que tampoco miran la columna cedi de la bitacora:

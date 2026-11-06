@@ -233,6 +233,7 @@ fn leer_parametros(client: &mut Client) -> Result<Parametros> {
             "regla_objetivo" => p.regla_objetivo = v as u8,
             "regla_redondeo" => p.regla_redondeo = v as u8,
             "sumar_vectorizacion" => p.sumar_vectorizacion = v != 0.0,
+            "vectorizacion_en_adu" => p.vect_en_adu = v != 0.0,
             "incluir_transito" => p.incluir_transito = v != 0.0,
             "restar_demanda_calificada" => p.restar_demanda_calificada = v != 0.0,
             "cantidad_minima" => p.cantidad_minima = v,

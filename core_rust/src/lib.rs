@@ -82,6 +82,7 @@ pub struct Parametros {
     pub regla_objetivo: u8,       // 1 = TOG aj, 2 = TOY aj, 3 = TOY aj + mitad de la zona verde ajustada
     pub regla_redondeo: u8,       // 1 = arriba, 2 = cercano, 3 = abajo (al multiplo de despacho)
     pub sumar_vectorizacion: bool,
+    pub vect_en_adu: bool,           // Excel (Promedio ADU, col. T): con promocion (indicativo 1) y promedio < vectorizacion, el promedio del ADU es la vectorizacion
     pub incluir_transito: bool,
     pub restar_demanda_calificada: bool,
     pub cantidad_minima: f64,
@@ -98,7 +99,7 @@ impl Default for Parametros {
         Parametros {
             mult_cota_max_promo: 1.2, mult_cota_min_promo: 1.1, adu_bajo_min: 1.0, adu_bajo_max: 4.0,
             regla_disparo: 1, regla_objetivo: 1, regla_redondeo: 1,
-            sumar_vectorizacion: true, incluir_transito: true, restar_demanda_calificada: true, cantidad_minima: 0.0,
+            sumar_vectorizacion: true, vect_en_adu: true, incluir_transito: true, restar_demanda_calificada: true, cantidad_minima: 0.0,
             meses_historia: 7, meses_adu: 4, pron_meses_minimos: 3, pron_calculado: true, pron_divisor: 3.0,
         }
     }
@@ -122,7 +123,7 @@ pub struct Entrada {
     pub promo: i16,           // indicativo de promocion (AN): 0, 1, 2
     pub aum_cota_max: f64,    // % de aumento de la cota max en promocion de ESTA referencia (AZ = AX x (1+x)); negativo = sin dato -> multiplicador global
     pub aum_cota_min: f64,    // idem para la cota min (BA = AY x (1+x))
-    pub vectorizacion: f64,   // derrame
+    pub vectorizacion: f64,   // vectorización
     pub inventario: f64,
     pub en_transito: f64,
     pub demanda_calificada: f64,
@@ -284,6 +285,8 @@ pub fn calcular(e: &Entrada, f: &Factores, p: &Parametros) -> Resultado {
     if pron_directo && meses_hist == 0 { v.clear(); }
     v.push(q);
     let u = promedio(&v);
+    // Excel, columna Promedio ADU: =SI(Y(PROMEDIO(L:P)<Vectorizacion; Promocion=1); Vectorizacion; PROMEDIO(L:P)). Con promocion 1 la vectorizacion es el piso del promedio, y de ahi salen IV y ADU (zonas).
+    let u = if p.vect_en_adu && promo == 1 && e.vectorizacion > 0.0 && u < e.vectorizacion { e.vectorizacion } else { u };
     let y = div(desvest_m(&v), u);
     let w = roundup(u + u * y); // ADU (W)
 
@@ -324,7 +327,7 @@ pub fn a_multiplo(x: f64, ud: f64, regla: u8) -> f64 {
 ///  - flujo neto = inventario + transito - demanda calificada (cada termino activable)
 ///  - zona segun TOR / TOY ajustado / TOG ajustado
 ///  - se pide segun `regla_disparo`; se repone hasta `regla_objetivo`, al multiplo de despacho (`regla_redondeo`)
-///  - se suma la vectorizacion (derrame) si `sumar_vectorizacion`
+///  - se suma la vectorización si `sumar_vectorizacion`
 fn decidir(e: &Entrada, z: &Zonas, w: f64, y: f64, q: f64, toy_aj: f64, tog_aj: f64, p: &Parametros) -> Resultado {
     let transito = if p.incluir_transito { e.en_transito } else { 0.0 };
     let dem = if p.restar_demanda_calificada { e.demanda_calificada } else { 0.0 };
@@ -562,9 +565,26 @@ mod tests {
         e.unidad_despacho = 12.0;
         e.vectorizacion = 6.0;
         let r = calcular(&e, &factores(), &pdef());
-        // ZV = max(1, 12, 1) = 12 -> TOG = 3+12 = 15 ; falta 15 -> 24 (2 cajas) + 6 de derrame
+        // ZV = max(1, 12, 1) = 12 -> TOG = 3+12 = 15 ; falta 15 -> 24 (2 cajas) + 6 de vectorización
         assert_eq!(r.zonas.zv, 12.0);
         assert_eq!(r.cantidad_sugerida, 24.0 + 6.0);
+    }
+
+    #[test]
+    fn vectorizacion_es_piso_del_adu_solo_en_promocion() {
+        let f = factores();
+        let mut e = base();          // ventas 10 por mes -> promedio 10
+        e.vectorizacion = 40.0; e.cota_max = 0.5; e.cota_min = 0.3;
+        let sin = calcular(&e, &f, &pdef());
+        e.promo = 1;
+        let con = calcular(&e, &f, &pdef());
+        assert!(con.adu >= 40.0, "con promocion el ADU parte de la vectorizacion: {}", con.adu);
+        let mut p = pdef(); p.vect_en_adu = false;
+        assert_eq!(calcular(&e, &f, &p).adu, sin.adu);        // apagada: igual que sin vectorizacion en el ADU
+        e.promo = 0;
+        assert_eq!(calcular(&e, &f, &pdef()).adu, sin.adu);   // sin promocion no cambia
+        e.promo = 1; e.vectorizacion = 5.0;                   // promedio (10) mayor que la vectorizacion: no cambia
+        assert_eq!(calcular(&e, &f, &pdef()).adu, calcular(&e, &f, &p).adu);
     }
 
     #[test]

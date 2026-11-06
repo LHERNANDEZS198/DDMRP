@@ -9,7 +9,7 @@ type Regla = { clave: string; titulo: string; ayuda: string; opciones: { valor: 
 
 const grupos: [string, string[]][] = [
   ['Decisión de pedido', ['regla_disparo', 'regla_objetivo', 'regla_redondeo', 'cantidad_minima']],
-  ['Qué entra al flujo neto y a lo sugerido', ['incluir_transito', 'restar_demanda_calificada', 'sumar_vectorizacion', 'vectorizacion_un_solo_uso']],
+  ['Qué entra al flujo neto y a lo sugerido', ['incluir_transito', 'restar_demanda_calificada', 'sumar_vectorizacion', 'vectorizacion_en_adu', 'vectorizacion_un_solo_uso']],
   ['Inventario del CEDI (cuando no alcanza)', ['cedi_regla_reparto']],
   ['Clase de tienda (ABC por venta)', ['clase_tienda_meses', 'clase_tienda_corte_a', 'clase_tienda_corte_b']],
   ['Envío a las tiendas (Matriz de despacho)', ['valor_minimo_envio']],
