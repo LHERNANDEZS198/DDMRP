@@ -1212,16 +1212,29 @@ def _correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
                     if isinstance(e, psycopg.Error):
                         raise
                     log.warning("OC abiertas de %s no leidas: %s", db, e); res[f"oc_error_{empresa}"] = str(e)[:200]
-                progreso.avance(f"Leyendo items, criterios y centros de operación ({db})…")
-                try:  # descripciones, laboratorio, criterios y centro de operacion: utiles pero no criticos
-                    res[f"items_{empresa}"] = _items_de_siesa(cur, eng, primera=(empresa == "05"), empresa=empresa)
+                progreso.avance(f"Leyendo centros de operación ({db})…")
+                try:  # centro de operacion de cada bodega: util pero no critico (los items se sincronizan abajo, para las dos empresas)
                     for b, co in _stream(eng, SQL_CO, prm, expanding="bodegas"):
                         # solo completa el centro de operacion que falte en la bitacora (lo que el usuario escribio no se pisa; no crea tiendas)
                         cur.execute("UPDATE ddmrp.abast_bitacora SET id_co = %s WHERE empresa = %s AND bodega_id = %s AND (id_co IS NULL OR id_co = '')", (co, empresa, b))
                 except Exception as e:  # solo fallos del origen; un error de Postgres si debe abortar
                     if isinstance(e, psycopg.Error):
                         raise
-                    log.warning("Items / centro de operacion de %s no se actualizaron: %s", db, e)
+                    log.warning("Centro de operacion de %s no se actualizo: %s", db, e)
+
+            # Items (maestro, descripcion, laboratorio, criterios, item_empresa y estado) de LAS DOS bases, SIEMPRE y en orden (Funat manda, Stores agrega).
+            # Antes iba dentro del ciclo de bodegas: si una empresa no tenia bodegas en la bitacora (Stores) sus items no se leian, y el espejo de Funat
+            # sacaba del maestro los items que solo existen en Stores; la purga de despues les borraba las ventas y el motor los veia con ADU 0.
+            for empresa, db in (("05", settings.siesa_db), ("21", settings.siesa_db_s)):
+                if not db:
+                    continue
+                progreso.avance(f"Leyendo items y criterios ({db})…")
+                try:
+                    res[f"items_{empresa}"] = _items_de_siesa(cur, siesa_engine(db), primera=(empresa == "05"), empresa=empresa)
+                except Exception as e:   # solo fallos del origen; un error de Postgres si debe abortar
+                    if isinstance(e, psycopg.Error):
+                        raise
+                    log.warning("Items de %s no se actualizaron: %s", db, e); res[f"items_error_{empresa}"] = str(e)[:200]
 
             if settings.siesa_db and settings.siesa_cedi_bodega:
                 progreso.avance(f"Leyendo el inventario del CEDI ({settings.siesa_cedi_bodega})…")
