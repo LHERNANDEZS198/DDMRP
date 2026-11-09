@@ -9,10 +9,11 @@ const MM = (v: any) => { const n = Number(v || 0); return '$' + (Math.abs(n) >= 
 const d1 = (v: any) => v == null ? '' : Number(v).toLocaleString('es-CO', { maximumFractionDigits: 1 })
 const SEM: Record<string, string> = { ok: '#2e7d32', aviso: '#b45309', mal: '#c62828', info: '#546e7a' }
 
-function Kpi({ titulo, valor, sub, color = 'info', ayuda }: { titulo: string; valor: ReactNode; sub?: ReactNode; color?: string; ayuda?: string }) {
+function Kpi({ titulo, valor, sub, color = 'info', ayuda, to }: { titulo: string; valor: ReactNode; sub?: ReactNode; color?: string; ayuda?: string; to?: string }) {
+  const nav = useNavigate()
   return (
-    <Tooltip title={ayuda || ''} placement="top" arrow>
-      <Paper variant="outlined" sx={{ p: 1.5, minWidth: 170, flex: '1 1 170px', borderLeft: `4px solid ${SEM[color]}` }}>
+    <Tooltip title={(ayuda ? ayuda + '. ' : '') + (to ? 'Clic para ver el detalle completo' : '')} placement="top" arrow>
+      <Paper variant="outlined" onClick={to ? () => nav(to) : undefined} sx={{ p: 1.5, minWidth: 170, flex: '1 1 170px', borderLeft: `4px solid ${SEM[color]}`, cursor: to ? 'pointer' : 'default', '&:hover': to ? { bgcolor: 'action.hover' } : undefined }}>
         <Typography variant="caption" color="text.secondary">{titulo}</Typography>
         <Typography variant="h5" sx={{ fontWeight: 700, color: SEM[color] }}>{valor}</Typography>
         {sub && <Typography variant="caption" color="text.secondary">{sub}</Typography>}
@@ -94,10 +95,10 @@ export default function Tablero() {
 
       <Bloque n={2} titulo="OC en vuelo" ayuda="Dónde están las OC montadas en los últimos 90 días. Las trabadas llevan más de los días configurados sin cerrarse.">
         <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', mb: 1.5 }}>
-          <Kpi titulo="En el BPM" valor={ent(nEst('en_bpm') + nEst('en_revision'))} sub={MM(v.estados.filter((x: any) => ['en_bpm', 'en_revision'].includes(x.estado)).reduce((a: number, x: any) => a + x.total, 0))} />
-          <Kpi titulo="Con error / inciertas" valor={ent(nEst('error') + nEst('incierta'))} color={nEst('error') + nEst('incierta') ? 'mal' : 'ok'} />
-          <Kpi titulo="Creadas en Siesa" valor={ent(nEst('creada'))} sub={MM(v.estados.find((x: any) => x.estado === 'creada')?.total || 0)} color="ok" />
-          <Kpi titulo="Trabadas" valor={ent(v.trabadas.length)} sub={`más de ${d.config.tablero_dias_trabada} días sin cerrar`} color={v.trabadas.length ? 'aviso' : 'ok'} />
+          <Kpi to="/compras/tablero/oc_vuelo" titulo="En el BPM" valor={ent(nEst('en_bpm') + nEst('en_revision'))} sub={MM(v.estados.filter((x: any) => ['en_bpm', 'en_revision'].includes(x.estado)).reduce((a: number, x: any) => a + x.total, 0))} />
+          <Kpi to="/compras/tablero/oc_vuelo" titulo="Con error / inciertas" valor={ent(nEst('error') + nEst('incierta'))} color={nEst('error') + nEst('incierta') ? 'mal' : 'ok'} />
+          <Kpi to="/compras/tablero/oc_vuelo" titulo="Creadas en Siesa" valor={ent(nEst('creada'))} sub={MM(v.estados.find((x: any) => x.estado === 'creada')?.total || 0)} color="ok" />
+          <Kpi to="/compras/tablero/trabadas" titulo="Trabadas" valor={ent(v.n_trabadas)} sub={`más de ${d.config.tablero_dias_trabada} días sin cerrar`} color={v.n_trabadas ? 'aviso' : 'ok'} />
         </Box>
         <Lista vacio="No hay OC trabadas."
           cols={[{ t: 'Referencia', f: r => r.referencia }, { t: 'Proveedor', f: r => r.proveedor_nombre }, { t: 'Estado', f: r => <Chip size="small" label={r.estado} color={r.estado === 'error' ? 'error' : 'warning'} variant="outlined" /> },
@@ -107,9 +108,9 @@ export default function Tablero() {
 
       <Bloque n={3} titulo="Pedido y no recibido" ayuda="OC creadas en Siesa que ya pasaron el lead time del proveedor sin cumplirse, y requisiciones RIT comprometidas que llevan mucho tiempo abiertas.">
         <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', mb: 1.5 }}>
-          <Kpi titulo="OC abiertas en Siesa" valor={ent(nr.oc_en_transito.documentos)} sub={`${ent(nr.oc_en_transito.unidades)} unidades en tránsito al CEDI`} />
-          <Kpi titulo="OC vencidas" valor={ent(nr.vencidas.length)} sub="pasaron el lead time" color={nr.vencidas.length ? 'mal' : 'ok'} />
-          <Kpi titulo="RIT viejas" valor={ent(nr.rit_total)} sub="comprometidas con alerta" color={nr.rit_total ? 'aviso' : 'ok'} />
+          <Kpi to="/compras/tablero/oc_abiertas" titulo="OC abiertas en Siesa" valor={ent(nr.oc_en_transito.documentos)} sub={`${ent(nr.oc_en_transito.unidades)} unidades en tránsito al CEDI`} />
+          <Kpi to="/compras/tablero/oc_vencidas" titulo="OC vencidas" valor={ent(nr.n_vencidas)} sub="pasaron el lead time" color={nr.n_vencidas ? 'mal' : 'ok'} />
+          <Kpi to="/compras/tablero/rit_viejas" titulo="RIT viejas" valor={ent(nr.rit_total)} sub="comprometidas con alerta" color={nr.rit_total ? 'aviso' : 'ok'} />
         </Box>
         <Lista vacio="No hay OC vencidas."
           cols={[{ t: 'OC', f: r => r.siesa_consecutivo || r.referencia }, { t: 'Proveedor', f: r => r.proveedor_nombre }, { t: 'Días', f: r => ent(r.dias), right: true }, { t: 'Lead time', f: r => ent(r.leadtime), right: true },
@@ -120,10 +121,10 @@ export default function Tablero() {
           filas={nr.rit} /></Box>}
       </Bloque>
 
-      <Bloque n={4} titulo="Riesgo de desabastecimiento" ayuda="Ítems en zona roja sin nada en camino, ordenados por los días de cobertura que les quedan en el CEDI.">
+      <Bloque n={4} titulo="Riesgo de desabastecimiento" ayuda="Ítems en zona roja sin nada en tránsito, de mayor a menor rotación (ADU): lo que más duele si falta va primero. Aquí van los primeros; el detalle trae todos.">
         <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', mb: 1.5 }}>
-          <Kpi titulo="Roja sin tránsito" valor={ent(rs.total)} color={rs.total ? 'mal' : 'ok'} />
-          <Kpi titulo="Agotados con venta" valor={ent(rs.agotados)} sub="inventario 0 y rotación > 0" color={rs.agotados ? 'mal' : 'ok'} />
+          <Kpi to="/compras/tablero/riesgo" titulo="Roja sin tránsito" valor={ent(rs.total)} color={rs.total ? 'mal' : 'ok'} />
+          <Kpi to="/compras/tablero/agotados" titulo="Agotados con venta" valor={ent(rs.agotados)} sub="inventario 0 y rotación > 0" color={rs.agotados ? 'mal' : 'ok'} />
         </Box>
         <Lista vacio="Nada en riesgo."
           cols={[{ t: 'Ítem', f: r => `${r.producto_id} ${r.descripcion || ''}` }, { t: 'Inventario', f: r => ent(r.inventario), right: true }, { t: 'Cobertura (días)', f: r => d1(r.cobertura_dias), right: true },
@@ -133,8 +134,8 @@ export default function Tablero() {
 
       <Bloque n={5} titulo="Exceso de inventario" ayuda="Lo que sobra sobre el tope verde del CEDI, valorado al costo de compra.">
         <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', mb: 1.5 }}>
-          <Kpi titulo="Ítems en exceso" valor={ent(ex.total.items)} color="info" />
-          <Kpi titulo="Valor que sobra" valor={MM(ex.total.valor)} color={ex.total.valor ? 'aviso' : 'ok'} />
+          <Kpi to="/compras/tablero/exceso" titulo="Ítems en exceso" valor={ent(ex.total.items)} color="info" />
+          <Kpi to="/compras/tablero/exceso" titulo="Valor que sobra" valor={MM(ex.total.valor)} color={ex.total.valor ? 'aviso' : 'ok'} />
         </Box>
         <Lista vacio="Sin exceso."
           cols={[{ t: 'Ítem', f: r => `${r.producto_id} ${r.descripcion || ''}` }, { t: 'Inventario', f: r => ent(r.inventario), right: true }, { t: 'Sobran', f: r => ent(r.sobran), right: true },
