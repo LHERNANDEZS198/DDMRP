@@ -5,6 +5,7 @@ import re
 import time
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
+from .. import consultas
 from ..db import pg
 from ..security import requiere, filtro_sql_permisos
 from .compras import _necesidades, ULTIMA, CONSIG, COMPRABLE
@@ -184,6 +185,9 @@ def tablero(user=Depends(requiere("ver_control_compras"))):
                                LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = l.producto_id LEFT JOIN ddmrp.laboratorio lb ON lb.codigo = mi.categoria
                                WHERE o.estado = 'creada' AND o.creado > now() - make_interval(days => :d) GROUP BY 1 ORDER BY 2 DESC LIMIT 8""", {"d": dias})
     marca("6_cumplimiento")
+    # lo que ve la pantalla Diagnostico para esta llamada: calculo = las necesidades completas (bloque 1); SQL = el resto; y el tiempo de cada bloque en el detalle
+    k1 = next(iter(tm))
+    consultas.anotar(ms_calc=tm[k1], ms_sql=sum(v for k, v in tm.items() if k != k1), filas=len(filas), bloques_ms=tm)
     return {
         "config": cfg, "tiempos_ms": tm,
         "pedir": pedir,
