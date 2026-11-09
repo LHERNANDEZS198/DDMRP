@@ -388,6 +388,8 @@ SENTENCIAS_COMPRAS = [
          ('oc_desvio_costo_pct', 30, 'OC: una linea pasa a revision si el costo editado sube mas de este % frente a la cotizacion (manual › Siesa › ultima compra)'),
          ('oc_exigir_entiendo', 1, 'OC: 1 = para enviar una OC hay que marcar la casilla «Entiendo que se envia al BPM»; 0 = no se pide esa confirmacion'),
          ('oc_listado_dias', 30, 'OC enviadas: dias hacia atras que muestra por defecto el listado (se puede cambiar con los filtros de la pantalla)'),
+         ('oc_email_proveedor', 0, 'OC: 1 = el correo de fin de proceso del BPM le llega al proveedor (a sus correos del maestro); 0 = no se envia nada al proveedor (pruebas)'),
+         ('oc_exigir_email', 0, 'OC: 1 = no se puede montar la OC de un proveedor sin correo (email_para) en el maestro de proveedores; 0 = se monta igual'),
          ('tablero_dias_trabada', 2, 'Tablero de compras: una OC sin cerrar (borrador, enviando, incierta, error o en BPM) mas de estos dias aparece como trabada'),
          ('tablero_leadtime_defecto', 30, 'Tablero de compras: lead time (dias) para decidir si una OC ya debio llegar, cuando el proveedor no tiene el suyo'),
          ('tablero_dias_cumplimiento', 30, 'Tablero de compras: dias hacia atras del bloque de cumplimiento del proceso'),

@@ -211,6 +211,14 @@ export default function Necesidades() {
   }
   const alEditar = async (e: CellValueChangedEvent) => {
     if (!e.data) return
+    if (e.colDef.field === 'email_para' || e.colDef.field === 'email_cc') {
+      const campo = e.colDef.field
+      try {
+        const r = await api('/compras/proveedor-correo', { method: 'PUT', body: JSON.stringify({ empresa: e.data.empresa, proveedor_id: e.data.proveedor_id, sucursal: e.data.sucursal, [campo]: String(e.newValue ?? '') }) })
+        setMsg(`${e.data.proveedor_nombre}: correo guardado${r[campo] ? ' (' + r[campo] + ')' : ' (vacío)'}`)
+      } catch (x: any) { setErr(x.message) }
+      recargar(); return
+    }
     if (e.colDef.field === 'costo') {
       const nc: number | null = e.newValue == null || e.newValue === '' ? null : Number(e.newValue)
       const costo = nc != null && nc === e.data.costo_calculado ? null : nc      // igual a la cotización = no es una edición
@@ -246,6 +254,12 @@ export default function Necesidades() {
     { field: 'empresa', headerName: 'Emp.', width: 70, filter: true, headerTooltip: 'Empresa (05 Funat, 21 Stores): cada una tiene su CEDI' },
     { field: 'cond_pago', headerName: 'Cond. pago', width: 110, valueFormatter: (p: any) => p.value || 'Falta', cellStyle: (p: any) => p.value ? undefined : { color: '#c62828', fontWeight: 600 },
       headerTooltip: 'Condición de pago de la OC (código de Siesa, ej. C30), del maestro de proveedores. Se pre-llena con la de la última OC; sin ella no se podrá crear la OC' },
+    { field: 'email_para', headerName: 'Correo(s) del proveedor', width: 260, editable: gestiona, filter: true,
+      valueFormatter: (p: any) => p.value || 'Falta', cellStyle: (p: any) => p.value ? undefined : { color: '#c62828', fontWeight: 600 },
+      headerTooltip: 'Correo(s) a donde sale la OC (varios separados por ; o coma). Haz doble clic para escribirlos o cambiarlos: se guardan en el maestro de proveedores' },
+    { field: 'email_cc', headerName: 'Con copia (CC)', width: 220, editable: gestiona, filter: true, headerTooltip: 'Correos con copia (opcional, varios separados por ;). Doble clic para editar' },
+    { field: 'faltan', headerName: 'Falta', width: 240, filter: true, headerTooltip: 'Datos que le faltan al proveedor para montar su OC: correo, condición de pago, cotizaciones o proveedor inactivo. La fila sale en naranja',
+      cellStyle: { color: '#b45309', fontWeight: 600 } },
     { field: 'leadtime', headerName: 'LT (d)', type: 'numericColumn', width: 120, valueFormatter: ent, headerTooltip: 'Lead time del proveedor en el maestro de proveedores (vacío = se usa el del ítem o el general de 8 días)' },
     { field: 'frecuencia', headerName: 'Frec. (d)', type: 'numericColumn', width: 120, valueFormatter: ent, headerTooltip: 'Cada cuántos días se le compra a este proveedor (maestro de proveedores; vacío = el general de Configuración de compras, 15). Define el tamaño de la zona verde: más frecuencia, pedidos más grandes' },
     { field: 'items', headerName: 'Ítems', type: 'numericColumn', width: 90, valueFormatter: ent, cellStyle: ENLACE, headerTooltip: 'Ítems con necesidad de este proveedor. Clic para verlos' },
@@ -389,7 +403,7 @@ export default function Necesidades() {
         {d.bloqueados.length > 0 && <Tab label={<Tooltip title="Proveedores que quedaron bajo su pedido mínimo y se bloquearon (configuración de compras)" placement="top" disableInteractive><span>Bloqueados por pedido mínimo ({d.bloqueados.length})</span></Tooltip>} />}
       </Tabs>
       <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 320 }}>
-        {tab === 0 && <Tabla memoria="necesidades_proveedor" textoCargando="Calculando…" vacio="Sin necesidades con estos filtros" rowData={d.proveedores} columnDefs={colsProv} cargando={cargando} tooltipShowDelay={300}
+        {tab === 0 && <Tabla memoria="necesidades_proveedor" textoCargando="Calculando…" vacio="Sin necesidades con estos filtros" rowData={d.proveedores} columnDefs={colsProv} cargando={cargando} tooltipShowDelay={300} getRowStyle={(p: any): any => p.data?.faltan ? { background: 'rgba(239,108,0,0.14)' } : undefined}
           context={ctx} getRowId={(p: any) => kProv(p.data)} onGridReady={(e: any) => { apiProv.current = e.api }}
           defaultColDef={COL_DEF} onCellClicked={alProveedor} />}
         {tab === 1 && <Tabla memoria="necesidades_detalle" textoCargando="Calculando…" vacio="Sin necesidades con estos filtros" rowData={d.filas} columnDefs={colsDet} cargando={cargando} getRowStyle={(p: any): any => p.data?.consignacion ? { background: 'rgba(25,118,210,0.16)', fontWeight: 600 } : undefined} rowBuffer={20} tooltipShowDelay={300}

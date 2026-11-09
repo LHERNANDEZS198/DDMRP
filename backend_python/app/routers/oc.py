@@ -59,7 +59,8 @@ def _grupos(user, items: list[Sel]) -> tuple[list[dict], list[str]]:
             avisos.append(f"{k[1]}: sin cotización/costo, no se incluye"); continue
         g = por.setdefault((f["empresa"], f["proveedor_id"], f["sucursal"], bool(f.get("consignacion"))), {
             "consignacion": bool(f.get("consignacion")), "empresa": f["empresa"], "proveedor_id": f["proveedor_id"], "sucursal": f["sucursal"], "proveedor_nombre": f["proveedor_nombre"], "cond_pago": (f["cond_pago"] or "").strip(),
-            "activo": bool(f["prov_activo"]), "pedido_minimo": f["pedido_minimo"], "lineas": []})
+            "activo": bool(f["prov_activo"]), "pedido_minimo": f["pedido_minimo"], "email_para": (f.get("prov_email_para") or "").strip(),
+            "exigir_email": cfg["oc_exigir_email"] >= 1, "lineas": []})
         costo = round(float(f["costo"]), dec)
         lt = f["lead_time"] if f["lead_time"] is not None else (f["leadtime_proveedor"] if f["leadtime_proveedor"] is not None else 8)
         g["lineas"].append({"producto_id": f["producto_id"], "descripcion": f["descripcion"], "cantidad": cant, "costo": costo, "iva_tasa": f["iva_tasa"],
@@ -76,6 +77,8 @@ def _grupos(user, items: list[Sel]) -> tuple[list[dict], list[str]]:
 def _validar(g: dict) -> str | None:
     if not g["activo"]:
         return "Proveedor inactivo"
+    if g.get("exigir_email") and not g.get("email_para"):
+        return "Falta el correo del proveedor (agrégalo en la vista por proveedor de Necesidades de compra o en Maestros de compras)"
     c = g["cond_pago"]
     if not c or len(c) > 3:
         return "Falta la condición de pago del proveedor (código de Siesa de máximo 3 caracteres, ej. C30)"
@@ -109,7 +112,7 @@ def _exigir_envio_activo() -> None:
 
 def _cfg_revision() -> dict:
     """Reglas de revision desde Configuracion de compras (tabla compras_config), no del .env. Los defectos aplican si la fila no existe o esta vacia."""
-    cfg = {"oc_umbral_total": 0.0, "oc_desvio_cant_pct": 30.0, "oc_desvio_cant_min": 15.0, "oc_desvio_costo_pct": 30.0, "oc_exigir_entiendo": 1.0, "oc_listado_dias": 30.0}
+    cfg = {"oc_umbral_total": 0.0, "oc_desvio_cant_pct": 30.0, "oc_desvio_cant_min": 15.0, "oc_desvio_costo_pct": 30.0, "oc_exigir_entiendo": 1.0, "oc_listado_dias": 30.0, "oc_exigir_email": 0.0, "oc_email_proveedor": 0.0}
     try:
         with pg.connect() as c:
             for k, v in c.execute(text("SELECT clave, valor::float8 FROM ddmrp.compras_config WHERE clave LIKE 'oc\\_%' AND valor IS NOT NULL")).all():
@@ -237,10 +240,11 @@ def _enviar_bpm(oc_id: int, usuario: str | None) -> dict:
     except ValueError as ex:
         _marcar(oc_id, "error", str(ex)); return {"estado": "error", "mensaje": str(ex)}
     revision = bool(r["requiere_revision"]) if r["requiere_revision"] is not None else True      # sin dato (OC vieja) = se revisa
-    with pg.connect() as c:    # correos del proveedor (maestro de proveedores; varios separados por ;): el BPM los usa en el correo de fin de proceso si OC_EMAIL_PROVEEDOR=1
+    with pg.connect() as c:    # correos del proveedor (maestro de proveedores; varios separados por ;): el BPM los usa en el correo de fin de proceso si oc_email_proveedor = 1 en Reglas de compras
         em = c.execute(text("SELECT email_para, email_cc FROM ddmrp.proveedor WHERE empresa = :e AND proveedor_id = :p AND sucursal = :s"),
                        {"e": r["empresa"], "p": r["proveedor_id"], "s": r["sucursal"]}).first()
-    emails_proveedor = ";".join(x for x in ((em[0] or "") if em else "", (em[1] or "") if em else "") if x.strip())
+    # encendido en Reglas de compras (oc_email_proveedor): apagado, el BPM no recibe correos y no le llega nada a un proveedor real
+    emails_proveedor = "" if _cfg_revision()["oc_email_proveedor"] < 1 else ";".join(x for x in ((em[0] or "") if em else "", (em[1] or "") if em else "") if x.strip())
     carga = {"id_externo": oc_id, "empresa": r["empresa"], "referencia": r["referencia"], "plano": plano, "proveedor_id": r["proveedor_id"], "sucursal": r["sucursal"],
              "proveedor_nombre": r["proveedor_nombre"], "cond_pago": r["cond_pago"], "comprador": r["comprador"], "creado_por": r["creado_por"], "valor": float(r["valor"] or 0),
              "iva": float(r["iva"] or 0), "total": float(r["total"] or 0), "items": r["items"], "requiere_revision": revision, "motivo_revision": r["motivo_revision"], "emails_proveedor": emails_proveedor, "email_comprador": r.get("creado_por_email") or "",

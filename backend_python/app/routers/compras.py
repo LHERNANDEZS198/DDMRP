@@ -98,7 +98,7 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
              ccs.costo::float8 AS costo_manual,
              CASE WHEN ic.cotizacion IS NOT NULL THEN 'Manual' WHEN ic.cotizacion_siesa IS NOT NULL THEN 'Cotización' WHEN ic.ultimo_costo IS NOT NULL THEN 'Última compra' END AS origen_costo,
              CASE WHEN ic.cotizacion IS NOT NULL THEN NULL WHEN ic.cotizacion_siesa IS NOT NULL THEN ic.cotizacion_fecha ELSE ic.ultimo_costo_fecha END AS costo_fecha,
-             ic.iva_tasa::float8 AS iva_tasa, COALESCE(h.meses, 0) AS meses_venta, pv.leadtime::float8 AS leadtime_proveedor, pv.cond_pago AS cond_pago,
+             ic.iva_tasa::float8 AS iva_tasa, COALESCE(h.meses, 0) AS meses_venta, pv.leadtime::float8 AS leadtime_proveedor, pv.cond_pago AS cond_pago, COALESCE(pv.email_para, '') AS prov_email_para, COALESCE(pv.email_cc, '') AS prov_email_cc,
              cm.cantidad::float8 AS qty_manual, cm.nota AS qty_nota, cm.usuario AS qty_usuario, cm.actualizado AS qty_fecha
       FROM ddmrp.sugerencias_cedi s
       JOIN ddmrp.item_compra ic ON ic.empresa = s.empresa AND ic.producto_id = s.producto_id
@@ -165,6 +165,7 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
                                   "activo": bool(f["prov_activo"]), "redondeo": f["redondeo"], "pedido_minimo": f["pedido_minimo"],
                                   "cond_pago": f["cond_pago"], "leadtime": f["leadtime_proveedor"], "frecuencia": f["frecuencia_proveedor"] if f["frecuencia_proveedor"] is not None else cfg.get("frecuencia_defecto", 15.0), "items": 0, "unidades": 0.0, "valor": 0.0, "iva": 0.0, "total": 0.0, "sin_costo": 0, "poca_historia": 0, "editadas": 0})
         g["items"] += 1; g["unidades"] += f["qty_pedir"]
+        g["email_para"] = f["prov_email_para"]; g["email_cc"] = f["prov_email_cc"]
         if f["editada"]: g["editadas"] += 1
         if f["valor"] is None: g["sin_costo"] += 1 if f["qty_pedir"] > 0 else 0      # los ítems sin necesidad no cuentan como faltantes
         else: g["valor"] += f["valor"]; g["iva"] += f["iva"] or 0; g["total"] += f["total"]
@@ -174,8 +175,12 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
         pm = g["pedido_minimo"]
         g["bajo_minimo"] = bool(pm and pm > 0 and g["items"] > g["sin_costo"] and g["valor"] < pm and g["unidades"] > 0)
         g["sin_cond_pago"] = not (g["cond_pago"] or "").strip()
+        g["sin_email"] = not (g.get("email_para") or "").strip()
+        # datos que le faltan al proveedor para poder montar su OC (la fila sale en naranja en la vista por proveedor)
+        g["faltan"] = "; ".join(x for x in ("Sin correo" if g["sin_email"] else "", "Sin condición de pago" if g["sin_cond_pago"] else "",
+                                            f"Sin cotización ({g['sin_costo']})" if g["sin_costo"] else "", "Proveedor inactivo" if not g["activo"] else "") if x)
         g["estado"] = ("Bajo el pedido mínimo" if g["bajo_minimo"] else "Sin condición de pago" if g["sin_cond_pago"] else "Incompleto (ítems sin cotización)" if g["sin_costo"]
-                       else "Proveedor inactivo" if not g["activo"] else "OK")
+                       else "Proveedor inactivo" if not g["activo"] else "Sin correo del proveedor" if g["sin_email"] else "OK")
         provs.append(g)
     bloquea = cfg.get("pedido_minimo_bloquea", 0) >= 1
     bloqueados = [g for g in provs if g["bajo_minimo"]] if bloquea else []
@@ -225,6 +230,37 @@ def guardar_cantidad(b: CantidadIn, user=Depends(requiere("gestionar_compras")))
     evento("compras", usuario_de(user), f"Cantidad a pedir de {b.empresa}/{b.producto_id}: " + ("restablecida al cálculo" if b.cantidad is None else f"{b.cantidad:g}"),
            {"empresa": b.empresa, "producto_id": b.producto_id, "cantidad": b.cantidad})
     return {"ok": True}
+
+
+class CorreoIn(BaseModel):
+    empresa: str
+    proveedor_id: str
+    sucursal: str = "001"
+    email_para: str | None = None
+    email_cc: str | None = None
+
+
+@router.put("/proveedor-correo")
+def guardar_correo(b: CorreoIn, user=Depends(requiere("gestionar_compras"))):
+    """Guarda los correos del proveedor (varios separados por ; o coma) desde la vista por proveedor. Solo cambia el campo que llega (None = no tocar, vacio = borrar)."""
+    from .maestros import _emails
+    sets, p = [], {"e": b.empresa, "p": b.proveedor_id, "s": b.sucursal}
+    for campo, v in (("email_para", b.email_para), ("email_cc", b.email_cc)):
+        if v is None:
+            continue
+        try:
+            p[campo] = _emails(v) or None
+        except ValueError as ex:
+            raise HTTPException(400, str(ex))
+        sets.append(f"{campo} = :{campo}")
+    if not sets:
+        raise HTTPException(400, "No llegó ningún correo")
+    with pg.begin() as c:
+        if not c.execute(text(f"UPDATE ddmrp.proveedor SET {', '.join(sets)} WHERE empresa = :e AND proveedor_id = :p AND sucursal = :s RETURNING 1"), p).first():
+            raise HTTPException(404, "Ese proveedor no existe en el maestro de proveedores")
+    evento("compras", usuario_de(user), f"Correos del proveedor {b.empresa}/{b.proveedor_id}: " + "; ".join(f"{k}={p[k] or '(vacío)'}" for k in ("email_para", "email_cc") if k in p),
+           {"empresa": b.empresa, "proveedor_id": b.proveedor_id})
+    return {"ok": True, "email_para": p.get("email_para"), "email_cc": p.get("email_cc")}
 
 
 class CostoIn(BaseModel):
