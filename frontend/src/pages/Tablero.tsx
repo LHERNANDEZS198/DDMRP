@@ -88,7 +88,7 @@ export default function Tablero() {
       {err && <Alert severity="error" sx={{ my: 1 }}>{err}</Alert>}
       {p.aviso && <Alert severity="warning" sx={{ my: 1 }}>{p.aviso}</Alert>}
 
-      <Bloque n={1} titulo="Qué pedir hoy" ayuda="Lo mismo que ves en Necesidades de compra: ítems con algo que pedir, agrupados por proveedor.">
+      <Bloque n={1} titulo="Qué pedir hoy" ayuda="Items con algo que pedir, agrupados por proveedor.">
         <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', mb: 1.5 }}>
           <Kpi titulo="Ítems por pedir" valor={ent(p.totales.items)} sub={`${ent(p.totales.proveedores)} proveedores`} />
           <Kpi titulo="Valor a pedir" valor={MM(p.totales.total)} sub="con IVA" />
@@ -105,14 +105,14 @@ export default function Tablero() {
           filas={p.proveedores} />
       </Bloque>
 
-      <Bloque n={2} titulo="OC en vuelo" ayuda="Dónde están las OC montadas en los últimos 90 días. Las trabadas llevan más de los días configurados sin cerrarse.">
+      <Bloque n={2} titulo="Resumen OC" ayuda="Dónde están las OC montadas en los últimos 90 días.">
         <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', mb: 1.5 }}>
           <Kpi to="/compras/tablero/oc_vuelo" titulo="En el BPM" valor={ent(nEst('en_bpm') + nEst('en_revision'))} sub={MM(v.estados.filter((x: any) => ['en_bpm', 'en_revision'].includes(x.estado)).reduce((a: number, x: any) => a + x.total, 0))} />
           <Kpi to="/compras/tablero/oc_vuelo" titulo="Con error / inciertas" valor={ent(nEst('error') + nEst('incierta'))} color={nEst('error') + nEst('incierta') ? 'mal' : 'ok'} />
           <Kpi to="/compras/tablero/oc_vuelo" titulo="Creadas en Siesa" valor={ent(nEst('creada'))} sub={MM(v.estados.find((x: any) => x.estado === 'creada')?.total || 0)} color="ok" />
-          <Kpi to="/compras/tablero/trabadas" titulo="Trabadas" valor={ent(v.n_trabadas)} sub={`más de ${d.config.tablero_dias_trabada} días sin cerrar`} color={v.n_trabadas ? 'aviso' : 'ok'} />
+          <Kpi to="/compras/tablero/trabadas" titulo="Bloqueadas" valor={ent(v.n_trabadas)} sub={`más de ${d.config.tablero_dias_trabada} días sin cerrar`} color={v.n_trabadas ? 'aviso' : 'ok'} />
         </Box>
-        <Lista vacio="No hay OC trabadas."
+        <Lista vacio="No hay OC bloqueadas."
           cols={[{ t: 'Referencia', f: r => r.referencia }, { t: 'Proveedor', f: r => r.proveedor_nombre }, { t: 'Estado', f: r => <Chip size="small" label={r.estado} color={r.estado === 'error' ? 'error' : 'warning'} variant="outlined" /> },
                  { t: 'Días', f: r => d1(r.dias), right: true }, { t: 'Total', f: r => MM(r.total), right: true }, { t: 'Consig.', f: r => r.consignacion ? 'SÍ' : '' }, { t: 'Mensaje', f: r => r.mensaje }]}
           filas={v.trabadas} />
@@ -171,9 +171,10 @@ export default function Tablero() {
             cols={[{ t: 'Laboratorio', f: r => r.laboratorio }, { t: 'Valor comprado', f: r => MM(r.valor), right: true }]} filas={cu.por_laboratorio} /></Box>
         </Box>
       </Bloque>
-      {d.tiempos_ms && (
+      {/* {d.tiempos_ms && (
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 3 }}>
           Tiempo de carga por bloque (ms): {Object.entries(d.tiempos_ms).map(([k, v]) => `${k.replace(/_/g, ' ')} ${Number(v).toLocaleString('es-CO')}`).join(' · ')} {d.cache_seg > 0 ? ` (Qué pedir hoy estaba guardado de hace ${d.cache_seg >= 3600 ? Math.round(d.cache_seg / 3600) + ' h' : Math.max(1, Math.round(d.cache_seg / 60)) + ' min'}; Actualizar lo recalcula)` : ''} · total {Object.values(d.tiempos_ms).reduce((a: number, b: any) => a + Number(b), 0).toLocaleString('es-CO')}
         </Typography>)}
+        */}
     </Box>)
 }
