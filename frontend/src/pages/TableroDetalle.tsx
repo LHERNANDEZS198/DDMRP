@@ -33,7 +33,7 @@ export default function TableroDetalle() {
       </Box>
       {d?.ayuda && <Typography variant="body2" color="text.secondary">{d.ayuda} Selecciona la tabla (Ctrl+A) y cópiala (Ctrl+C) para pegarla en Excel.</Typography>}
       {err && <Alert severity="error">{err}</Alert>}
-      <Box sx={{ height: 'calc(100vh - 220px)', minHeight: 360 }}>
+      <Box className="ag-theme-quartz" sx={{ height: 'calc(100vh - 220px)', minHeight: 360 }}>
         <Tabla textoCargando="Cargando…" vacio="Nada que mostrar" rowData={d?.filas || []} columnDefs={cols} cargando={cargando} rowBuffer={20} tooltipShowDelay={300}
           defaultColDef={{ resizable: true, sortable: true }} />
       </Box>

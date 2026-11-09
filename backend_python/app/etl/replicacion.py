@@ -220,7 +220,8 @@ HAVING SUM(t.f406_cant_base_pendiente) > 0"""
 SQL_OC_ABIERTAS = """
 SELECT RTRIM(i.f120_referencia), RTRIM(b.f150_id),
        'OC-' + RTRIM(d.f420_id_tipo_docto) + RTRIM(CONVERT(varchar(12), d.f420_consec_docto)),
-       CONVERT(float, SUM(m.f421_cant_pedida - m.f421_cant_entrada))
+       CONVERT(float, SUM(m.f421_cant_pedida - m.f421_cant_entrada)),
+       CONVERT(date, MAX(d.f420_fecha)), CONVERT(date, MIN(m.f421_fecha_entrega))      -- fecha en que se monto la OC y fecha en que debia llegar (la mas cercana de sus lineas)
 FROM t420_cm_oc_docto d
 JOIN t421_cm_oc_movto m ON m.f421_rowid_oc_docto = d.f420_rowid
 JOIN t150_mc_bodegas b ON b.f150_rowid = m.f421_rowid_bodega
@@ -230,6 +231,21 @@ WHERE d.f420_id_cia = :cia AND b.f150_id_cia = :cia AND d.f420_fecha >= :desde_o
   AND d.f420_ind_estado <> 9 AND m.f421_ind_estado IN (1, 2) /*ACTIVO:x,i*/
 GROUP BY i.f120_referencia, b.f150_id, d.f420_id_tipo_docto, d.f420_consec_docto
 HAVING SUM(m.f421_cant_pedida - m.f421_cant_entrada) > 0"""
+# respaldo: la misma consulta sin las 2 fechas, por si el nombre de esa columna difiere en tu Siesa (asi un error de nombre no deja el buffer sin el transito de OC)
+SQL_OC_ABIERTAS_BASE = SQL_OC_ABIERTAS.replace(
+    ",\n       CONVERT(date, MAX(d.f420_fecha)), CONVERT(date, MIN(m.f421_fecha_entrega))      -- fecha en que se monto la OC y fecha en que debia llegar (la mas cercana de sus lineas)", "")
+COLS_OC = ["empresa", "producto_id", "bodega_id", "documento", "cantidad", "fecha_oc", "fecha_esperada"]
+
+
+def _leer_oc(eng, filtrar, prm) -> list:
+    """OC abiertas de Siesa: referencia, bodega, documento, saldo, fecha de montaje y fecha de entrega. Si falla por las fechas, las trae sin ellas (None)."""
+    try:
+        return list(_stream(eng, _con_estado(SQL_OC_ABIERTAS, filtrar), prm, expanding="bodegas"))
+    except Exception as e:
+        if isinstance(e, psycopg.Error):
+            raise
+        log.warning("OC abiertas: no se pudieron leer las fechas (revisa f421_fecha_entrega en t421_cm_oc_movto), se leen sin ellas: %s", e)
+        return [tuple(r) + (None, None) for r in _stream(eng, _con_estado(SQL_OC_ABIERTAS_BASE, filtrar), prm, expanding="bodegas")]
 
 # Requisiciones inter-bodega (RIT, las que genera el plano de abastecimiento) AUN NO despachadas hacia las tiendas. Hasta que el CEDI las despacha no existe el traslado
 # (t406): el pedido esta hecho pero no salia en transito y la tienda lo volvia a pedir. Saldo = requerido - consumido (consumido = ya despachado como traslado, que
@@ -950,10 +966,10 @@ def refrescar_oc_cedi() -> dict:
                     continue
                 eng = siesa_engine(db)
                 filtrar, _ = _filtrar_activos(solo, eng)
-                filas = list(_stream(eng, _con_estado(SQL_OC_ABIERTAS, filtrar), {"cia": settings.siesa_cia, "bodegas": bods, "desde_oc": desde_oc}, expanding="bodegas"))
+                filas = _leer_oc(eng, filtrar, {"cia": settings.siesa_cia, "bodegas": bods, "desde_oc": desde_oc})
                 cur.execute("DELETE FROM ddmrp.transitos WHERE empresa = %s AND bodega_id = ANY(%s) AND documento LIKE 'OC-%%'", (empresa, bods))
                 res[f"oc_abiertas_{empresa}"] = _volcar(cur, ((empresa,) + r for r in filas), "ddmrp.transitos",
-                                                         ["empresa", "producto_id", "bodega_id", "documento", "cantidad"], reemplazar=False)
+                                                         COLS_OC, reemplazar=False)
         raw.commit()
     except Exception:
         raw.rollback()
@@ -1188,10 +1204,10 @@ def _correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
                 progreso.avance(f"Leyendo órdenes de compra abiertas de Siesa ({db})…")
                 bod_oc = sorted(set(bodegas) | set(cedis_emp.get(empresa, [])))
                 try:   # sin las OC el buffer del CEDI solo pierde el transito: no tumba el ETL
-                    filas_oc = list(_stream(eng, _con_estado(SQL_OC_ABIERTAS, filtrar), {**prm, "bodegas": bod_oc, "desde_oc": desde_oc}, expanding="bodegas"))   # se lee todo ANTES de escribir: un fallo del origen no deja la transaccion a medias
+                    filas_oc = _leer_oc(eng, filtrar, {**prm, "bodegas": bod_oc, "desde_oc": desde_oc})   # se lee todo ANTES de escribir: un fallo del origen no deja la transaccion a medias
                     res[f"oc_abiertas_{empresa}"] = _volcar(
                         cur, ((empresa,) + r for r in filas_oc),
-                        "ddmrp.transitos", ["empresa", "producto_id", "bodega_id", "documento", "cantidad"], reemplazar=False)
+                        "ddmrp.transitos", COLS_OC, reemplazar=False)
                 except Exception as e:
                     if isinstance(e, psycopg.Error):
                         raise

@@ -2,6 +2,7 @@
 que pedir hoy, OC en vuelo, lo pedido y no recibido, riesgo de desabastecimiento, exceso y cumplimiento del proceso. Todo se limita a los criterios comprables (maestro
 «Criterios comprables») y a lo que el usuario puede ver. Los umbrales viven en ddmrp.compras_config. Cada tarjeta tiene su detalle completo en /detalle/{tipo}."""
 import re
+import time
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
 from ..db import pg
@@ -99,9 +100,10 @@ def _rit(c, t: int) -> list[dict]:
 
 def _oc_abiertas(c, t: int) -> list[dict]:
     """Lineas de OC abiertas en Siesa que cuentan como transito al CEDI (las trae el ETL a ddmrp.transitos con documento 'OC-...')."""
-    return _filas(c, f"""SELECT t.empresa, t.documento, t.bodega_id, t.producto_id, mi.descripcion, COALESCE(lb.nombre, mi.categoria, '') AS laboratorio, t.cantidad::float8 AS cantidad
+    return _filas(c, f"""SELECT t.empresa, t.documento, t.bodega_id, t.producto_id, mi.descripcion, COALESCE(lb.nombre, mi.categoria, '') AS laboratorio, t.cantidad::float8 AS cantidad,
+                                t.fecha_oc::text AS fecha_oc, t.fecha_esperada::text AS fecha_esperada, (current_date - t.fecha_esperada)::int AS dias_atraso
                          FROM ddmrp.transitos t LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = t.producto_id LEFT JOIN ddmrp.laboratorio lb ON lb.codigo = mi.categoria
-                         WHERE t.documento LIKE 'OC-%' AND {_comprable('t')} ORDER BY t.documento, t.producto_id LIMIT :t""", {"t": t})
+                         WHERE t.documento LIKE 'OC-%' AND {_comprable('t')} ORDER BY t.fecha_esperada NULLS LAST, t.documento, t.producto_id LIMIT :t""", {"t": t})
 
 
 def _en_vuelo(c, t: int) -> list[dict]:
@@ -114,6 +116,12 @@ def _en_vuelo(c, t: int) -> list[dict]:
 def tablero(user=Depends(requiere("ver_control_compras"))):
     cfg = _cfg()
     top = int(cfg["tablero_top"])
+    t0 = time.perf_counter(); tm: dict[str, int] = {}
+
+    def marca(k: str) -> None:       # milisegundos que tardo cada bloque: es lo que muestra el pie del tablero para saber que esta lento
+        nonlocal t0
+        t1 = time.perf_counter(); tm[k] = int((t1 - t0) * 1000); t0 = t1
+
     # ---- 1. Que pedir hoy (lo mismo que ve Necesidades de compra, que ya filtra criterios comprables) ----
     r = _necesidades(user, None, None, None, None, None, None, 20000)
     filas = [f for f in r["filas"] if (f["qty_pedir"] or 0) > 0]
@@ -130,6 +138,7 @@ def tablero(user=Depends(requiere("ver_control_compras"))):
         "proveedores": [{k: g[k] for k in ("empresa", "proveedor_id", "proveedor_nombre", "items", "unidades", "total", "estado", "bajo_minimo", "sin_costo")} for g in r["proveedores"][:top]],
         "con_problema": sum(1 for g in r["proveedores"] if g["estado"] != "OK"),
     }
+    marca("1_que_pedir (necesidades completas)")
     base, pw = _q_base(user)
     with pg.connect() as c:
         # ---- 2. OC en vuelo ----
@@ -137,19 +146,23 @@ def tablero(user=Depends(requiere("ver_control_compras"))):
                                       COALESCE(max(EXTRACT(EPOCH FROM now() - COALESCE(estado_bpm_fecha, enviado, creado)) / 86400), 0)::float8 AS dias_max
                                FROM ddmrp.orden_compra WHERE creado > now() - interval '90 days' GROUP BY estado ORDER BY 2 DESC""")
         trabadas = _trabadas(c, cfg, SIN_LIMITE)
+        marca("2_oc_en_vuelo")
         # ---- 3. Pedido y no recibido ----
         vencidas = _vencidas(c, cfg, SIN_LIMITE)
         en_transito = _filas(c, f"""SELECT count(DISTINCT t.documento)::int AS documentos, COALESCE(sum(t.cantidad), 0)::float8 AS unidades
                                     FROM ddmrp.transitos t WHERE t.documento LIKE 'OC-%' AND {_comprable('t')}""")[0]
         rit = _rit(c, SIN_LIMITE)
+        marca("3_no_recibido")
         # ---- 4. Riesgo de desabastecimiento (zona roja sin nada en camino) ----
         n_riesgo = c.execute(text(f"SELECT count(*) {base} AND s.zona::text = 'ROJA' AND COALESCE(s.en_transito, 0) <= 0"), pw).scalar() or 0
         agotados = c.execute(text(f"SELECT count(*) {base} AND COALESCE(s.inventario, 0) <= 0 AND COALESCE(s.adu, 0) > 0"), pw).scalar() or 0
         riesgo = _riesgo(c, user, top)
+        marca("4_riesgo")
         # ---- 5. Exceso ----
         ex_tot = _filas(c, f"""SELECT count(*)::int AS items, COALESCE(sum(GREATEST(s.flujo_neto - GREATEST(s.tog_aj, 0), 0) * COALESCE({COSTO}, 0)), 0)::float8 AS valor
                                {base} AND s.zona::text = 'EXCESO'""", pw)[0]
         exceso = _exceso(c, user, top)
+        marca("5_exceso")
         # ---- 6. Cumplimiento del proceso ----
         dias = int(cfg["tablero_dias_cumplimiento"])
         rv = _cfg_revision()
@@ -170,8 +183,9 @@ def tablero(user=Depends(requiere("ver_control_compras"))):
                                FROM ddmrp.orden_compra_linea l JOIN ddmrp.orden_compra o ON o.id = l.oc_id
                                LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = l.producto_id LEFT JOIN ddmrp.laboratorio lb ON lb.codigo = mi.categoria
                                WHERE o.estado = 'creada' AND o.creado > now() - make_interval(days => :d) GROUP BY 1 ORDER BY 2 DESC LIMIT 8""", {"d": dias})
+    marca("6_cumplimiento")
     return {
-        "config": cfg,
+        "config": cfg, "tiempos_ms": tm,
         "pedir": pedir,
         "vuelo": {"estados": estados, "trabadas": trabadas[:top], "n_trabadas": len(trabadas)},
         "no_recibido": {"vencidas": vencidas[:top], "n_vencidas": len(vencidas), "oc_en_transito": en_transito, "rit": rit[:top], "rit_total": len(rit)},
@@ -184,8 +198,9 @@ def tablero(user=Depends(requiere("ver_control_compras"))):
 # ---- detalle completo de cada tarjeta: columnas + todas las filas (sin tope) ----
 N, T = "num", "txt"
 DETALLES = {
-    "oc_abiertas": ("OC abiertas en Siesa (tránsito al CEDI)", "Líneas de las OC abiertas en Siesa que hoy cuentan como tránsito al CEDI (solo criterios comprables).",
-                    [("empresa", "Emp.", T), ("documento", "OC", T), ("bodega_id", "Bodega", T), ("producto_id", "SKU", T), ("descripcion", "Ítem", T), ("laboratorio", "Laboratorio", T), ("cantidad", "Unidades", N)]),
+    "oc_abiertas": ("OC abiertas en Siesa (tránsito al CEDI)", "Líneas de las OC abiertas en Siesa que hoy cuentan como tránsito al CEDI (solo criterios comprables), con la fecha en que se montó la OC y la fecha en que debía llegar (la más cercana de sus líneas). Las fechas se llenan en el próximo ETL. Días de atraso positivo = ya debía haber llegado; ordenadas de la más atrasada a la más reciente.",
+                    [("empresa", "Emp.", T), ("documento", "OC", T), ("bodega_id", "Bodega", T), ("producto_id", "SKU", T), ("descripcion", "Ítem", T), ("laboratorio", "Laboratorio", T), ("cantidad", "Unidades", N),
+                     ("fecha_oc", "Fecha de montaje", T), ("fecha_esperada", "Debía llegar", T), ("dias_atraso", "Días de atraso", N)]),
     "oc_vencidas": ("OC vencidas", "OC creadas en Siesa que ya pasaron el lead time del proveedor sin cumplirse.",
                     [("empresa", "Emp.", T), ("siesa_consecutivo", "OC Siesa", T), ("referencia", "Referencia", T), ("proveedor_nombre", "Proveedor", T), ("dias", "Días", N), ("leadtime", "Lead time", N),
                      ("estado_siesa", "Estado Siesa", T), ("total", "Total", N), ("consignacion", "Consig.", T)]),

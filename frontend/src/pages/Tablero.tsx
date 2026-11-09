@@ -1,19 +1,19 @@
 import { ReactNode, useEffect, useState } from 'react'
 import { Alert, Box, Button, Chip, CircularProgress, Paper, Table, TableBody, TableCell, TableHead, TableRow, Tooltip, Typography } from '@mui/material'
 import Refresh from '@mui/icons-material/Refresh'
-import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
 
+// el tablero tarda en cargar: los detalles se abren en otra pestaña para no perder el tablero ni recargarlo al volver
+const abrir = (ruta: string) => window.open(ruta, '_blank', 'noopener')
 const ent = (v: any) => v == null ? '' : Math.round(Number(v)).toLocaleString('es-CO')
 const MM = (v: any) => { const n = Number(v || 0); return '$' + (Math.abs(n) >= 1e6 ? (n / 1e6).toLocaleString('es-CO', { maximumFractionDigits: 1 }) + ' M' : Math.round(n).toLocaleString('es-CO')) }
 const d1 = (v: any) => v == null ? '' : Number(v).toLocaleString('es-CO', { maximumFractionDigits: 1 })
 const SEM: Record<string, string> = { ok: '#2e7d32', aviso: '#b45309', mal: '#c62828', info: '#546e7a' }
 
 function Kpi({ titulo, valor, sub, color = 'info', ayuda, to }: { titulo: string; valor: ReactNode; sub?: ReactNode; color?: string; ayuda?: string; to?: string }) {
-  const nav = useNavigate()
   return (
-    <Tooltip title={(ayuda ? ayuda + '. ' : '') + (to ? 'Clic para ver el detalle completo' : '')} placement="top" arrow>
-      <Paper variant="outlined" onClick={to ? () => nav(to) : undefined} sx={{ p: 1.5, minWidth: 170, flex: '1 1 170px', borderLeft: `4px solid ${SEM[color]}`, cursor: to ? 'pointer' : 'default', '&:hover': to ? { bgcolor: 'action.hover' } : undefined }}>
+    <Tooltip title={(ayuda ? ayuda + '. ' : '') + (to ? 'Clic para ver el detalle completo (se abre en otra pestaña)' : '')} placement="top" arrow>
+      <Paper variant="outlined" onClick={to ? () => abrir(to) : undefined} sx={{ p: 1.5, minWidth: 170, flex: '1 1 170px', borderLeft: `4px solid ${SEM[color]}`, cursor: to ? 'pointer' : 'default', '&:hover': to ? { bgcolor: 'action.hover' } : undefined }}>
         <Typography variant="caption" color="text.secondary">{titulo}</Typography>
         <Typography variant="h5" sx={{ fontWeight: 700, color: SEM[color] }}>{valor}</Typography>
         {sub && <Typography variant="caption" color="text.secondary">{sub}</Typography>}
@@ -50,19 +50,26 @@ export default function Tablero() {
   const [d, setD] = useState<any>(null)
   const [err, setErr] = useState('')
   const [cargando, setCargando] = useState(false)
-  const nav = useNavigate()
   const cargar = () => {
     setCargando(true); setErr('')
     api('/compras/tablero').then(setD).catch(e => setErr(String(e?.message || e))).finally(() => setCargando(false))
   }
   useEffect(cargar, [])
 
-  if (!d) return <Box sx={{ display: 'grid', placeItems: 'center', height: '60vh' }}>{err ? <Alert severity="error">{err}</Alert> : <CircularProgress />}</Box>
+  if (!d) return (
+    <Box sx={{ display: 'grid', placeItems: 'center', height: '60vh' }}>
+      {err ? <Alert severity="error" action={<Button color="inherit" size="small" onClick={cargar}>Reintentar</Button>}>{err}</Alert>
+        : <Box sx={{ display: 'grid', justifyItems: 'center', gap: 1.5, textAlign: 'center' }}>
+            <CircularProgress />
+            <Typography variant="h6" sx={{ fontWeight: 700 }}>Cargando Control de Compras</Typography>
+            <Typography variant="body2" color="text.secondary">Calculando necesidades, OC y tránsitos; puede tardar unos segundos…</Typography>
+          </Box>}
+    </Box>)
   const p = d.pedir, v = d.vuelo, nr = d.no_recibido, rs = d.riesgo, ex = d.exceso, cu = d.cumplimiento
   const roja = p.zonas.find((z: any) => z.zona === 'ROJA')
   const nEst = (e: string) => v.estados.find((x: any) => x.estado === e)?.ocs || 0
   const pctDesv = cu.lineas.lineas ? (100 * cu.lineas.desv_cant / cu.lineas.lineas) : 0
-  const irNecesidades = () => nav('/compras/necesidades')
+  const irNecesidades = () => abrir('/compras/necesidades')
 
   return (
     <Box sx={{ pb: 4 }}>
@@ -73,6 +80,7 @@ export default function Tablero() {
         </Typography>
         <Button size="small" startIcon={cargando ? <CircularProgress size={14} /> : <Refresh />} onClick={cargar} disabled={cargando}>Actualizar</Button>
       </Box>
+      {cargando && <Alert severity="info" icon={<CircularProgress size={16} />} sx={{ my: 1, py: 0 }}>Cargando Control de Compras…</Alert>}
       {err && <Alert severity="error" sx={{ my: 1 }}>{err}</Alert>}
       {p.aviso && <Alert severity="warning" sx={{ my: 1 }}>{p.aviso}</Alert>}
 
@@ -159,5 +167,9 @@ export default function Tablero() {
             cols={[{ t: 'Laboratorio', f: r => r.laboratorio }, { t: 'Valor comprado', f: r => MM(r.valor), right: true }]} filas={cu.por_laboratorio} /></Box>
         </Box>
       </Bloque>
+      {d.tiempos_ms && (
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 3 }}>
+          Tiempo de carga por bloque (ms): {Object.entries(d.tiempos_ms).map(([k, v]) => `${k.replace(/_/g, ' ')} ${Number(v).toLocaleString('es-CO')}`).join(' · ')} · total {Object.values(d.tiempos_ms).reduce((a: number, b: any) => a + Number(b), 0).toLocaleString('es-CO')}
+        </Typography>)}
     </Box>)
 }

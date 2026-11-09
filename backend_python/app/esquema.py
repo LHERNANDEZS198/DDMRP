@@ -273,6 +273,8 @@ SENTENCIAS_CEDI = [
     "INSERT INTO ddmrp.parametro VALUES ('rit_abiertas_transito', 1, 'Requisiciones RIT (abastecimiento) aun no despachadas: 1 = su saldo (requerido - despachado) cuenta como transito hacia la tienda; 0 = solo cuentan los traslados ya despachados') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('rit_incluir_aprobadas', 0, 'Requisiciones RIT: 1 = tambien cuentan como transito las lineas APROBADAS (el CEDI aun no las compromete, pueden no salir); 0 = solo las COMPROMETIDAS (ya reservadas para despachar)') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('rit_alerta_dias', 15, 'Alerta en el item (columna y fila resaltada) cuando tiene una requisicion RIT COMPROMETIDA hace mas de estos dias sin despacharse (las Aprobadas no alertan)') ON CONFLICT DO NOTHING",
+    "ALTER TABLE ddmrp.transitos ADD COLUMN IF NOT EXISTS fecha_oc DATE",
+    "ALTER TABLE ddmrp.transitos ADD COLUMN IF NOT EXISTS fecha_esperada DATE",
     "CREATE TABLE IF NOT EXISTS ddmrp.rit_alerta (empresa TEXT NOT NULL, producto_id TEXT NOT NULL, bodega_id TEXT NOT NULL, documento TEXT NOT NULL, fecha DATE NOT NULL, "
     "saldo NUMERIC(14,4) NOT NULL DEFAULT 0, estado SMALLINT NOT NULL DEFAULT 1, PRIMARY KEY (empresa, producto_id, bodega_id, documento))",
     "INSERT INTO ddmrp.parametro VALUES ('vectorizacion_en_adu', 1, 'Vectorizacion como piso del ADU: 1 = en una referencia con promocion (indicativo 1) cuyo promedio de ultimos meses + forecast es menor que la vectorizacion, el ADU parte de la vectorizacion (como la columna Promedio ADU del Excel); 0 = no') ON CONFLICT DO NOTHING",
