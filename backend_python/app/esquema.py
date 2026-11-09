@@ -395,6 +395,7 @@ SENTENCIAS_COMPRAS = [
          ('tablero_dias_trabada', 2, 'Tablero de compras: una OC sin cerrar (borrador, enviando, incierta, error o en BPM) mas de estos dias aparece como trabada'),
          ('tablero_leadtime_defecto', 30, 'Tablero de compras: lead time (dias) para decidir si una OC ya debio llegar, cuando el proveedor no tiene el suyo'),
          ('tablero_dias_cumplimiento', 30, 'Tablero de compras: dias hacia atras del bloque de cumplimiento del proceso'),
+         ('tablero_cache_horas', 6, 'Tablero de compras: horas que se guarda el bloque «Que pedir hoy» (es lo lento: recalcula todas las necesidades) por usuario; 0 = sin cache. El boton Actualizar lo recalcula'),
          ('tablero_top', 30, 'Tablero de compras: cuantas filas muestra cada lista')
        ON CONFLICT DO NOTHING""",
     # el lead time general pasa de 30 a 8 dias (una sola vez: lo que se cambie despues no se pisa)

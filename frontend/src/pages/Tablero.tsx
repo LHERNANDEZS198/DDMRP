@@ -5,6 +5,8 @@ import { api } from '../api'
 
 // el tablero tarda en cargar: los detalles se abren en otra pestaña para no perder el tablero ni recargarlo al volver
 const abrir = (ruta: string) => window.open(ruta, '_blank', 'noopener')
+// fecha y hora de Colombia (UTC-5, sin horario de verano) de un instante ISO: «lun 9 nov, 2:05 p. m.»
+const fechaCol = (iso: string) => new Date(new Date(iso).getTime() - 5 * 36e5).toLocaleString('es-CO', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'UTC' })
 const ent = (v: any) => v == null ? '' : Math.round(Number(v)).toLocaleString('es-CO')
 const MM = (v: any) => { const n = Number(v || 0); return '$' + (Math.abs(n) >= 1e6 ? (n / 1e6).toLocaleString('es-CO', { maximumFractionDigits: 1 }) + ' M' : Math.round(n).toLocaleString('es-CO')) }
 const d1 = (v: any) => v == null ? '' : Number(v).toLocaleString('es-CO', { maximumFractionDigits: 1 })
@@ -50,15 +52,15 @@ export default function Tablero() {
   const [d, setD] = useState<any>(null)
   const [err, setErr] = useState('')
   const [cargando, setCargando] = useState(false)
-  const cargar = () => {
+  const cargar = (fresco = false) => {
     setCargando(true); setErr('')
-    api('/compras/tablero').then(setD).catch(e => setErr(String(e?.message || e))).finally(() => setCargando(false))
+    api(`/compras/tablero${fresco ? '?fresco=1' : ''}`).then(setD).catch(e => setErr(String(e?.message || e))).finally(() => setCargando(false))
   }
-  useEffect(cargar, [])
+  useEffect(() => cargar(), [])
 
   if (!d) return (
     <Box sx={{ display: 'grid', placeItems: 'center', height: '60vh' }}>
-      {err ? <Alert severity="error" action={<Button color="inherit" size="small" onClick={cargar}>Reintentar</Button>}>{err}</Alert>
+      {err ? <Alert severity="error" action={<Button color="inherit" size="small" onClick={() => cargar()}>Reintentar</Button>}>{err}</Alert>
         : <Box sx={{ display: 'grid', justifyItems: 'center', gap: 1.5, textAlign: 'center' }}>
             <CircularProgress />
             <Typography variant="h6" sx={{ fontWeight: 700 }}>Cargando Control de Compras</Typography>
@@ -76,9 +78,11 @@ export default function Tablero() {
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
         <Typography variant="h5" sx={{ fontWeight: 700 }}>Tablero de compras</Typography>
         <Typography variant="body2" color="text.secondary">
-          {p.ejecucion ? `Buffer de la corrida #${p.ejecucion.id} (${String(p.ejecucion.fecha_calculo).slice(0, 16).replace('T', ' ')})` : 'Sin corrida del motor'}
+          <Tooltip title={p.ejecucion ? `Sale del buffer de la corrida #${p.ejecucion.id} del motor` : ''} arrow>
+            <span>{d.calculado ? `Necesidades calculadas el ${fechaCol(d.calculado)}` : 'Sin cálculo'}{p.ejecucion ? '' : ' · sin corrida del motor'}</span>
+          </Tooltip>
         </Typography>
-        <Button size="small" startIcon={cargando ? <CircularProgress size={14} /> : <Refresh />} onClick={cargar} disabled={cargando}>Actualizar</Button>
+        <Button size="small" startIcon={cargando ? <CircularProgress size={14} /> : <Refresh />} onClick={() => cargar(true)} disabled={cargando}>Actualizar</Button>
       </Box>
       {cargando && <Alert severity="info" icon={<CircularProgress size={16} />} sx={{ my: 1, py: 0 }}>Cargando Control de Compras…</Alert>}
       {err && <Alert severity="error" sx={{ my: 1 }}>{err}</Alert>}
@@ -169,7 +173,7 @@ export default function Tablero() {
       </Bloque>
       {d.tiempos_ms && (
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 3 }}>
-          Tiempo de carga por bloque (ms): {Object.entries(d.tiempos_ms).map(([k, v]) => `${k.replace(/_/g, ' ')} ${Number(v).toLocaleString('es-CO')}`).join(' · ')} · total {Object.values(d.tiempos_ms).reduce((a: number, b: any) => a + Number(b), 0).toLocaleString('es-CO')}
+          Tiempo de carga por bloque (ms): {Object.entries(d.tiempos_ms).map(([k, v]) => `${k.replace(/_/g, ' ')} ${Number(v).toLocaleString('es-CO')}`).join(' · ')} {d.cache_seg > 0 ? ` (Qué pedir hoy estaba guardado de hace ${d.cache_seg >= 3600 ? Math.round(d.cache_seg / 3600) + ' h' : Math.max(1, Math.round(d.cache_seg / 60)) + ' min'}; Actualizar lo recalcula)` : ''} · total {Object.values(d.tiempos_ms).reduce((a: number, b: any) => a + Number(b), 0).toLocaleString('es-CO')}
         </Typography>)}
     </Box>)
 }

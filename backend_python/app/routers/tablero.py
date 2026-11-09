@@ -3,6 +3,7 @@ que pedir hoy, OC en vuelo, lo pedido y no recibido, riesgo de desabastecimiento
 «Criterios comprables») y a lo que el usuario puede ver. Los umbrales viven en ddmrp.compras_config. Cada tarjeta tiene su detalle completo en /detalle/{tipo}."""
 import re
 import time
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
 from .. import consultas
@@ -12,9 +13,10 @@ from .compras import _necesidades, ULTIMA, CONSIG, COMPRABLE
 from .oc import _cfg_revision
 
 router = APIRouter(prefix="/compras/tablero", tags=["compras"], dependencies=[Depends(requiere("ver_control_compras"))])
-CFG_DEFECTO = {"tablero_dias_trabada": 2.0, "tablero_dias_cumplimiento": 30.0, "tablero_leadtime_defecto": 30.0, "tablero_top": 30.0}
+CFG_DEFECTO = {"tablero_dias_trabada": 2.0, "tablero_dias_cumplimiento": 30.0, "tablero_leadtime_defecto": 30.0, "tablero_top": 30.0, "tablero_cache_horas": 6.0}
 COSTO = "COALESCE(ic.cotizacion, ic.cotizacion_siesa, ic.ultimo_costo)"
 SIN_LIMITE = 200000
+_CACHE: dict[str, tuple[float, dict]] = {}      # bloque 1 (necesidades completas, lo unico lento) por usuario: (cuando, resultado)
 
 
 def _comprable(alias: str) -> str:
@@ -114,7 +116,7 @@ def _en_vuelo(c, t: int) -> list[dict]:
 
 
 @router.get("")
-def tablero(user=Depends(requiere("ver_control_compras"))):
+def tablero(fresco: bool = False, user=Depends(requiere("ver_control_compras"))):
     cfg = _cfg()
     top = int(cfg["tablero_top"])
     t0 = time.perf_counter(); tm: dict[str, int] = {}
@@ -123,22 +125,31 @@ def tablero(user=Depends(requiere("ver_control_compras"))):
         nonlocal t0
         t1 = time.perf_counter(); tm[k] = int((t1 - t0) * 1000); t0 = t1
 
-    # ---- 1. Que pedir hoy (lo mismo que ve Necesidades de compra, que ya filtra criterios comprables) ----
-    r = _necesidades(user, None, None, None, None, None, None, 20000)
-    filas = [f for f in r["filas"] if (f["qty_pedir"] or 0) > 0]
-    zonas: dict[str, dict] = {}
-    for f in filas:
-        z = zonas.setdefault(f["zona"], {"zona": f["zona"], "items": 0, "valor": 0.0})
-        z["items"] += 1; z["valor"] += f["valor"] or 0
-    cons = [f for f in filas if f.get("consignacion")]
-    pedir = {
-        "totales": r["totales"], "aviso": r["aviso"], "ejecucion": r["ejecucion"],
-        "zonas": sorted(zonas.values(), key=lambda z: {"ROJA": 0, "AMARILLA": 1, "VERDE": 2}.get(z["zona"], 3)),
-        "consignacion": {"items": len(cons), "valor": sum(f["valor"] or 0 for f in cons)},
-        "sin_proveedor": r["sin_proveedor"]["total"],
-        "proveedores": [{k: g[k] for k in ("empresa", "proveedor_id", "proveedor_nombre", "items", "unidades", "total", "estado", "bajo_minimo", "sin_costo")} for g in r["proveedores"][:top]],
-        "con_problema": sum(1 for g in r["proveedores"] if g["estado"] != "OK"),
-    }
+    # ---- 1. Que pedir hoy (lo mismo que ve Necesidades de compra, que ya filtra criterios comprables). Es lo unico lento (recalcula todas las necesidades), por eso se
+    # guarda unos minutos por usuario (compras_config.tablero_cache_horas; 0 = sin cache). «Actualizar» en la pantalla lo recalcula (fresco=1). ----
+    ttl = cfg["tablero_cache_horas"] * 3600
+    ent = _CACHE.get(str(user["id"]))
+    if ttl > 0 and not fresco and ent and time.time() - ent[0] < ttl:
+        pedir, edad, calculado = ent[1], int(time.time() - ent[0]), ent[0]
+    else:
+        edad, calculado = 0, time.time()
+        r = _necesidades(user, None, None, None, None, None, None, 20000)
+        filas = [f for f in r["filas"] if (f["qty_pedir"] or 0) > 0]
+        zonas: dict[str, dict] = {}
+        for f in filas:
+            z = zonas.setdefault(f["zona"], {"zona": f["zona"], "items": 0, "valor": 0.0})
+            z["items"] += 1; z["valor"] += f["valor"] or 0
+        cons = [f for f in filas if f.get("consignacion")]
+        pedir = {
+            "totales": r["totales"], "aviso": r["aviso"], "ejecucion": r["ejecucion"],
+            "zonas": sorted(zonas.values(), key=lambda z: {"ROJA": 0, "AMARILLA": 1, "VERDE": 2}.get(z["zona"], 3)),
+            "consignacion": {"items": len(cons), "valor": sum(f["valor"] or 0 for f in cons)},
+            "sin_proveedor": r["sin_proveedor"]["total"],
+            "proveedores": [{k: g[k] for k in ("empresa", "proveedor_id", "proveedor_nombre", "items", "unidades", "total", "estado", "bajo_minimo", "sin_costo")} for g in r["proveedores"][:top]],
+            "con_problema": sum(1 for g in r["proveedores"] if g["estado"] != "OK"),
+        }
+        if ttl > 0:
+            _CACHE[str(user["id"])] = (time.time(), pedir)
     marca("1_que_pedir (necesidades completas)")
     base, pw = _q_base(user)
     with pg.connect() as c:
@@ -187,9 +198,9 @@ def tablero(user=Depends(requiere("ver_control_compras"))):
     marca("6_cumplimiento")
     # lo que ve la pantalla Diagnostico para esta llamada: calculo = las necesidades completas (bloque 1); SQL = el resto; y el tiempo de cada bloque en el detalle
     k1 = next(iter(tm))
-    consultas.anotar(ms_calc=tm[k1], ms_sql=sum(v for k, v in tm.items() if k != k1), filas=len(filas), bloques_ms=tm)
+    consultas.anotar(ms_calc=tm[k1], ms_sql=sum(v for k, v in tm.items() if k != k1), filas=pedir["totales"]["items"], bloques_ms=tm, cache_seg=edad)
     return {
-        "config": cfg, "tiempos_ms": tm,
+        "config": cfg, "tiempos_ms": tm, "cache_seg": edad, "calculado": datetime.fromtimestamp(calculado, timezone.utc).isoformat(),
         "pedir": pedir,
         "vuelo": {"estados": estados, "trabadas": trabadas[:top], "n_trabadas": len(trabadas)},
         "no_recibido": {"vencidas": vencidas[:top], "n_vencidas": len(vencidas), "oc_en_transito": en_transito, "rit": rit[:top], "rit_total": len(rit)},

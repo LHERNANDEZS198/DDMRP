@@ -196,6 +196,8 @@ REGLAS_COMPRAS = [
          ayuda="Una OC creada en Siesa y sin cumplir pasada esta cantidad de días (o el lead time del proveedor, si lo tiene) sale como pedida y no recibida.", opciones=None, min=1, max=365, entero=True),
     dict(grupo="Tablero de compras", clave="tablero_dias_cumplimiento", titulo="Cumplimiento: días hacia atrás",
          ayuda="Ventana del bloque de cumplimiento del proceso (OC creadas, desvíos de cantidad y costo, tiempos).", opciones=None, min=1, max=365, entero=True),
+    dict(grupo="Tablero de compras", clave="tablero_cache_horas", titulo="Guardar «Qué pedir hoy» (horas)",
+         ayuda="El bloque «Qué pedir hoy» recalcula todas las necesidades y es lo que hace lento el tablero. Se guarda estas horas por usuario para que abrirlo sea inmediato (el botón Actualizar lo recalcula). 0 = no guardar.", opciones=None, min=0, max=72, entero=True),
     dict(grupo="Tablero de compras", clave="tablero_top", titulo="Filas por lista",
          ayuda="Cuántas filas muestra cada lista del tablero.", opciones=None, min=5, max=200, entero=True),
 ]
