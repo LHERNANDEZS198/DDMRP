@@ -29,6 +29,7 @@ class Sel(BaseModel):
 class EnviarIn(BaseModel):
     items: list[Sel]
     solo_plano: bool = False      # vista previa: arma el plano y lo devuelve, sin guardar ni enviar
+    justificaciones: dict[str, str] = {}      # por «empresa|proveedor|sucursal»: lo que compras le explica al aprobador (opcional)
 
 
 def _comprador(user) -> str:
@@ -247,7 +248,7 @@ def _enviar_bpm(oc_id: int, usuario: str | None) -> dict:
     emails_proveedor = "" if _cfg_revision()["oc_email_proveedor"] < 1 else ";".join(x for x in ((em[0] or "") if em else "", (em[1] or "") if em else "") if x.strip())
     carga = {"id_externo": oc_id, "empresa": r["empresa"], "referencia": r["referencia"], "plano": plano, "proveedor_id": r["proveedor_id"], "sucursal": r["sucursal"],
              "proveedor_nombre": r["proveedor_nombre"], "cond_pago": r["cond_pago"], "comprador": r["comprador"], "creado_por": r["creado_por"], "valor": float(r["valor"] or 0),
-             "iva": float(r["iva"] or 0), "total": float(r["total"] or 0), "items": r["items"], "requiere_revision": revision, "motivo_revision": r["motivo_revision"], "emails_proveedor": emails_proveedor, "email_comprador": r.get("creado_por_email") or "",
+             "iva": float(r["iva"] or 0), "total": float(r["total"] or 0), "items": r["items"], "requiere_revision": revision, "motivo_revision": " · ".join(x for x in (r["motivo_revision"], ("Justificación de compras: " + r["justificacion"]) if r.get("justificacion") else "") if x) or None, "justificacion": r.get("justificacion"), "emails_proveedor": emails_proveedor, "email_comprador": r.get("creado_por_email") or "",
              "lineas": [{"producto_id": l["producto_id"], "descripcion": l["descripcion"], "cantidad": l["cantidad"], "costo": l["costo"], "fecha_entrega": str(l["fecha_entrega"])} for l in lineas]}
     req = urllib.request.Request(settings.bpm_url.rstrip("/") + "/api/internal/oc", data=json.dumps(carga).encode(), method="POST",
                                  headers={"Content-Type": "application/json", "X-OC-Secret": settings.bpm_secret})
@@ -306,11 +307,11 @@ def enviar(b: EnviarIn, user=Depends(requiere("gestionar_compras"))):
                 salida.append(res | {"estado": "no_enviada", "mensaje": str(ex)})
             continue
         with pg.begin() as c:
-            oc_id = c.execute(text("""INSERT INTO ddmrp.orden_compra (empresa, proveedor_id, sucursal, proveedor_nombre, cond_pago, comprador, bodega, referencia, valor, iva, total, items, unidades, creado_por, creado_por_email, requiere_revision, motivo_revision, consignacion)
-                                      VALUES (:e, :p, :s, :n, :cp, :co, :b, 'tmp-' || gen_random_uuid()::text, :v, :iva, :t, :it, :u, :us, (SELECT email FROM ddmrp.usuario WHERE usuario_id = :uid), :rr, :mr, :cg) RETURNING id"""),
+            oc_id = c.execute(text("""INSERT INTO ddmrp.orden_compra (empresa, proveedor_id, sucursal, proveedor_nombre, cond_pago, comprador, bodega, referencia, valor, iva, total, items, unidades, creado_por, creado_por_email, requiere_revision, motivo_revision, consignacion, justificacion)
+                                      VALUES (:e, :p, :s, :n, :cp, :co, :b, 'tmp-' || gen_random_uuid()::text, :v, :iva, :t, :it, :u, :us, (SELECT email FROM ddmrp.usuario WHERE usuario_id = :uid), :rr, :mr, :cg, :jf) RETURNING id"""),
                               {"e": g["empresa"], "p": g["proveedor_id"], "s": g["sucursal"], "n": g["proveedor_nombre"], "cp": g["cond_pago"], "co": comprador, "b": siesa_oc.bodega_oc(g["empresa"]),
                                "v": g["valor"], "iva": g["iva"], "t": g["valor"] + g["iva"], "it": len(g["lineas"]), "u": g["unidades"], "us": usuario, "uid": str((user or {}).get("id") or ""),
-                               "rr": bool(g["motivos"]), "mr": "; ".join(g["motivos"])[:1000] or None, "cg": g["consignacion"]}).scalar()
+                               "rr": bool(g["motivos"]), "mr": "; ".join(g["motivos"])[:1000] or None, "cg": g["consignacion"], "jf": (b.justificaciones.get(f"{g['empresa']}|{g['proveedor_id']}|{g['sucursal']}") or "").strip()[:1000] or None}).scalar()
             c.execute(text("UPDATE ddmrp.orden_compra SET referencia = :r WHERE id = :i"), {"r": siesa_oc.referencia(oc_id), "i": oc_id})
             for n, l in enumerate(g["lineas"], start=1):
                 c.execute(text("INSERT INTO ddmrp.orden_compra_linea (oc_id, nro, producto_id, descripcion, cantidad, costo, iva_tasa, origen_costo, fecha_entrega, cantidad_calculada, costo_calculado) VALUES (:i,:n,:p,:d,:q,:c,:t,:o,:f,:qc,:cc)"),

@@ -86,7 +86,7 @@ function Kpi({ t, v, sub, color, ayuda }: { t: string; v: string; sub?: string; 
 }
 
 export default function Necesidades() {
-  const { lista: empresa } = useEmpresa()
+  const { lista: empresa, setEmpresa, opciones: empresasOk } = useEmpresa()
   const { puede } = useYo(); const gestiona = puede('gestionar_compras')
   const [d, setD] = useState<Resp>(VACIO)
   const [cargando, setCargando] = useState(true); const [err, setErr] = useState(''); const [msg, setMsg] = useState('')
@@ -94,7 +94,9 @@ export default function Necesidades() {
   const [verTodos, setVerTodos] = useState(false)      // apagado: solo lo que hay que pedir; encendido: también los ítems sin necesidad
   const [tab, setTab] = useState(0); const [guia, setGuia] = useState(false); const [ocAbierta, setOcAbierta] = useState(false)
   const [provs, setProvs] = useState<string[]>([]); const [cats, setCats] = useState<string[]>([]); const [zonas, setZonas] = useState<string[]>([])
-  const [sp] = useSearchParams(); const qUrl = sp.get('q') ?? ''      // enlace desde el BPM: /compras/necesidades?q=<item>
+  const [sp] = useSearchParams(); const qUrl = sp.get('q') ?? ''; const empUrl = sp.get('empresa') ?? ''      // enlace desde el BPM: /compras/necesidades?q=<item>
+  // el enlace del BPM trae la empresa de la OC (?empresa=21): se pone en el selector de la barra al abrir, para no depender de la que hubiera elegida antes
+  useEffect(() => { if (empUrl && empresasOk.includes(empUrl)) setEmpresa(empUrl) }, [empUrl])
   const [labs, setLabs] = useState<string[]>([]); const [qd, setQd] = useState(qUrl); const [q, setQ] = useState(qUrl)
   const [opcLabs, setOpcLabs] = useState<{ codigo: string; nombre?: string }[]>([])
   const [bajando, setBajando] = useState(false); const [recalculando, setRecalculando] = useState(false)
@@ -105,6 +107,8 @@ export default function Necesidades() {
   const [histDias, setHistDias] = useState(30)
   useEffect(() => { api('/compras/oc/config').then(x => { setOcDestino(x.destino); setOcExigir(x.exigir_entiendo !== false); if (x.listado_dias > 0) { setHistDias(x.listado_dias); setHistF(f => ({ ...f, desde: haceDias(x.listado_dias) })) } }).catch(() => {}) }, [])
   const [ocEnviando, setOcEnviando] = useState(false); const [ocEntiendo, setOcEntiendo] = useState(false)
+  // justificación opcional para el aprobador, por proveedor (clave empresa|proveedor|sucursal) + el proveedor que se está editando en este momento
+  const [justif, setJustif] = useState<Record<string, string>>({}); const [justEd, setJustEd] = useState<{ k: string; nombre: string; txt: string } | null>(null)
   const [ocRes, setOcRes] = useState<{ ordenes: any[]; avisos: string[] } | null>(null); const [ocErr, setOcErr] = useState('')
   const [histAbierta, setHistAbierta] = useState(false); const [hist, setHist] = useState<any[]>([]); const [histCarga, setHistCarga] = useState(false)
   const [histF, setHistF] = useState({ desde: haceDias(30), hasta: '', estado: '', proveedor: '', q: '', creado_por: '' })      // por defecto: últimos 30 días
@@ -168,13 +172,13 @@ export default function Necesidades() {
   }, [elegidas])
 
   // ---- órdenes de compra a Siesa
-  const cuerpoOC = (soloPlano: boolean) => JSON.stringify({ items: elegidas.map(f => ({ empresa: f.empresa, producto_id: f.producto_id })), solo_plano: soloPlano })
+  const cuerpoOC = (soloPlano: boolean) => JSON.stringify({ items: elegidas.map(f => ({ empresa: f.empresa, producto_id: f.producto_id })), solo_plano: soloPlano, justificaciones: Object.fromEntries(Object.entries(justif).filter(([, v]) => v.trim())) })
   const enviarOC = async (soloPlano: boolean) => {
     setOcEnviando(true); setOcErr(''); setOcRes(null)
     try {
       const r = await api('/compras/oc/enviar', { method: 'POST', body: cuerpoOC(soloPlano) })
       setOcRes(r)
-      if (!soloPlano) { setSel(new Set()); setOcEntiendo(false); recargar() }      // el resultado queda a la vista con el botón «Ir a OC enviadas a Siesa»
+      if (!soloPlano) { setSel(new Set()); setOcEntiendo(false); setJustif({}); recargar() }      // el resultado queda a la vista con el botón «Ir a OC enviadas a Siesa»
     } catch (e: any) { setOcErr(e.message || String(e)) } finally { setOcEnviando(false) }
   }
   const bajarPlano = (o: any) => {
@@ -421,7 +425,7 @@ export default function Necesidades() {
         <DialogContent dividers>
           <Typography variant="body2" sx={{ mb: 1 }}>Una orden por proveedor y empresa, con los {elegidas.length.toLocaleString('es-CO')} ítems elegidos. Revisa las alertas antes de enviar.</Typography>
           <Table size="small">
-            <TableHead><TableRow>{['Emp.', 'NIT', 'Proveedor', 'Cond. pago', 'Ítems', 'Unidades', 'Valor sin IVA', 'IVA estimado', 'Total', 'Alertas'].map(h => <TableCell key={h} sx={{ fontWeight: 700 }} align={['Ítems', 'Unidades', 'Valor sin IVA', 'IVA estimado', 'Total'].includes(h) ? 'right' : 'left'}>{h}</TableCell>)}</TableRow></TableHead>
+            <TableHead><TableRow>{['Emp.', 'NIT', 'Proveedor', 'Cond. pago', 'Ítems', 'Unidades', 'Valor sin IVA', 'IVA estimado', 'Total', 'Alertas', 'Justificación'].map(h => <TableCell key={h} sx={{ fontWeight: 700 }} align={['Ítems', 'Unidades', 'Valor sin IVA', 'IVA estimado', 'Total'].includes(h) ? 'right' : 'left'}>{h}</TableCell>)}</TableRow></TableHead>
             <TableBody>
               {resumenSel.map(r => {
                 const al = [r.sin_costo ? `${r.sin_costo} sin cotización` : '', r.editadas ? `${r.editadas} editadas` : '', r.no_multiplo ? `${r.no_multiplo} no múltiplo` : '', r.bajo_minimo ? 'Bajo el pedido mínimo' : '', !r.cond_pago ? 'Sin condición de pago: no se podrá crear la OC' : '', !r.activo ? 'Proveedor inactivo' : ''].filter(Boolean)
@@ -431,6 +435,12 @@ export default function Necesidades() {
                     <TableCell align="right">{r.items}</TableCell><TableCell align="right">{Math.round(r.unidades).toLocaleString('es-CO')}</TableCell>
                     <TableCell align="right">{COP({ value: r.valor })}</TableCell><TableCell align="right">{COP({ value: r.iva })}</TableCell><TableCell align="right" sx={{ fontWeight: 700 }}>{COP({ value: r.total })}</TableCell>
                     <TableCell sx={{ color: al.length ? '#b45309' : '#2e7d32' }}>{al.length ? al.join(' · ') : 'OK'}</TableCell>
+                    <TableCell>
+                      <Tooltip title={justif[kProv(r)] ? justif[kProv(r)] : 'Explícale al aprobador por qué hiciste esta compra (opcional). Le llega junto con los motivos de revisión.'} arrow>
+                        <Button size="small" variant={justif[kProv(r)]?.trim() ? 'contained' : 'outlined'} disabled={ocEnviando}
+                          onClick={() => setJustEd({ k: kProv(r), nombre: r.proveedor_nombre, txt: justif[kProv(r)] || '' })}>{justif[kProv(r)]?.trim() ? 'Editar justificación' : 'Agregar justificación'}</Button>
+                      </Tooltip>
+                    </TableCell>
                   </TableRow>)
               })}
             </TableBody>
@@ -463,6 +473,19 @@ export default function Necesidades() {
           <Button onClick={() => setOcAbierta(false)}>Cerrar</Button>
           <Button disabled={ocEnviando || !elegidas.length} onClick={() => enviarOC(true)}>Vista previa del plano</Button>
           <Button variant="contained" disabled={ocEnviando || ocDestino === 'pausado' || (ocExigir && !ocEntiendo) || !elegidas.length} startIcon={<SendIcon />} onClick={() => enviarOC(false)}>{ocEnviando ? 'Enviando…' : ocDestino === 'bpm' ? 'Enviar al BPM' : 'Crear OC en Siesa'}</Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog open={!!justEd} onClose={() => setJustEd(null)} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ fontWeight: 700 }}>Justificación para el aprobador</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" sx={{ mb: 1 }}>{justEd?.nombre}: si esta OC se aparta de lo calculado o hay algo que el aprobador deba saber, explícalo aquí. Aparece en el BPM junto a los motivos de revisión.</Typography>
+          <TextField autoFocus multiline minRows={3} maxRows={8} fullWidth value={justEd?.txt ?? ''} inputProps={{ maxLength: 1000 }} helperText={`${(justEd?.txt ?? '').length}/1000`}
+            onChange={e => setJustEd(j => j ? { ...j, txt: e.target.value } : j)} placeholder="Ej.: promoción confirmada para diciembre, el proveedor subió el costo desde el 1 de noviembre…" />
+        </DialogContent>
+        <DialogActions>
+          {justEd && justif[justEd.k] && <Button color="error" onClick={() => { setJustif(({ [justEd.k]: _x, ...r }) => r); setJustEd(null) }}>Quitar</Button>}
+          <Button onClick={() => setJustEd(null)}>Cancelar</Button>
+          <Button variant="contained" onClick={() => { if (justEd) setJustif(j => ({ ...j, [justEd.k]: justEd.txt.trim() })); setJustEd(null) }}>Guardar</Button>
         </DialogActions>
       </Dialog>
       <Dialog open={histAbierta} onClose={() => setHistAbierta(false)} maxWidth="xl" fullWidth>

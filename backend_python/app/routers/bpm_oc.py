@@ -82,7 +82,7 @@ def detalle(oc_id: int):
     """La OC con sus lineas (y lo original si se edito): lo que el BPM muestra al aprobador."""
     with pg.connect() as c:
         r = c.execute(text("SELECT id, empresa, proveedor_id, proveedor_nombre, sucursal, cond_pago, comprador, estado, referencia, valor::float8 AS valor, iva::float8 AS iva, total::float8 AS total, items, "
-                           "unidades::float8 AS unidades, siesa_consecutivo, mensaje, creado_por, requiere_revision, motivo_revision, consignacion, "
+                           "unidades::float8 AS unidades, siesa_consecutivo, mensaje, creado_por, requiere_revision, motivo_revision, consignacion, justificacion, "
                            "(SELECT u.nombre FROM ddmrp.usuario u WHERE u.usuario_id = orden_compra.comprador) AS comprador_nombre FROM ddmrp.orden_compra WHERE id = :i"), {"i": oc_id}).mappings().first()
         if not r:
             raise HTTPException(404, "No existe esa OC")
@@ -115,6 +115,7 @@ def detalle(oc_id: int):
         ref, costo = l.get("costo_cotizado"), l.get("costo_comprador")
         if ref and ref > 0 and costo is not None and costo > ref * (1 + cfg["oc_desvio_costo_pct"] / 100):
             mot.append(f"costo +{(costo / ref - 1) * 100:.0f}% vs cotización")
+        l["empresa"] = r["empresa"]         # para el enlace del BPM a Necesidades de compra: ...?q={producto_id}&empresa={empresa}
         l["desviada"] = bool(mot)
         l["motivo_desvio"] = "; ".join(mot)
     entregas = [l["fecha_entrega"] for l in lineas if l.get("fecha_entrega")]
