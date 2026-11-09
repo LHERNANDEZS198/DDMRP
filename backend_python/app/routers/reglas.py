@@ -184,6 +184,14 @@ REGLAS_COMPRAS = [
          opciones=[{"valor": 1, "label": "Sí: pedir la confirmación"}, {"valor": 0, "label": "No"}]),
     dict(grupo="Órdenes de compra (revisión en el BPM)", clave="oc_listado_dias", titulo="OC enviadas: días que muestra el listado",
          ayuda="Días hacia atrás que muestra por defecto el listado de OC enviadas (se puede cambiar con los filtros de la pantalla).", opciones=None, min=1, max=3650, entero=True),
+    dict(grupo="Tablero de compras", clave="tablero_dias_trabada", titulo="OC trabada: días sin cerrar",
+         ayuda="Una OC sin cerrar (borrador, enviando, incierta, con error o en el BPM) por más de estos días sale como trabada.", opciones=None, min=0, max=365, entero=True),
+    dict(grupo="Tablero de compras", clave="tablero_leadtime_defecto", titulo="Lead time por defecto para «pedido y no recibido» (días)",
+         ayuda="Una OC creada en Siesa y sin cumplir pasada esta cantidad de días (o el lead time del proveedor, si lo tiene) sale como pedida y no recibida.", opciones=None, min=1, max=365, entero=True),
+    dict(grupo="Tablero de compras", clave="tablero_dias_cumplimiento", titulo="Cumplimiento: días hacia atrás",
+         ayuda="Ventana del bloque de cumplimiento del proceso (OC creadas, desvíos de cantidad y costo, tiempos).", opciones=None, min=1, max=365, entero=True),
+    dict(grupo="Tablero de compras", clave="tablero_top", titulo="Filas por lista",
+         ayuda="Cuántas filas muestra cada lista del tablero.", opciones=None, min=5, max=200, entero=True),
 ]
 CLAVES_COMPRAS = {r["clave"]: r for r in REGLAS_COMPRAS}
 

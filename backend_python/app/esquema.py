@@ -387,7 +387,11 @@ SENTENCIAS_COMPRAS = [
          ('oc_desvio_cant_min', 15, 'OC: la regla de cantidad solo se evalua si la cantidad calculada (sugerida) supera estas unidades (asi 1 por 2 no dispara revision)'),
          ('oc_desvio_costo_pct', 30, 'OC: una linea pasa a revision si el costo editado sube mas de este % frente a la cotizacion (manual › Siesa › ultima compra)'),
          ('oc_exigir_entiendo', 1, 'OC: 1 = para enviar una OC hay que marcar la casilla «Entiendo que se envia al BPM»; 0 = no se pide esa confirmacion'),
-         ('oc_listado_dias', 30, 'OC enviadas: dias hacia atras que muestra por defecto el listado (se puede cambiar con los filtros de la pantalla)')
+         ('oc_listado_dias', 30, 'OC enviadas: dias hacia atras que muestra por defecto el listado (se puede cambiar con los filtros de la pantalla)'),
+         ('tablero_dias_trabada', 2, 'Tablero de compras: una OC sin cerrar (borrador, enviando, incierta, error o en BPM) mas de estos dias aparece como trabada'),
+         ('tablero_leadtime_defecto', 30, 'Tablero de compras: lead time (dias) para decidir si una OC ya debio llegar, cuando el proveedor no tiene el suyo'),
+         ('tablero_dias_cumplimiento', 30, 'Tablero de compras: dias hacia atras del bloque de cumplimiento del proceso'),
+         ('tablero_top', 30, 'Tablero de compras: cuantas filas muestra cada lista')
        ON CONFLICT DO NOTHING""",
     # el lead time general pasa de 30 a 8 dias (una sola vez: lo que se cambie despues no se pisa)
     "CREATE TABLE IF NOT EXISTS ddmrp.migracion_marca (clave TEXT PRIMARY KEY, fecha TIMESTAMPTZ NOT NULL DEFAULT now())",
