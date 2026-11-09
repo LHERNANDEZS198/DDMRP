@@ -6,6 +6,7 @@ import { ColDef } from 'ag-grid-community'
 import { useNavigate, useParams } from 'react-router-dom'
 import Tabla from '../Tabla'
 import { api } from '../api'
+import { useEmpresa } from '../Empresa'
 
 /** Detalle completo (sin tope) de una tarjeta del Control compras: la tabla se filtra, se ordena y se copia a Excel con Ctrl+A / Ctrl+C. */
 export default function TableroDetalle() {
@@ -14,11 +15,12 @@ export default function TableroDetalle() {
   const [d, setD] = useState<any>(null)
   const [err, setErr] = useState('')
   const [cargando, setCargando] = useState(false)
+  const { lista: empresa } = useEmpresa()
   const cargar = () => {
     setCargando(true); setErr('')
-    api(`/compras/tablero/detalle/${tipo}`).then(setD).catch(e => { setD(null); setErr(String(e?.message || e)) }).finally(() => setCargando(false))
+    api(`/compras/tablero/detalle/${tipo}${empresa.length ? '?empresa=' + empresa.join(',') : ''}`).then(setD).catch(e => { setD(null); setErr(String(e?.message || e)) }).finally(() => setCargando(false))
   }
-  useEffect(cargar, [tipo])
+  useEffect(cargar, [tipo, empresa.join(',')])
   const cols: ColDef[] = useMemo(() => (d?.columnas || []).map((c: any): ColDef => c.tipo === 'num'
     ? { field: c.field, headerName: c.headerName, type: 'numericColumn', filter: 'agNumberColumnFilter', width: 140, valueFormatter: (p: any) => p.value == null ? '' : Number(p.value).toLocaleString('es-CO', { maximumFractionDigits: 1 }) }
     : { field: c.field, headerName: c.headerName, filter: true, width: c.field === 'descripcion' || c.field === 'proveedor_nombre' || c.field === 'mensaje' ? 280 : 130 }), [d])

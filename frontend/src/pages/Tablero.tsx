@@ -2,6 +2,7 @@ import { ReactNode, useEffect, useState } from 'react'
 import { Alert, Box, Button, Chip, CircularProgress, Paper, Table, TableBody, TableCell, TableHead, TableRow, Tooltip, Typography } from '@mui/material'
 import Refresh from '@mui/icons-material/Refresh'
 import { api } from '../api'
+import { useEmpresa } from '../Empresa'
 
 // el tablero tarda en cargar: los detalles se abren en otra pestaña para no perder el tablero ni recargarlo al volver
 const abrir = (ruta: string) => window.open(ruta, '_blank', 'noopener')
@@ -52,11 +53,12 @@ export default function Tablero() {
   const [d, setD] = useState<any>(null)
   const [err, setErr] = useState('')
   const [cargando, setCargando] = useState(false)
+  const { lista: empresa } = useEmpresa()      // selector de empresa de la barra
   const cargar = (fresco = false) => {
     setCargando(true); setErr('')
-    api(`/compras/tablero${fresco ? '?fresco=1' : ''}`).then(setD).catch(e => setErr(String(e?.message || e))).finally(() => setCargando(false))
+    api(`/compras/tablero?${new URLSearchParams({ ...(fresco ? { fresco: '1' } : {}), ...(empresa.length ? { empresa: empresa.join(',') } : {}) })}`).then(setD).catch(e => setErr(String(e?.message || e))).finally(() => setCargando(false))
   }
-  useEffect(() => cargar(), [])
+  useEffect(() => cargar(), [empresa.join(',')])
 
   if (!d) return (
     <Box sx={{ display: 'grid', placeItems: 'center', height: '60vh' }}>
