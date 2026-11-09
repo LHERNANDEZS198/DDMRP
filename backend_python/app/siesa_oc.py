@@ -110,7 +110,7 @@ def armar_plano(oc: dict, lineas: list[dict]) -> str:
         "f420_id_tercero_sol_comp": comprador, "f420_id_tercero_prov": oc["proveedor_id"], "f420_id_sucursal_prov": oc["sucursal"], "f420_id_cond_pago": oc["cond_pago"],
         "f420_ind_tasa": settings.oc_ind_tasa, "f420_id_moneda_docto": settings.oc_moneda, "f420_id_moneda_conv": settings.oc_moneda_conv, "f420_tasa_conv": settings.oc_tasa_conv,
         "f420_id_moneda_local": settings.oc_moneda_local, "f420_tasa_local": settings.oc_tasa_local,
-        "f420_notas": f"{settings.oc_notas} (OC {oc['id']})", "F_IND_CONTACTO": 1, "f420_num_docto_referencia": oc.get("referencia") or referencia(oc["id"]), "f420_ind_consignacion": 0,
+        "f420_notas": f"{settings.oc_notas} (OC {oc['id']})", "F_IND_CONTACTO": 1, "f420_num_docto_referencia": oc.get("referencia") or referencia(oc["id"]), "f420_ind_consignacion": 1 if oc.get("consignacion") else 0,
         "f420_id_tercero_solicit": comprador,
     }
     reg = [_registro(DOC_V5, doc)]

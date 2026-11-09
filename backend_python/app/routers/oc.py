@@ -57,8 +57,8 @@ def _grupos(user, items: list[Sel]) -> tuple[list[dict], list[str]]:
             avisos.append(f"{k[1]}: cantidad a pedir 0, no se incluye"); continue
         if f["costo"] is None or f["costo"] <= 0:
             avisos.append(f"{k[1]}: sin cotización/costo, no se incluye"); continue
-        g = por.setdefault((f["empresa"], f["proveedor_id"], f["sucursal"]), {
-            "empresa": f["empresa"], "proveedor_id": f["proveedor_id"], "sucursal": f["sucursal"], "proveedor_nombre": f["proveedor_nombre"], "cond_pago": (f["cond_pago"] or "").strip(),
+        g = por.setdefault((f["empresa"], f["proveedor_id"], f["sucursal"], bool(f.get("consignacion"))), {
+            "consignacion": bool(f.get("consignacion")), "empresa": f["empresa"], "proveedor_id": f["proveedor_id"], "sucursal": f["sucursal"], "proveedor_nombre": f["proveedor_nombre"], "cond_pago": (f["cond_pago"] or "").strip(),
             "activo": bool(f["prov_activo"]), "pedido_minimo": f["pedido_minimo"], "lineas": []})
         costo = round(float(f["costo"]), dec)
         lt = f["lead_time"] if f["lead_time"] is not None else (f["leadtime_proveedor"] if f["leadtime_proveedor"] is not None else 8)
@@ -142,7 +142,7 @@ def _motivos_revision(g: dict, cfg: dict) -> list[str]:
 def _oc_dict(r) -> dict:
     return {"id": r["id"], "empresa": r["empresa"], "proveedor_id": r["proveedor_id"], "sucursal": r["sucursal"], "cond_pago": r["cond_pago"],
             "comprador": r["comprador"], "fecha": r.get("fecha") or siesa_oc.hoy(),
-            "referencia": r.get("referencia")}      # la YA guardada manda: cambiar el formato de referencia no puede mover una OC existente (el anti-duplicados es por referencia)
+            "referencia": r.get("referencia"), "consignacion": bool(r.get("consignacion"))}      # la YA guardada manda: cambiar el formato de referencia no puede mover una OC existente (el anti-duplicados es por referencia)
 
 
 def _al_dia(oc_id: int) -> None:
@@ -296,17 +296,17 @@ def enviar(b: EnviarIn, user=Depends(requiere("gestionar_compras"))):
             salida.append(res | {"estado": "no_enviada", "mensaje": falla}); continue
         if b.solo_plano:
             try:
-                oc = {"empresa": g["empresa"], "id": 0, "comprador": comprador, "proveedor_id": g["proveedor_id"], "sucursal": g["sucursal"], "cond_pago": g["cond_pago"], "fecha": siesa_oc.hoy()}
+                oc = {"empresa": g["empresa"], "id": 0, "comprador": comprador, "proveedor_id": g["proveedor_id"], "sucursal": g["sucursal"], "cond_pago": g["cond_pago"], "fecha": siesa_oc.hoy(), "consignacion": g["consignacion"]}
                 salida.append(res | {"estado": "plano", "mensaje": "Vista previa (nada se envió)", "plano": siesa_oc.armar_plano(oc, g["lineas"])})
             except ValueError as ex:
                 salida.append(res | {"estado": "no_enviada", "mensaje": str(ex)})
             continue
         with pg.begin() as c:
-            oc_id = c.execute(text("""INSERT INTO ddmrp.orden_compra (empresa, proveedor_id, sucursal, proveedor_nombre, cond_pago, comprador, bodega, referencia, valor, iva, total, items, unidades, creado_por, creado_por_email, requiere_revision, motivo_revision)
-                                      VALUES (:e, :p, :s, :n, :cp, :co, :b, 'tmp-' || gen_random_uuid()::text, :v, :iva, :t, :it, :u, :us, (SELECT email FROM ddmrp.usuario WHERE usuario_id = :uid), :rr, :mr) RETURNING id"""),
+            oc_id = c.execute(text("""INSERT INTO ddmrp.orden_compra (empresa, proveedor_id, sucursal, proveedor_nombre, cond_pago, comprador, bodega, referencia, valor, iva, total, items, unidades, creado_por, creado_por_email, requiere_revision, motivo_revision, consignacion)
+                                      VALUES (:e, :p, :s, :n, :cp, :co, :b, 'tmp-' || gen_random_uuid()::text, :v, :iva, :t, :it, :u, :us, (SELECT email FROM ddmrp.usuario WHERE usuario_id = :uid), :rr, :mr, :cg) RETURNING id"""),
                               {"e": g["empresa"], "p": g["proveedor_id"], "s": g["sucursal"], "n": g["proveedor_nombre"], "cp": g["cond_pago"], "co": comprador, "b": siesa_oc.bodega_oc(g["empresa"]),
                                "v": g["valor"], "iva": g["iva"], "t": g["valor"] + g["iva"], "it": len(g["lineas"]), "u": g["unidades"], "us": usuario, "uid": str((user or {}).get("id") or ""),
-                               "rr": bool(g["motivos"]), "mr": "; ".join(g["motivos"])[:1000] or None}).scalar()
+                               "rr": bool(g["motivos"]), "mr": "; ".join(g["motivos"])[:1000] or None, "cg": g["consignacion"]}).scalar()
             c.execute(text("UPDATE ddmrp.orden_compra SET referencia = :r WHERE id = :i"), {"r": siesa_oc.referencia(oc_id), "i": oc_id})
             for n, l in enumerate(g["lineas"], start=1):
                 c.execute(text("INSERT INTO ddmrp.orden_compra_linea (oc_id, nro, producto_id, descripcion, cantidad, costo, iva_tasa, origen_costo, fecha_entrega, cantidad_calculada, costo_calculado) VALUES (:i,:n,:p,:d,:q,:c,:t,:o,:f,:qc,:cc)"),

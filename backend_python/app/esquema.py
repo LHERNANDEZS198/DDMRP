@@ -446,6 +446,7 @@ SENTENCIAS_COMPRAS = [
     "ALTER TABLE ddmrp.orden_compra ADD COLUMN IF NOT EXISTS estado_siesa TEXT",
     "ALTER TABLE ddmrp.orden_compra ADD COLUMN IF NOT EXISTS estado_siesa_fecha TIMESTAMPTZ",
     "ALTER TABLE ddmrp.orden_compra ADD COLUMN IF NOT EXISTS bpm_id TEXT",
+    "ALTER TABLE ddmrp.orden_compra ADD COLUMN IF NOT EXISTS consignacion BOOLEAN NOT NULL DEFAULT FALSE",
     "ALTER TABLE ddmrp.orden_compra ADD COLUMN IF NOT EXISTS requiere_revision BOOLEAN",
     "ALTER TABLE ddmrp.orden_compra ADD COLUMN IF NOT EXISTS motivo_revision TEXT",
     "ALTER TABLE ddmrp.orden_compra ADD COLUMN IF NOT EXISTS fecha_plano DATE",   # dia (Colombia) en que se armo el plano por ultima vez: de ahi se corren las fechas de entrega

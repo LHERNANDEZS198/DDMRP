@@ -271,6 +271,7 @@ export default function Necesidades() {
     { field: 'proveedor_nombre', headerName: 'Proveedor', width: 200, filter: true, headerTooltip: 'Proveedor de la cotización vigente (o del ítem si no hay cotización)' },
     { field: 'categoria', headerName: 'Categ.', width: 200, filter: true, headerTooltip: 'Categoría de Siesa (plan 001): productos Funat, de terceros o maquila' },
     { field: 'lab_nombre', headerName: 'Lab.', width: 160, filter: true, headerTooltip: 'Laboratorio del ítem' },
+    { field: 'consignacion', headerName: 'Consig.', width: 90, filter: true, valueFormatter: (p: any) => p.value ? 'SÍ' : '', headerTooltip: 'Mercancía en consignación (plan 007, criterio 0001): va en una OC aparte, con el indicador de consignación prendido' },
     { field: 'zona', headerName: 'Zona', width: 100, filter: true, cellStyle: (p: any) => ({ color: ZONA[p.value] ?? '#333', fontWeight: 700 }), headerTooltip: 'Zona del buffer del CEDI: roja (urgente), amarilla (reponer), verde, exceso' },
     { field: 'qty_pedir', headerName: gestiona ? 'A pedir (ed.)' : 'A pedir', type: 'numericColumn', width: 140, valueFormatter: ent, editable: gestiona,
       valueParser: (p: any) => { const t = String(p.newValue ?? '').trim().replace(',', '.'); if (t === '') return null; const n = Number(t); return Number.isFinite(n) && n >= 0 ? n : p.oldValue },
@@ -391,7 +392,7 @@ export default function Necesidades() {
         {tab === 0 && <Tabla memoria="necesidades_proveedor" textoCargando="Calculando…" vacio="Sin necesidades con estos filtros" rowData={d.proveedores} columnDefs={colsProv} cargando={cargando} tooltipShowDelay={300}
           context={ctx} getRowId={(p: any) => kProv(p.data)} onGridReady={(e: any) => { apiProv.current = e.api }}
           defaultColDef={COL_DEF} onCellClicked={alProveedor} />}
-        {tab === 1 && <Tabla memoria="necesidades_detalle" textoCargando="Calculando…" vacio="Sin necesidades con estos filtros" rowData={d.filas} columnDefs={colsDet} cargando={cargando} rowBuffer={20} tooltipShowDelay={300}
+        {tab === 1 && <Tabla memoria="necesidades_detalle" textoCargando="Calculando…" vacio="Sin necesidades con estos filtros" rowData={d.filas} columnDefs={colsDet} cargando={cargando} getRowStyle={(p: any): any => p.data?.consignacion ? { background: 'rgba(25,118,210,0.16)', fontWeight: 600 } : undefined} rowBuffer={20} tooltipShowDelay={300}
           context={ctx} getRowId={(p: any) => kItem(p.data)} onGridReady={(e: any) => { apiDet.current = e.api }} stopEditingWhenCellsLoseFocus
           defaultColDef={COL_DEF} onCellClicked={alDetalle} onCellValueChanged={alEditar} />}
         {tab === 2 && <Tabla memoria="necesidades_sin_proveedor" textoCargando="Calculando…" vacio="Todos los ítems con necesidad tienen proveedor" rowData={d.sin_proveedor.filas} columnDefs={colsSin} cargando={cargando} tooltipShowDelay={300}

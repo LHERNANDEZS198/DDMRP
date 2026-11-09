@@ -22,6 +22,9 @@ CAT_ID = "(SELECT ci.criterio_id FROM ddmrp.item_criterio ci WHERE ci.producto_i
 CAT_NOM = ("(SELECT CASE WHEN cr.nombre IS NULL THEN ci.criterio_id ELSE ci.criterio_id || ' · ' || cr.nombre END FROM ddmrp.item_criterio ci "
            "LEFT JOIN ddmrp.criterio cr ON cr.plan_id = ci.plan_id AND cr.criterio_id = ci.criterio_id WHERE ci.producto_id = s.producto_id AND ci.plan_id = '001' LIMIT 1)")
 # se compra si la categoria no esta marcada como produccion propia en esa empresa (sin fila o vacio = se compra)
+# mercancia en consignacion = criterio 0001 del plan 007 de Siesa (esos items van en OC aparte, con el indicador de consignacion prendido)
+CONSIG_PLAN, CONSIG_CRIT = "007", "0001"
+CONSIG = f"(EXISTS (SELECT 1 FROM ddmrp.item_criterio cn WHERE cn.producto_id = s.producto_id AND cn.plan_id = '{CONSIG_PLAN}' AND cn.criterio_id = '{CONSIG_CRIT}'))"
 COMPRABLE = f"COALESCE((SELECT cc.se_compra FROM ddmrp.categoria_compra cc WHERE cc.empresa = s.empresa AND cc.plan_id = '001' AND cc.criterio_id = {CAT_ID}), 1) <> 0"
 CONFIG_DEFECTO = {"pedido_minimo_bloquea": 0.0, "poca_historia_meses": 3.0, "frecuencia_defecto": 15.0}
 
@@ -82,7 +85,7 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
       SELECT e.empresa, e.producto_id, sum(e.inventario) AS inv FROM ddmrp.sugerencias_envio e
       WHERE e.ejecucion_id = {ULTIMA} AND NOT EXISTS (SELECT 1 FROM ddmrp.maestro_cedi mc WHERE mc.empresa = e.empresa AND mc.bodega_id = e.bodega_id)
       GROUP BY 1, 2)
-      SELECT s.empresa, s.bodega_id, s.producto_id, mi.descripcion, COALESCE(mi.categoria, '') AS lab_cod, lb.nombre AS lab_nombre, {CAT_NOM} AS categoria,
+      SELECT s.empresa, s.bodega_id, s.producto_id, mi.descripcion, COALESCE(mi.categoria, '') AS lab_cod, lb.nombre AS lab_nombre, {CAT_NOM} AS categoria, {CONSIG} AS consignacion,
              ic.proveedor_id, ic.sucursal, pv.nombre AS proveedor_nombre, COALESCE(pv.activo, 1) AS prov_activo, COALESCE(pv.redondeo, 'arriba') AS redondeo,
              pv.pedido_minimo::float8 AS pedido_minimo,
              s.frecuencia::float8 AS frecuencia, s.unidad_despacho::float8 AS unidad_despacho, s.demanda_calificada::float8 AS demanda_calificada,

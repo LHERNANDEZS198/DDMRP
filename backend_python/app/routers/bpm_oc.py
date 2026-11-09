@@ -82,7 +82,7 @@ def detalle(oc_id: int):
     """La OC con sus lineas (y lo original si se edito): lo que el BPM muestra al aprobador."""
     with pg.connect() as c:
         r = c.execute(text("SELECT id, empresa, proveedor_id, proveedor_nombre, sucursal, cond_pago, comprador, estado, referencia, valor::float8 AS valor, iva::float8 AS iva, total::float8 AS total, items, "
-                           "unidades::float8 AS unidades, siesa_consecutivo, mensaje, creado_por, requiere_revision, motivo_revision, "
+                           "unidades::float8 AS unidades, siesa_consecutivo, mensaje, creado_por, requiere_revision, motivo_revision, consignacion, "
                            "(SELECT u.nombre FROM ddmrp.usuario u WHERE u.usuario_id = orden_compra.comprador) AS comprador_nombre FROM ddmrp.orden_compra WHERE id = :i"), {"i": oc_id}).mappings().first()
         if not r:
             raise HTTPException(404, "No existe esa OC")
@@ -120,7 +120,7 @@ def detalle(oc_id: int):
     entregas = [l["fecha_entrega"] for l in lineas if l.get("fecha_entrega")]
     # Laboratorio de la OC para el encabezado (una OC por laboratorio): el BPM muestra «Nombre (codigo)»
     lab = next(((l["lab_cod"], l.get("lab_nombre") or "") for l in lineas if l.get("lab_cod")), ("", ""))
-    extra = {"laboratorio": lab[0], "laboratorio_nombre": lab[1],
+    extra = {"laboratorio": lab[0], "laboratorio_nombre": lab[1], "consignacion": "SI" if r["consignacion"] else "NO",
              "fecha_montaje": creado, "fecha_necesidad": max(entregas) if entregas else None, "fecha_necesidad_min": min(entregas) if entregas else None}
     return dict(r) | extra | {"lineas": lineas}
 
