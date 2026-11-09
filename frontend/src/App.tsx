@@ -20,6 +20,7 @@ import Lanzamientos from './pages/Lanzamientos'
 import Clasificacion from './pages/Clasificacion'
 import Necesidades from './pages/Necesidades'
 import Tablero from './pages/Tablero'
+import TableroDetalle from './pages/TableroDetalle'
 import SaludInventario from './pages/Salud'
 import Apertura from './pages/Apertura'
 import { SaludProvider } from './Salud'
@@ -38,7 +39,7 @@ export const PANTALLAS = [
   { to: '/reglas', req: ['editar_reglas', 'correr_motor'] },
   { to: '/config', req: ['ver_maestros', 'cargar_maestros', 'sincronizar_siesa'] },
   { to: '/apertura-tienda', req: ['ver_maestros', 'cargar_maestros'] },
-  { to: '/compras/tablero', req: ['ver_compras'] },
+  { to: '/compras/tablero', req: ['ver_control_compras'] },
   { to: '/compras/necesidades', req: ['ver_compras'] },
   { to: '/compras/maestros', req: ['ver_compras', 'cargar_maestros_compras'] },
   { to: '/compras/reglas', req: ['ver_compras', 'cargar_maestros_compras', 'editar_reglas_compras'] },
@@ -56,7 +57,7 @@ function Req({ to, children }: { to: string; children: ReactElement }) {
 function Inicio() {
   const { puede, yo } = useYo()
   // quien tiene perfil de Compras entra directo al tablero de compras; el resto, a su primera pantalla
-  const p = puede('ver_compras') ? PANTALLAS.find(x => x.to === '/compras/tablero') : PANTALLAS.find(x => puede(...x.req))
+  const p = puede('ver_control_compras') ? PANTALLAS.find(x => x.to === '/compras/tablero') : PANTALLAS.find(x => puede(...x.req))
   if (p) return <Navigate to={p.to} replace />
   return (
     <Box sx={{ maxWidth: 520, mx: 'auto', mt: 8, textAlign: 'center', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 1.5 }}>
@@ -92,6 +93,7 @@ export default function App() {
           <Route path="/config" element={<Req to="/config"><Config key="ddmrp" grupo="ddmrp" /></Req>} />
           <Route path="/apertura-tienda" element={<Req to="/apertura-tienda"><Apertura /></Req>} />
           <Route path="/compras/tablero" element={<Req to="/compras/tablero"><Tablero /></Req>} />
+          <Route path="/compras/tablero/:tipo" element={<Req to="/compras/tablero"><TableroDetalle /></Req>} />
           <Route path="/compras/necesidades" element={<Req to="/compras/necesidades"><Necesidades /></Req>} />
           <Route path="/compras/maestros" element={<Req to="/compras/maestros"><Config key="compras" grupo="compras" /></Req>} />
           <Route path="/usuarios" element={<Req to="/usuarios"><Usuarios /></Req>} />

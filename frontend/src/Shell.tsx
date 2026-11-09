@@ -30,16 +30,16 @@ export const VISTAS = [
   { grupo: 'Control DDMRP', to: '/control/cambios', label: 'Cambios en un periodo', ayuda: 'Cómo se movió el semáforo entre dos fechas', req: ['ver_control'] },
   { grupo: 'Control DDMRP', to: '/control/tendencia', label: 'Tendencia en el tiempo', ayuda: 'Curva del buffer, inventario y flujo neto', req: ['ver_control'] },
   { grupo: 'Control DDMRP', to: '/control/mapa', label: 'Mapa de calor', ayuda: 'Item × tienda × fecha con el color de la zona, como el Excel', req: ['ver_control'] },
+  { grupo: 'Compras', to: '/compras/tablero', label: 'Control compras', ayuda: 'Qué pedir, OC en vuelo, lo no recibido, riesgo y exceso del CEDI', req: ['ver_control_compras'] },
   { grupo: 'Análisis', to: '/dashboard', label: 'Alertas', ayuda: 'Zona roja y lo que hay que atender', req: ['ver_alertas'] },
   { grupo: 'Análisis', to: '/salud-inventario', label: 'Salud del inventario', ayuda: 'Zona de hoy × importancia del item: qué atender primero', req: ['ver_control'] },
   { grupo: 'Análisis', to: '/clasificacion', label: 'Clasificación ABC', ayuda: 'ABC por margen × XYZ por variabilidad, con filtros', req: ['ver_control'] },
   { grupo: 'Análisis', to: '/lanzamientos', label: 'Lanzamientos', ayuda: 'Items nuevos y reingresos al CEDI', req: ['ver_control'] },
 ] as { grupo: string; to: string; label: string; ayuda: string; req: string[]; compras?: boolean; cedi?: boolean }[]
 export const NAV = [
-  { to: '/control', label: 'Informes', icon: <Insights />, vistas: true, req: ['ver_control', 'ver_alertas'] },
+  { to: '/control', label: 'Informes', icon: <Insights />, vistas: true, req: ['ver_control', 'ver_alertas', 'ver_control_compras'] },
   { to: '/despacho', label: 'Matriz de despacho', icon: <LocalShipping />, req: ['ver_despacho'] },
   { to: '/auditoria', label: 'Auditoría', icon: <FactCheck />, req: ['ver_auditoria'] },
-  { to: '/compras/tablero', label: 'Tablero de compras', icon: <Insights />, req: ['ver_compras'] },
   { to: '/compras/necesidades', label: 'Necesidades de compra', icon: <ShoppingBasket />, req: ['ver_compras'] },
   { to: '/config', label: 'Maestros', icon: <Storage />, req: ['ver_maestros', 'cargar_maestros', 'sincronizar_siesa'] },
   { to: '/compras/maestros', label: 'Maestros compras', icon: <ShoppingCart />, req: ['ver_compras', 'cargar_maestros_compras'] },
@@ -167,7 +167,7 @@ export default function Shell() {
               </Collapse>
               <Divider />
             </>)}
-            {[{ titulo: 'Operar', tos: ['/despacho', '/compras/tablero', '/compras/necesidades', '/auditoria'] },
+            {[{ titulo: 'Operar', tos: ['/despacho', '/compras/necesidades', '/auditoria'] },
               { titulo: 'Maestros', tos: ['/config', '/compras/maestros'] },
               { titulo: 'Config', tos: ['/motor', '/reglas', '/compras/reglas', '/usuarios', '/log', '/diagnostico'] }].map(sec => {
               const items = NAV_OK.filter(n => sec.tos.includes(n.to))

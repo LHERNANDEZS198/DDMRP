@@ -334,7 +334,7 @@ SENTENCIAS_BITACORA = [
        $$ LANGUAGE plpgsql""",
     """INSERT INTO ddmrp.perfil (perfil_id, nombre, descripcion, nivel, permisos, sistema) VALUES
          ('compras', 'Compras', 'Ve el CEDI (necesidades, sobrestock, clasificacion) y administra los maestros de compras', 'edicion',
-          '{ver_control,ver_alertas,ver_compras,cargar_maestros_compras,gestionar_compras}', true)
+          '{ver_control,ver_alertas,ver_control_compras,ver_compras,cargar_maestros_compras,gestionar_compras}', true)
        ON CONFLICT (perfil_id) DO NOTHING""",
     "DROP TRIGGER IF EXISTS trg_bitacora_nombre ON ddmrp.abast_bitacora",
     "CREATE TRIGGER trg_bitacora_nombre AFTER INSERT OR UPDATE OF descripcion ON ddmrp.abast_bitacora FOR EACH ROW EXECUTE FUNCTION ddmrp.fn_bitacora_nombre()",
@@ -419,6 +419,13 @@ SENTENCIAS_COMPRAS = [
          IF NOT EXISTS (SELECT 1 FROM ddmrp.migracion_marca WHERE clave = 'perfil_compras_gestionar') THEN
            UPDATE ddmrp.perfil SET permisos = array_append(permisos, 'gestionar_compras') WHERE perfil_id = 'compras' AND NOT ('gestionar_compras' = ANY(permisos));
            INSERT INTO ddmrp.migracion_marca (clave) VALUES ('perfil_compras_gestionar');
+         END IF;
+       END $$""",
+    # informe Control compras: permiso nuevo, una sola vez a los perfiles que ya veian compras (despues cada perfil se ajusta en Usuarios)
+    """DO $$ BEGIN
+         IF NOT EXISTS (SELECT 1 FROM ddmrp.migracion_marca WHERE clave = 'permiso_control_compras') THEN
+           UPDATE ddmrp.perfil SET permisos = array_append(permisos, 'ver_control_compras') WHERE 'ver_compras' = ANY(permisos) AND NOT ('ver_control_compras' = ANY(permisos));
+           INSERT INTO ddmrp.migracion_marca (clave) VALUES ('permiso_control_compras');
          END IF;
        END $$""",
     # proveedor de compra: el de la COTIZACION vigente del item (lo que importa a compras) y, si no hay cotizacion, el del item de Siesa (respaldo). Aqui se guarda
