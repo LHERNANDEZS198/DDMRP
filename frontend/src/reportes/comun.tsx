@@ -1,5 +1,5 @@
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Autocomplete, Box, Button, Chip, CircularProgress, IconButton, MenuItem, Paper, TextField, Tooltip, Typography } from '@mui/material'
+import { Alert, Autocomplete, Box, Button, Chip, CircularProgress, IconButton, MenuItem, Paper, TextField, ToggleButton, ToggleButtonGroup, Tooltip, Typography } from '@mui/material'
 import Refresh from '@mui/icons-material/Refresh'
 import Close from '@mui/icons-material/Close'
 import { api, seguirTarea } from '../api'
@@ -44,7 +44,7 @@ export function Panel({ titulo, ayuda, children }: { titulo: string; ayuda?: str
 }
 
 // ---------- grafico de lineas por periodo (un solo eje; con 2 o mas series lleva leyenda) ----------
-export type Serie = { nombre: string; color: string; valores: (number | null)[] }
+export type Serie = { nombre: string; color: string; valores: (number | null)[]; dash?: string }
 function useAncho(): [(el: HTMLDivElement | null) => void, number] {
   const [el, setEl] = useState<HTMLDivElement | null>(null); const [w, setW] = useState(800)
   useEffect(() => {
@@ -79,7 +79,8 @@ function escala(vals: number[], o: { piso?: number; techo?: number; spanMin?: nu
   return { lo: a, hi: b, ticks: Array.from({ length: n + 1 }, (_, i) => (+(a + i * st).toPrecision(12)) || 0) }
 }
 
-export function Lineas({ periodos, series, fmt, fmtEje, alto = 260, techo, piso, spanMin }: { periodos: string[]; series: Serie[]; fmt: (v: number) => string; fmtEje?: (v: number) => string; alto?: number; techo?: number; piso?: number; spanMin?: number }) {
+type PropsLineas = { periodos: string[]; series: Serie[]; fmt: (v: number) => string; fmtEje?: (v: number) => string; alto?: number; techo?: number; piso?: number; spanMin?: number; etiquetas?: string[]; sinLeyenda?: boolean }
+export function Lineas({ periodos, series, fmt, fmtEje, alto = 260, techo, piso, spanMin, etiquetas, sinLeyenda }: PropsLineas) {
   const [ref, W] = useAncho(); const [hover, setHover] = useState<number | null>(null)
   const M = { l: 56, r: 16, t: 10, b: 28 }, H = alto, n = periodos.length
   if (!n) return <Typography color="text.secondary" sx={{ p: 3 }}>Sin datos en el rango. Revisa los filtros o actualiza los datos.</Typography>
@@ -89,26 +90,72 @@ export function Lineas({ periodos, series, fmt, fmtEje, alto = 260, techo, piso,
   const x = (i: number) => M.l + (n === 1 ? pw / 2 : (pw * i) / (n - 1)), y = (v: number) => M.t + ph - ((v - min) / ((max - min) || 1)) * ph
   const paso = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(pw / 56))))
   const eje = fmtEje ?? fmt
+  const etq = (i: number) => etiquetas?.[i] ?? mesLargo(periodos[i])
   const trazo = (s: Serie) => { let d = '', abierto = false; s.valores.forEach((v, i) => { if (v == null) { abierto = false; return } d += `${abierto ? 'L' : 'M'}${x(i)},${y(v)} `; abierto = true }); return d }
   return (
     <Box ref={ref} sx={{ width: '100%', position: 'relative' }}>
-      {series.length > 1 && (
+      {series.length > 1 && !sinLeyenda && (
         <Box sx={{ display: 'flex', gap: 2, fontSize: 12, mb: .5, flexWrap: 'wrap' }}>
           {series.map(s => <span key={s.nombre} style={{ color: TINTA2 }}><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 5, background: s.color, marginRight: 5 }} />{s.nombre}</span>)}
         </Box>)}
       <svg width={W} height={H} role="img" onMouseLeave={() => setHover(null)}
         onMouseMove={e => { const r = (e.currentTarget as SVGElement).getBoundingClientRect(); const i = Math.round(((e.clientX - r.left - M.l) / (pw || 1)) * (n - 1)); setHover(i >= 0 && i < n ? i : null) }}>
         {ticks.map(t => <g key={t}><line x1={M.l} x2={W - M.r} y1={y(t)} y2={y(t)} stroke={REJILLA} /><text x={M.l - 8} y={y(t) + 4} fontSize="11" textAnchor="end" fill={TINTA2}>{eje(t)}</text></g>)}
-        {periodos.map((p, i) => i % paso === 0 && <text key={p} x={x(i)} y={H - 8} fontSize="11" textAnchor="middle" fill={TINTA2}>{mesLargo(p)}</text>)}
+        {periodos.map((p, i) => i % paso === 0 && <text key={p} x={x(i)} y={H - 8} fontSize="11" textAnchor="middle" fill={TINTA2}>{etq(i)}</text>)}
         {hover != null && <line x1={x(hover)} x2={x(hover)} y1={M.t} y2={H - M.b} stroke="#9aa28f" strokeDasharray="3 3" />}
-        {series.map(s => <path key={s.nombre} d={trazo(s)} fill="none" stroke={s.color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />)}
+        {series.map(s => <path key={s.nombre} d={trazo(s)} fill="none" stroke={s.color} strokeWidth="2" strokeDasharray={s.dash} strokeLinejoin="round" strokeLinecap="round" />)}
         {series.map(s => s.valores.map((v, i) => v != null && (n <= 24 || hover === i) && <circle key={s.nombre + i} cx={x(i)} cy={y(v)} r={hover === i ? 5 : 3.5} fill={s.color} stroke="#fff" strokeWidth="2" />))}
       </svg>
       {hover != null && (
-        <Box sx={{ position: 'absolute', top: series.length > 1 ? 28 : 8, left: Math.min(Math.max(x(hover) + 12, 8), W - 200), bgcolor: 'rgba(255,255,255,.97)', border: '1px solid #cfd5c4', borderRadius: 1, p: 1, fontSize: 12, pointerEvents: 'none', boxShadow: 2, minWidth: 170 }}>
-          <b>{mesLargo(periodos[hover])}</b>
+        <Box sx={{ position: 'absolute', top: series.length > 1 && !sinLeyenda ? 28 : 8, left: Math.min(Math.max(x(hover) + 12, 8), W - 200), bgcolor: 'rgba(255,255,255,.97)', border: '1px solid #cfd5c4', borderRadius: 1, p: 1, fontSize: 12, pointerEvents: 'none', boxShadow: 2, minWidth: 170 }}>
+          <b>{etq(hover)}</b>
           {series.map(s => <div key={s.nombre}><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 4, background: s.color, marginRight: 5 }} />{s.nombre}: <b>{s.valores[hover] == null ? '—' : fmt(s.valores[hover] as number)}</b></div>)}
         </Box>)}
+    </Box>)
+}
+
+// ---------- vista por año: lineal, años sobrepuestos o un panel por año ----------
+export type ModoVista = 'lineal' | 'sobre' | 'separar'
+const MES3 = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+const MESES = MES3.map((_, i) => String(i + 1).padStart(2, '0'))
+const COLORES_ANIO = [COLOR.azul, COLOR.naranja, COLOR.violeta, COLOR.aqua]      // el año mas reciente siempre azul, el anterior naranja...
+const TRAZOS = [undefined, '7 4', '2 3', '9 3 2 3']
+
+/** Modo de vista elegido: se recuerda por navegador y es el mismo para todos los informes. */
+export function useModoVista(): [ModoVista, (m: ModoVista) => void] {
+  const [m, setM] = useState<ModoVista>(() => { try { const g = localStorage.getItem('ddmrp_rep_vista'); return g === 'sobre' || g === 'separar' ? g : 'lineal' } catch { return 'lineal' } })
+  return [m, (v: ModoVista) => { setM(v); try { localStorage.setItem('ddmrp_rep_vista', v) } catch { /* sin almacenamiento */ } }]
+}
+
+export function SelectorVista({ modo, setModo }: { modo: ModoVista; setModo: (m: ModoVista) => void }) {
+  return (
+    <Tooltip placement="top" title="Cómo se dibujan las tendencias: una línea de corrido en el tiempo, un año encima del otro (ene a dic) para comparar la misma época, o un panel por año con el mismo eje vertical.">
+      <ToggleButtonGroup size="small" exclusive value={modo} onChange={(_, v) => v && setModo(v)}>
+        <ToggleButton value="lineal">Lineal</ToggleButton><ToggleButton value="sobre">Años sobrepuestos</ToggleButton><ToggleButton value="separar">Un panel por año</ToggleButton>
+      </ToggleButtonGroup>
+    </Tooltip>)
+}
+
+/** Las mismas series de `Lineas` en la vista elegida. Sobrepuestos: eje ene–dic, una línea por año (los 4 más recientes; con una sola serie cada año lleva su color,
+ *  con varias la serie conserva su color y el año se distingue por el trazo). Un panel por año: cada año con su propio eje horizontal y el mismo eje vertical. */
+export function LineasAnio({ modo, periodos, series, ...r }: { modo: ModoVista } & PropsLineas) {
+  const anios = [...new Set(periodos.map(p => p.slice(0, 4)))].sort()
+  if (modo === 'lineal' || !anios.length) return <Lineas periodos={periodos} series={series} {...r} />
+  const deAnio = (a: string, s: Serie) => MESES.map(m => { const i = periodos.indexOf(a + m); return i >= 0 ? s.valores[i] : null })
+  if (modo === 'sobre') {
+    const vis = anios.slice(-4).reverse(), una = series.length === 1
+    const ss: Serie[] = vis.flatMap((a, k) => series.map(s => ({ nombre: una ? a : `${s.nombre} ${a}`, color: una ? COLORES_ANIO[k] : s.color, dash: una ? undefined : TRAZOS[k], valores: deAnio(a, s) })))
+    return <Lineas periodos={MESES} etiquetas={MES3} series={ss} {...r} />
+  }
+  const todos = series.flatMap(s => s.valores).filter((v): v is number => v != null)
+  const esc = escala(todos, { piso: r.piso, techo: r.techo, spanMin: r.spanMin })
+  return (
+    <Box>
+      {[...anios].reverse().map((a, k) => (
+        <Box key={a} sx={{ mt: k ? 1 : 0 }}>
+          <Typography variant="caption" sx={{ fontWeight: 700, color: TINTA }}>{a}</Typography>
+          <Lineas {...r} periodos={MESES} etiquetas={MES3} series={series.map(s => ({ ...s, valores: deAnio(a, s) }))} piso={esc.lo} techo={esc.hi} alto={Math.round((r.alto ?? 260) * .62)} sinLeyenda={k > 0} />
+        </Box>))}
     </Box>)
 }
 

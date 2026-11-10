@@ -3,12 +3,13 @@ import { Alert, Box, CircularProgress, ToggleButton, ToggleButtonGroup, Typograp
 import { ColDef } from 'ag-grid-community'
 import Tabla from '../Tabla'
 import { api } from '../api'
-import { Actualizacion, AvisoEmpresa, BarraFiltros, COLOR, Kpi, Lineas, MM, Panel, ejeM, ent, mesLargo, pct, pesos, useFiltros } from '../reportes/comun'
+import { Actualizacion, AvisoEmpresa, BarraFiltros, COLOR, Kpi, LineasAnio, MM, Panel, SelectorVista, ejeM, ent, mesLargo, pct, pesos, useFiltros, useModoVista } from '../reportes/comun'
 
 /** Ventas por producto: lo que era la hoja «Ventas x Producto» del Power BI de compras. */
 export default function ReporteVentas() {
   const { op, f, setF, qs, err, recargarOpciones } = useFiltros('ventas')
   const [d, setD] = useState<any>(null)
+  const [modo, setModo] = useModoVista()
   const [agrupar, setAgrupar] = useState<'producto' | 'mes'>('producto')
   const [cargando, setCargando] = useState(false)
   const [e2, setE2] = useState('')
@@ -48,6 +49,7 @@ export default function ReporteVentas() {
       <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 2, flexWrap: 'wrap' }}>
         <Typography variant="h5" sx={{ fontWeight: 700 }}>Ventas por producto</Typography>
         <Actualizacion op={op} alTerminar={() => { recargarOpciones(); cargar() }} />
+        <Box sx={{ ml: 'auto' }}><SelectorVista modo={modo} setModo={setModo} /></Box>
       </Box>
       <BarraFiltros op={op} f={f} setF={setF} conUn />
       <AvisoEmpresa op={op} />
@@ -62,7 +64,7 @@ export default function ReporteVentas() {
         <Kpi titulo="Descuento" valor={k ? MM(k.descuento) : '…'} />
       </Box>
       <Panel titulo="Venta neta y costo por mes" ayuda="Pasa el cursor por un mes para ver las cifras.">
-        <Lineas periodos={per} fmt={v => MM(v)} fmtEje={ejeM} alto={220}
+        <LineasAnio modo={modo} periodos={per} fmt={v => MM(v)} fmtEje={ejeM} alto={220}
           series={[{ nombre: 'Venta neta', color: COLOR.azul, valores: d?.serie.map((s: any) => s.neta) ?? [] }, { nombre: 'Costo', color: COLOR.naranja, valores: d?.serie.map((s: any) => s.costo) ?? [] }]} />
       </Panel>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>

@@ -3,12 +3,13 @@ import { Alert, Box, CircularProgress, Typography } from '@mui/material'
 import { ColDef } from 'ag-grid-community'
 import Tabla from '../Tabla'
 import { api } from '../api'
-import { Actualizacion, AvisoEmpresa, BarraFiltros, COLOR, Kpi, Lineas, MM, Panel, ejeM, ejePct, ent, pct, pesos, useFiltros } from '../reportes/comun'
+import { Actualizacion, AvisoEmpresa, BarraFiltros, COLOR, Kpi, LineasAnio, MM, Panel, SelectorVista, ejeM, ejePct, ent, pct, pesos, useFiltros, useModoVista } from '../reportes/comun'
 
 /** Proveedor / PT: compras vs ventas, rentabilidad y cumplimiento (OTIF) por mes. Reemplaza las hojas «Ficha Proveedor» y «PT» del Power BI de compras. */
 export default function ReporteProveedor() {
   const { op, f, setF, qs, err, recargarOpciones } = useFiltros('proveedor')
   const [d, setD] = useState<any>(null)
+  const [modo, setModo] = useModoVista()
   const [cargando, setCargando] = useState(false)
   const [e2, setE2] = useState('')
   const cargar = () => {
@@ -41,6 +42,7 @@ export default function ReporteProveedor() {
       <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 2, flexWrap: 'wrap' }}>
         <Typography variant="h5" sx={{ fontWeight: 700 }}>Proveedor / PT</Typography>
         <Actualizacion op={op} alTerminar={() => { recargarOpciones(); cargar() }} />
+        <Box sx={{ ml: 'auto' }}><SelectorVista modo={modo} setModo={setModo} /></Box>
       </Box>
       <BarraFiltros op={op} f={f} setF={setF} conUn />
       <AvisoEmpresa op={op} />
@@ -56,16 +58,16 @@ export default function ReporteProveedor() {
       </Box>
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0, 1fr)', lg: 'minmax(0, 3fr) minmax(0, 2fr)' }, gap: 1.5 }}>
         <Panel titulo="Compras vs ventas por mes" ayuda="Las ventas son netas (sin descuento de línea). Pasa el cursor por un mes.">
-          <Lineas periodos={per} fmt={v => MM(v)} fmtEje={ejeM} alto={250}
+          <LineasAnio modo={modo} periodos={per} fmt={v => MM(v)} fmtEje={ejeM} alto={250}
             series={[{ nombre: 'Ventas netas', color: COLOR.azul, valores: s.map(x => x.ventas) }, { nombre: 'Compras', color: COLOR.naranja, valores: s.map(x => x.compras) }]} />
         </Panel>
         <Panel titulo="% Rentabilidad por mes" ayuda="Gráfico propio: no comparte eje con los pesos. El eje se ajusta al rango real de los datos.">
-          <Lineas periodos={per} fmt={v => pct(v, 1)} fmtEje={ejePct} alto={250} spanMin={0.1}
+          <LineasAnio modo={modo} periodos={per} fmt={v => pct(v, 1)} fmtEje={ejePct} alto={250} spanMin={0.1}
             series={[{ nombre: '% Rent', color: COLOR.violeta, valores: s.map(x => x.rent) }]} />
         </Panel>
       </Box>
       <Panel titulo="Cumplimiento del proveedor por mes (OTIF)" ayuda="Mes de la última entrada de cada línea de OC. Completo: llegó lo pedido. A tiempo: llegó en la fecha pactada.">
-        <Lineas periodos={per} fmt={v => pct(v, 0)} fmtEje={ejePct} alto={220} techo={1} piso={0}
+        <LineasAnio modo={modo} periodos={per} fmt={v => pct(v, 0)} fmtEje={ejePct} alto={220} techo={1} piso={0}
           series={[{ nombre: '% Completo', color: COLOR.azul, valores: s.map(x => x.infull) }, { nombre: '% A tiempo', color: COLOR.naranja, valores: s.map(x => x.ontime) }]} />
       </Panel>
       <Typography sx={{ fontWeight: 700, mt: 1 }}>Proveedores con más compras</Typography>

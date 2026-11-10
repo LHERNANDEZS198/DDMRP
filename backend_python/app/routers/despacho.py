@@ -51,7 +51,7 @@ def matriz(empresa: str, bodega_id: str | None = None, bodegas: str | None = Non
     if estado.lower() in ("pendiente", "aprobada", "enviada"):
         f += f" AND s.estado='{estado.upper()}'"
     sql = f"""SELECT s.ejecucion_id, s.empresa, s.producto_id, mi.descripcion, mi.categoria, s.bodega_id, s.zona::text zona,
-                     s.inventario, s.en_transito, s.flujo_neto, s.tor, s.toy_aj, s.tog_aj, s.unidad_despacho,
+                     s.inventario, s.en_transito, s.flujo_neto, s.tor, s.toy_aj, s.tog_aj, s.adu::float8 adu, s.unidad_despacho,
                      s.vectorizacion, s.cantidad_sugerida::float8 cantidad_sugerida, s.cantidad_aprobada, s.estado::text estado, s.cantidad_necesaria::float8 cantidad_necesaria, s.stock_cedi::float8 stock_cedi,
                      ci.costo::float8 AS costo, s.regla_objetivo, tc.clase AS clase_tienda,
                      (SELECT max(current_date - r.fecha) FROM ddmrp.rit_alerta r WHERE r.empresa = s.empresa AND r.producto_id = s.producto_id AND r.bodega_id = s.bodega_id) AS rit_dias,

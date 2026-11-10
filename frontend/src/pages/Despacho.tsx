@@ -38,6 +38,7 @@ const cols: ColDef[] = [
   { field: 'estado', filter: true, width: 115 },
   { field: 'inventario', type: 'numericColumn', width: 130, },
   { field: 'en_transito', headerName: 'Transito', type: 'numericColumn', width: 130 },
+  { field: 'adu', headerName: 'ADU', type: 'numericColumn', width: 90, filter: true, headerTooltip: 'Consumo diario promedio (ADU) con que el motor calculó esta fila: promedio de los últimos meses de venta + pronóstico, con su variabilidad (la misma cifra de Control DDMRP)', valueFormatter: p => p.value == null ? '' : Math.round(p.value).toLocaleString() },
   { field: 'tog_aj', headerName: 'TOG aj.', type: 'numericColumn', width: 130 },
   { field: 'unidad_despacho', headerName: 'Und. desp.', type: 'numericColumn', width: 130 },
   { field: 'vectorizacion', headerName: 'Vectorización', type: 'numericColumn', width: 130 },
