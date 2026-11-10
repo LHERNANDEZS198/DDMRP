@@ -1,6 +1,6 @@
 """Reportes de compras: historico mensual de Siesa -> Postgres (ddmrp.rep_venta_mes, rep_compra_mes, rep_otif).
 Alimenta los informes «Ventas por producto» y «Proveedor / PT» (los que antes vivian en el Power BI de compras). Va aparte del ETL diario porque son consultas
-historicas mas pesadas: se lanza con el boton «Actualizar datos» del informe o solo, una vez al dia, a la hora de la regla rep_hora (Reglas de compras).
+historicas mas pesadas: se lanza con el boton «Actualizar datos» del informe o solo, a la hora, minuto y cada cuantos dias de las reglas rep_hora, rep_minuto y rep_cada_dias (Reglas de compras), aparte del ETL del motor.
   - ventas   etl/sql/rep_ventas_siesa.sql   facturas de venta por mes, item, canal y unidad de negocio (bruto, descuento, costo)
   - compras  etl/sql/rep_compras_siesa.sql  el mismo procedimiento del Power BI (analisis de documentos de compras), agregado por mes, item y proveedor
   - otif     etl/sql/rep_otif_siesa.sql     lineas de OC con su ultima entrada real; aqui se calcula a tiempo y completa con los umbrales de compras_config
@@ -21,7 +21,7 @@ log = logging.getLogger("etl.reportes")
 SQL_DIR = Path(__file__).parent / "sql"
 EMPRESAS = (("05", lambda: settings.siesa_db), ("21", lambda: settings.siesa_db_s))      # Stores (21) solo si hay base configurada (SIESA_DB_S); si no, se salta
 CFG_DEFECTO = {"rep_meses_historia": 48.0, "rep_meses_refresco": 3.0, "rep_auto": 1.0, "rep_hora": 4.0, "rep_otif_dias_tolerancia": 0.0,
-               "rep_otif_pct_completo": 98.0, "rep_otif_excluir_regularizadas": 1.0}
+               "rep_minuto": 0.0, "rep_cada_dias": 1.0, "rep_recalcular_compras": 1.0, "rep_otif_pct_completo": 98.0, "rep_otif_excluir_regularizadas": 1.0}
 COLS_COMPRAS = ("f_fecha", "f_valor_bruto_local", "f_cant_base", "f_proveedor", "f_proveedor_razon_soc", "f_referencia")
 
 
@@ -254,21 +254,46 @@ def _sincronizar(completo: bool) -> dict:
 
 
 def revisar_reportes() -> None:
-    """Se llama cada 10 minutos: si rep_auto = 1 y estamos en la hora de rep_hora (Colombia) y hoy aun no se actualizo, actualiza. Una actualizacion fallida tambien
-    cuenta como intento del dia (queda el error en el informe) para no martillar Siesa. Si hay otra tarea corriendo (ETL, motor) espera al siguiente turno."""
+    """Se llama cada 10 minutos: si rep_auto = 1, ya paso la hora:minuto de rep_hora / rep_minuto (Colombia) y la ultima actualizacion (automatica o con el boton) fue
+    hace rep_cada_dias dias o mas, actualiza. Una actualizacion fallida tambien cuenta como intento (queda el error en el informe) para no martillar Siesa.
+    Con rep_recalcular_compras = 1 antes recalcula las necesidades de compra (como el boton «Recalcular»), para que compras no dependa del ETL del motor.
+    Si hay otra tarea corriendo (ETL, motor) espera al siguiente turno. Es independiente del ETL del motor."""
     import pytz
     try:
         cfg = config()
         if cfg["rep_auto"] < 1:
             return
         ahora = datetime.now(pytz.timezone("America/Bogota"))
-        if ahora.hour != int(cfg["rep_hora"]):
+        if (ahora.hour, ahora.minute) < (int(cfg["rep_hora"]), int(cfg["rep_minuto"])):
             return
         with pg.connect() as c:
-            ya = c.execute(text("SELECT EXISTS (SELECT 1 FROM ddmrp.rep_actualizacion WHERE (fecha AT TIME ZONE 'America/Bogota')::date = :h)"), {"h": ahora.date()}).scalar()
-        if ya:
+            ultima = c.execute(text("SELECT max((fecha AT TIME ZONE 'America/Bogota')::date) FROM ddmrp.rep_actualizacion")).scalar()
+            marca = c.execute(text("SELECT valor::int FROM ddmrp.parametro WHERE clave = 'rep_ultima_auto'")).scalar()
+        if marca:       # ultimo dia que se intento la corrida automatica (aunque algo fallara): evita repetirla cada 10 minutos
+            intento = date(marca // 10000, marca // 100 % 100, marca % 100)
+            ultima = max(ultima, intento) if ultima else intento
+        if ultima and (ahora.date() - ultima).days < max(int(cfg["rep_cada_dias"]), 1):
             return
-        sincronizar_reportes_compras("auto")
+        ocupado = False
+        try:
+            if cfg["rep_recalcular_compras"] >= 1:
+                from ..orchestrator import recalcular_compras      # aqui para no crear una importacion circular al arrancar
+                try:
+                    recalcular_compras("auto")
+                except Ocupado:
+                    raise
+                except Exception:       # noqa: BLE001  (p. ej. el motor nunca ha corrido): queda en el Log y los reportes siguen
+                    log.exception("Corrida automatica: no se pudieron recalcular las necesidades de compra")
+            sincronizar_reportes_compras("auto")
+        except Ocupado:
+            ocupado = True
+            raise
+        finally:
+            if not ocupado:
+                h = ahora.date()
+                with pg.begin() as c:
+                    c.execute(text("INSERT INTO ddmrp.parametro (clave, valor, detalle) VALUES ('rep_ultima_auto', :v, 'Ultimo dia (AAAAMMDD) en que se intento la corrida automatica de reportes y necesidades de compra') "
+                                   "ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor"), {"v": h.year * 10000 + h.month * 100 + h.day})
     except Ocupado:
         log.info("Reportes de compras: hay otra tarea corriendo, se intenta en el proximo turno")
     except Exception:       # noqa: BLE001

@@ -108,3 +108,5 @@ Estados: ✅ listo · 🟡 hecho, sin validar en producción · ⬜ pendiente ·
 - [ ] Criterio de ítems + valores (igual que Clasificación), con «+ Otro criterio»; categoría y acción siguen con su filtro propio.
 - [ ] Ejes de las gráficas: se ajustan al rango real (pasos redondos, sin «-0 M»); el % rent usa su propio eje con un rango mínimo de 10 puntos.
 - [ ] Una sola barra de desplazamiento: las tablas usan paginación (50 o 100 filas) en vez de scroll propio.
+- [ ] Corrida automática de los reportes (aparte del ETL del motor), en Reglas de compras > Reportes de compras: Sí/No, hora, minuto y cada cuántos días (cuenta desde la última actualización, también la manual).
+- [ ] La misma corrida automática puede recalcular antes las necesidades de compra (regla «Corrida automática: también recalcular las necesidades de compra», por defecto Sí): inventario y OC abiertas del CEDI + buffer del CEDI. No refresca ventas ni tiendas (eso es del ETL) y necesita una corrida previa del motor. Probar con el ETL apagado: Log > tipo «compras» con origen auto.

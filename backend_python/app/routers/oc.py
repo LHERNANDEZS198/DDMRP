@@ -165,16 +165,23 @@ def _motivos_revision(g: dict, cfg: dict) -> list[str]:
     total = g["valor"] + g["iva"]
     if cfg["oc_umbral_total"] <= 0 or total > cfg["oc_umbral_total"]:
         m.append("total sobre el umbral" if cfg["oc_umbral_total"] > 0 else "toda OC se revisa")
+    cant, costo = [], []
     for l in g["lineas"]:
         calc = l.get("qty_calculada")
         if calc is not None:
             # calculada sobre el minimo: regla de %. Calculada baja o en 0 (compras pide algo que el motor no pide): se compara en unidades contra el mismo minimo
             if (calc > cfg["oc_desvio_cant_min"] and abs(l["cantidad"] - calc) > calc * cfg["oc_desvio_cant_pct"] / 100) or \
                (calc <= cfg["oc_desvio_cant_min"] and l["cantidad"] - calc > cfg["oc_desvio_cant_min"]):
-                m.append(f"{l['producto_id']}: cantidad {l['cantidad']:.0f} vs calculada {calc:.0f}")
+                cant.append(f"{l['producto_id']}: cantidad {l['cantidad']:.0f} vs calculada {calc:.0f}")
         ref = l.get("costo_ref")
         if ref and ref > 0 and l["costo"] > ref * (1 + cfg["oc_desvio_costo_pct"] / 100):
-            m.append(f"{l['producto_id']}: costo +{(l['costo'] / ref - 1) * 100:.0f}% vs cotización")
+            costo.append(f"{l['producto_id']}: costo +{(l['costo'] / ref - 1) * 100:.0f}% vs cotización")
+    # Pocas desviaciones se listan una a una; muchas se resumen (el detalle ya sale en las filas en naranja de la tabla de líneas del BPM): antes una OC con 20 ítems daba un parrafo ilegible
+    for lista, etiqueta in ((cant, "con cantidad distinta de la calculada"), (costo, "con costo por encima de la cotización")):
+        if 0 < len(lista) <= 3:
+            m.extend(lista)
+        elif lista:
+            m.append(f"{len(lista)} ítems {etiqueta} (ver las filas en naranja)")
     return m
 
 
@@ -283,7 +290,7 @@ def _enviar_bpm(oc_id: int, usuario: str | None) -> dict:
     emails_proveedor = "" if _cfg_revision()["oc_email_proveedor"] < 1 else ";".join(x for x in ((em[0] or "") if em else "", (em[1] or "") if em else "") if x.strip())
     carga = {"id_externo": oc_id, "empresa": r["empresa"], "referencia": r["referencia"], "plano": plano, "proveedor_id": r["proveedor_id"], "sucursal": r["sucursal"],
              "proveedor_nombre": r["proveedor_nombre"], "cond_pago": r["cond_pago"], "comprador": r["comprador"], "creado_por": r["creado_por"], "valor": float(r["valor"] or 0),
-             "iva": float(r["iva"] or 0), "total": float(r["total"] or 0), "items": r["items"], "requiere_revision": revision, "motivo_revision": " · ".join(x for x in (r["motivo_revision"], ("Justificación de compras: " + r["justificacion"]) if r.get("justificacion") else "") if x) or None, "justificacion": r.get("justificacion"), "emails_proveedor": emails_proveedor, "email_comprador": r.get("creado_por_email") or "",
+             "iva": float(r["iva"] or 0), "total": float(r["total"] or 0), "items": r["items"], "requiere_revision": revision, "motivo_revision": "\n".join(x for x in (*("• " + t for t in (r["motivo_revision"] or "").split("; ") if t.strip()), ("\nJustificación de compras: " + r["justificacion"]) if r.get("justificacion") else "") if x) or None, "justificacion": r.get("justificacion"), "emails_proveedor": emails_proveedor, "email_comprador": r.get("creado_por_email") or "",
              "lineas": [{"producto_id": l["producto_id"], "descripcion": l["descripcion"], "cantidad": l["cantidad"], "costo": l["costo"], "fecha_entrega": str(l["fecha_entrega"])} for l in lineas]}
     req = urllib.request.Request(settings.bpm_url.rstrip("/") + "/api/internal/oc", data=json.dumps(carga).encode(), method="POST",
                                  headers={"Content-Type": "application/json", "X-OC-Secret": settings.bpm_secret})
