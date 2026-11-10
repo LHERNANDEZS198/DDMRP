@@ -129,6 +129,10 @@ pub struct Entrada {
     pub demanda_calificada: f64,
     /// 0 = usa la regla global; 1, 2 o 3 = regla propia de este item (o de su laboratorio)
     pub regla_objetivo: u8,
+    /// 0 = usa la regla de disparo global; 1, 2 o 3 = la de este item (p. ej. 3 = pide tambien en zona verde, lo que se configura por proveedor en compras)
+    pub regla_disparo: u8,
+    /// Colchon del proveedor: multiplica la zona roja (base + seguridad). 1 (o menos) = sin cambio.
+    pub factor_tor: f64,
     /// Meses CON pronostico de ESTA tienda (apertura de tienda), contados desde su primera venta: durante esos meses el pronostico del maestro se usa tal cual y despues manda el historial.
     /// Negativo = la tienda no tiene apertura registrada: rige la regla global `pron_meses_minimos`. 0 = nunca.
     pub meses_espejo: f64,
@@ -211,6 +215,20 @@ pub fn zonas(adu: f64, iv: f64, lt: f64, frec: f64, ud: f64, f: &Factores, p: &P
     Zonas { zrb, zrs, za, zv, tor, toy, tog: toy + zv }
 }
 
+/// Colchon por proveedor: multiplica la zona roja (base y seguridad) por `k`. La amarilla y la verde conservan su tamano, asi que
+/// TOY y TOG suben en lo mismo que la roja. `k` <= 1, no finito o sin zona roja = sin cambio.
+pub fn con_colchon(z: Zonas, k: f64) -> Zonas {
+    if !k.is_finite() || k <= 1.0 || z.tor <= 0.0 {
+        return z;
+    }
+    let zrb = round_xl(z.zrb * k);
+    let zrs = round_xl(z.zrs * k);
+    let tor = zrb + zrs;
+    let toy = tor + z.za;
+    let zv = if z.zv > 0.0 { z.zv.max(zrb) } else { 0.0 };
+    Zonas { zrb, zrs, za: z.za, zv, tor, toy, tog: toy + zv }
+}
+
 /// Forecast ajustado (Q = CB) a partir del pronostico estatico y el ADU de referencia (BK).
 pub fn forecast_ajustado(pronostico: f64, bk: f64) -> f64 {
     let ca = div(pronostico, bk) * 30.0; // dias de inventario del pronostico
@@ -290,7 +308,7 @@ pub fn calcular(e: &Entrada, f: &Factores, p: &Parametros) -> Resultado {
     let y = div(desvest_m(&v), u);
     let w = roundup(u + u * y); // ADU (W)
 
-    let z = zonas(w, y, e.lead_time, e.frecuencia, e.unidad_despacho, f, p);
+    let z = con_colchon(zonas(w, y, e.lead_time, e.frecuencia, e.unidad_despacho, f, p), e.factor_tor);
 
     let adu_bajo = w >= p.adu_bajo_min && w <= p.adu_bajo_max;
 
@@ -343,8 +361,9 @@ fn decidir(e: &Entrada, z: &Zonas, w: f64, y: f64, q: f64, toy_aj: f64, tog_aj: 
     } else {
         Zona::Exceso
     };
+    let disparo = if (1..=3).contains(&e.regla_disparo) { e.regla_disparo } else { p.regla_disparo };
     let pide = tog_aj > 0.0
-        && match p.regla_disparo {
+        && match disparo {
             2 => nfp <= z.tor,
             3 => nfp < tog_aj,
             _ => nfp <= toy_aj,
@@ -432,6 +451,8 @@ mod tests {
             en_transito: 0.0,
             demanda_calificada: 0.0,
             regla_objetivo: 0,
+            regla_disparo: 0,
+            factor_tor: 1.0,
             meses_espejo: -1.0,
         }
     }
@@ -714,5 +735,43 @@ mod tests {
         // sin pronostico cargado el espejo no cambia nada
         e.meses_espejo = 6.0; e.pronostico = 0.0;
         assert_ne!(calcular(&e, &factores(), &p).forecast, 100.0);
+    }
+
+    #[test]
+    fn pedir_en_verde_por_item() {
+        // verde: inventario entre TOY aj y TOG aj. Con la regla global (1) no pide; con regla_disparo = 3 repone hasta el TOG
+        let f = factores();
+        let mut e = base();
+        e.ventas = vec![300.0; 7];
+        e.lead_time = 8.0;
+        e.frecuencia = 15.0;
+        let sin = calcular(&e, &f, &pdef());
+        let (toy, tog) = (sin.toy_aj, sin.tog_aj);
+        assert!(tog > toy);
+        e.inventario = toy + 1.0;
+        let r0 = calcular(&e, &f, &pdef());
+        assert_eq!(r0.zona, Zona::Verde);
+        assert_eq!(r0.cantidad_sugerida, 0.0);
+        e.regla_disparo = 3;
+        let r3 = calcular(&e, &f, &pdef());
+        assert_eq!(r3.cantidad_sugerida, tog - (toy + 1.0));
+    }
+
+    #[test]
+    fn colchon_sube_la_zona_roja() {
+        let f = factores();
+        let mut e = base();
+        e.ventas = vec![300.0; 7];
+        e.lead_time = 8.0;
+        e.frecuencia = 15.0;
+        let r1 = calcular(&e, &f, &pdef());
+        e.factor_tor = 2.0;
+        let r2 = calcular(&e, &f, &pdef());
+        assert_eq!(r2.zonas.tor, r1.zonas.zrb * 2.0 + r1.zonas.zrs * 2.0);
+        assert!(r2.zonas.toy > r1.zonas.toy && r2.zonas.tog > r1.zonas.tog);
+        assert_eq!(r2.zonas.za, r1.zonas.za);
+        // factor 1 (o menor) no cambia nada
+        e.factor_tor = 0.5;
+        assert_eq!(calcular(&e, &f, &pdef()).zonas.tor, r1.zonas.tor);
     }
 }

@@ -72,6 +72,8 @@ SELECT b.empresa, k.bodega_id, k.producto_id,
   COALESCE(t.cant, 0)::float8              AS en_transito,
   COALESCE(d.cantidad, 0)::float8          AS demanda_calificada,
   COALESCE(oi.regla, ol.regla, 0)::int2    AS regla_objetivo,
+  0::int2                                  AS regla_disparo,
+  1::float8                                AS factor_tor,
   COALESCE(ap.meses_espejo, -1)::float8    AS meses_espejo   -- apertura de tienda: meses que dura el espejo (-1 = sin apertura: regla global)
 FROM llaves k
 JOIN ddmrp.abast_bitacora b ON b.empresa = k.empresa AND b.bodega_id = k.bodega_id AND COALESCE(b.activa, 1) = 1   -- tienda apagada en la bitacora: no se calcula
@@ -141,6 +143,10 @@ tr AS (   -- OC abiertas (saldo por recibir) con destino el CEDI, que el ETL dej
   JOIN cedis ce ON ce.empresa = t.empresa AND ce.bodega_id = t.bodega_id
   LEFT JOIN rec r ON r.empresa = t.empresa AND r.rec_id = t.producto_id
   WHERE t.documento LIKE 'OC-%'
+    -- OC con mas de N dias de atraso (compras_config.transito_ignorar_dias; 0 = no ignorar nada) ya no cuentan como transito: casi siempre son saldos que no van a llegar
+    AND (COALESCE((SELECT cc.valor FROM ddmrp.compras_config cc WHERE cc.clave = 'transito_ignorar_dias'), 30) <= 0
+         OR COALESCE(t.fecha_esperada, t.fecha_oc) IS NULL
+         OR COALESCE(t.fecha_esperada, t.fecha_oc) >= $1::text::date - COALESCE((SELECT cc.valor FROM ddmrp.compras_config cc WHERE cc.clave = 'transito_ignorar_dias'), 30)::int)
   GROUP BY 1, 2, 3
 ),
 pron AS (
@@ -171,6 +177,10 @@ SELECT k.empresa, k.bodega_id, k.producto_id,
   COALESCE(t.cant, 0)::float8                             AS en_transito,
   0::float8                                               AS demanda_calificada,
   COALESCE(oi.regla, ol.regla, 0)::int2                   AS regla_objetivo,
+  -- pedir tambien en zona verde (regla de disparo 3): el proveedor manda; si no tiene dato, la regla general de compras (pedir_en_verde); 0 = la regla global del motor
+  (CASE WHEN COALESCE(pv.pedir_verde::int, (SELECT cc.valor::int FROM ddmrp.compras_config cc WHERE cc.clave = 'pedir_en_verde'), 0) >= 1 THEN 3 ELSE 0 END)::int2 AS regla_disparo,
+  -- colchon del proveedor: multiplica la zona roja (1 = sin cambio)
+  GREATEST(COALESCE(pv.factor_tor, 1), 1)::float8         AS factor_tor,
   (-1)::float8                                            AS meses_espejo
 FROM llaves k
 LEFT JOIN v ON v.empresa = k.empresa AND v.bodega_id = k.bodega_id AND v.producto_id = k.producto_id
@@ -291,6 +301,8 @@ fn main() -> Result<()> {
             en_transito: f(r, "en_transito"),
             demanda_calificada: f(r, "demanda_calificada"),
             regla_objetivo: r.get::<_, i16>("regla_objetivo") as u8,
+            regla_disparo: r.get::<_, i16>("regla_disparo") as u8,
+            factor_tor: f(r, "factor_tor"),
             meses_espejo: f(r, "meses_espejo"),
         })
         .collect();

@@ -378,6 +378,9 @@ SENTENCIAS_COMPRAS = [
     "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS moq NUMERIC(14,3) DEFAULT 1 CHECK (moq IS NULL OR moq >= 1)",
     # como se redondea la cantidad al multiplo de pedido de ese proveedor: arriba (por defecto), cercano o abajo
     "ALTER TABLE ddmrp.proveedor ADD COLUMN IF NOT EXISTS redondeo TEXT CHECK (redondeo IS NULL OR redondeo IN ('arriba', 'cercano', 'abajo'))",
+    # pedir tambien en zona verde (1 = si, 0 = no, vacio = la regla general pedir_en_verde) y colchon (multiplica la zona roja del CEDI; vacio/1 = sin cambio) por proveedor
+    "ALTER TABLE ddmrp.proveedor ADD COLUMN IF NOT EXISTS pedir_verde SMALLINT CHECK (pedir_verde IS NULL OR pedir_verde IN (0, 1))",
+    "ALTER TABLE ddmrp.proveedor ADD COLUMN IF NOT EXISTS factor_tor NUMERIC(6,2) CHECK (factor_tor IS NULL OR factor_tor >= 1)",
     # configuracion general de compras (valor vacio = el defecto)
     """CREATE TABLE IF NOT EXISTS ddmrp.compras_config (clave TEXT PRIMARY KEY, valor NUMERIC, detalle TEXT)""",
     """INSERT INTO ddmrp.compras_config (clave, valor, detalle) VALUES
@@ -396,7 +399,9 @@ SENTENCIAS_COMPRAS = [
          ('tablero_leadtime_defecto', 30, 'Tablero de compras: lead time (dias) para decidir si una OC ya debio llegar, cuando el proveedor no tiene el suyo'),
          ('tablero_dias_cumplimiento', 30, 'Tablero de compras: dias hacia atras del bloque de cumplimiento del proceso'),
          ('tablero_cache_horas', 6, 'Tablero de compras: horas que se guarda el bloque «Que pedir hoy» (es lo lento: recalcula todas las necesidades) por usuario; 0 = sin cache. El boton Actualizar lo recalcula'),
-         ('tablero_top', 30, 'Tablero de compras: cuantas filas muestra cada lista')
+         ('tablero_top', 30, 'Tablero de compras: cuantas filas muestra cada lista'),
+         ('transito_ignorar_dias', 30, 'Buffer del CEDI: las OC con mas de estos dias de atraso frente a su fecha esperada NO cuentan como transito (casi siempre son saldos que no llegan). 0 = contar todas'),
+         ('pedir_en_verde', 0, 'Buffer del CEDI: 1 = tambien se pide cuando el flujo neto esta en zona verde (hasta el tope verde); 0 = solo en amarillo/rojo. Cada proveedor puede tener el suyo')
        ON CONFLICT DO NOTHING""",
     # el lead time general pasa de 30 a 8 dias (una sola vez: lo que se cambie despues no se pisa)
     "CREATE TABLE IF NOT EXISTS ddmrp.migracion_marca (clave TEXT PRIMARY KEY, fecha TIMESTAMPTZ NOT NULL DEFAULT now())",

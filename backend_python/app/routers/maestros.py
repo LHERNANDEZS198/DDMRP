@@ -58,13 +58,13 @@ MAESTROS = {
         label="Proveedores: lead time, correos, estado y pedido minimo", tabla="ddmrp.proveedor",
         llave=["empresa", "proveedor_id", "sucursal"],
         editable={"nombre": "txt", "leadtime": "num", "email_para": "txt", "email_cc": "txt", "activo": "int", "cond_pago": "txt", "redondeo": "txt", "frecuencia": "num", "pedido_minimo": "num",
-                  "contacto": "txt", "telefono": "txt", "notas": "txt"},
+                  "pedir_verde": "int", "factor_tor": "num", "contacto": "txt", "telefono": "txt", "notas": "txt"},
         bodega=None, producto=None, global_=True, grupo="compras",
         buscar=("proveedor_id", "nombre"),      # el cuadro de busqueda mira el NIT Y el nombre
         emails=("email_para", "email_cc"),      # varios correos separados por ; (o coma): se validan y se normalizan
-        booleanas=("activo",),                  # 1 / 0 / si / no
+        booleanas=("activo", "pedir_verde"),    # 1 / 0 / si / no (pedir_verde vacio = rige la regla general «Pedir también en zona verde»)
         valores={"redondeo": ("arriba", "cercano", "abajo")},   # como se redondea la cantidad al multiplo de pedido
-        conservar=("activo", "redondeo", "frecuencia", "cond_pago")),                 # celda vacia en la carga = no cambia
+        conservar=("activo", "redondeo", "frecuencia", "cond_pago", "pedir_verde", "factor_tor")),                 # celda vacia en la carga = no cambia
     "criterios-comprables": dict(
         label="Criterios comprables: que categorias se compran en cada empresa", tabla="ddmrp.categoria_compra",
         llave=["empresa", "plan_id", "criterio_id"], editable={"nombre": "txt", "se_compra": "int"},
@@ -173,7 +173,7 @@ AYUDA = {
     "cedis": "CEDIs (bodegas desde donde se despacha a las tiendas), uno por empresa y código de bodega, ej. empresa 05 PT001. La bitácora dice qué CEDI abastece a cada tienda. "
              "Hoy el motor reparte el inventario de un solo CEDI por empresa (el primero de esta lista); la columna CEDI de la bitácora deja listo el modelo para cuando haya más de uno.",
     "proveedores": "Los proveedores llegan solos del maestro de items de Siesa (cada vez que se traen los items entran los nuevos, con su NIT y nombre) y aqui compras completa lo suyo: lead time en dias "
-                   "(prioridad al calcular el CEDI: el del item en «Lead time del CEDI», luego el del proveedor, luego el general), frecuencia de compra en dias (cada cuanto se le compra; define el tamaño de la zona verde del CEDI: a mayor frecuencia, pedidos mas grandes; vacio = el general de «Configuracion de compras», 15 dias), redondeo (como se lleva la cantidad a pedir al multiplo de pedido del item: arriba [por defecto], cercano o abajo), correos (varios separados por ;), activo (1/0 o si/no; vacio = activo), "
+                   "(prioridad al calcular el CEDI: el del item en «Lead time del CEDI», luego el del proveedor, luego el general), frecuencia de compra en dias (cada cuanto se le compra; define el tamaño de la zona verde del CEDI: a mayor frecuencia, pedidos mas grandes; vacio = el general de «Configuracion de compras», 15 dias), redondeo (como se lleva la cantidad a pedir al multiplo de pedido del item: arriba [por defecto], cercano o abajo), correos (varios separados por ;), activo (1/0 o si/no; vacio = activo), pedir_verde (1/0: pedir tambien cuando el CEDI esta en zona verde, hasta el tope verde; vacio = rige la regla general «Pedir tambien en zona verde»), factor_tor (colchon: multiplica la zona roja del CEDI para este proveedor, 1 o mas; vacio = sin cambio; «Aplicar configuracion sugerida» lo calcula del historial de OC), "
                    "condicion de pago (codigo de Siesa, ej. C30: la lleva la OC; se pre-llena con la de la ultima OC del proveedor y NO se pisa lo que escribas; sin ella no se crea la OC), pedido minimo (valor), contacto, telefono y notas. Lo que ya escribiste no se pisa al sincronizar. La llave es empresa + NIT + sucursal.",
     "items-compras": "Los items vienen de Siesa (no se crean ni se borran aqui) y casi todas las columnas son de solo lectura. "
                      "ACTIVO (1 / 0 / si / no): con 0 el item NO se compra: sale de Necesidades (vacio = activo; el ETL no lo pisa). Es independiente del estado del item en Siesa. "

@@ -2,7 +2,7 @@ import Plegable from '../Plegable'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Tabla from '../Tabla'
 import { CellValueChangedEvent, ColDef, GridApi } from 'ag-grid-community'
-import { Alert, Autocomplete, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, MenuItem, Paper, Stack, TextField, Tooltip, Typography } from '@mui/material'
+import { Alert, Autocomplete, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, MenuItem, Paper, Stack, Table, TableBody, TableCell, TableHead, TableRow, TextField, Tooltip, Typography } from '@mui/material'
 import AddCircleOutline from '@mui/icons-material/AddCircleOutline'
 import Download from '@mui/icons-material/Download'
 import Upload from '@mui/icons-material/Upload'
@@ -10,6 +10,7 @@ import ContentPaste from '@mui/icons-material/ContentPaste'
 import DeleteOutline from '@mui/icons-material/DeleteOutline'
 import DeleteSweep from '@mui/icons-material/DeleteSweep'
 import CloudSync from '@mui/icons-material/CloudSync'
+import Insights from '@mui/icons-material/Insights'
 import { api, apiLista, bajar, subir, conProgreso } from '../api'
 import Aviso from '../Aviso'
 import { useYo } from '../Yo'
@@ -78,6 +79,8 @@ function ConfigTabla({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
   const [estado, setEstado] = useState('activo')   // items: estado en Siesa
   const { una: empG } = useEmpresa(); const empresa = empG || '05'   // items: se trabaja una empresa a la vez
   const [agregar, setAgregar] = useState(false)
+  // «Aplicar configuración sugerida» (maestro de proveedores): análisis del cumplimiento del proveedor en Siesa y lo que se propone
+  const [cump, setCump] = useState<null | { cargando: boolean; res: any[]; avisos: string[]; desde: string; marcas: Record<string, boolean> }>(null)
   const [colAbierta, setColAbierta] = useState(false)   // con la lista de columnas abierta el tooltip se apaga: tapaba las primeras opciones
   const [nueva, setNueva] = useState<Record<string, string>>({})
   const [msg, setMsg] = useState('')
@@ -242,6 +245,30 @@ function ConfigTabla({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
     } catch (x: any) { setMsg('Error: ' + x.message) }
   }
 
+  const kProv = (r: any) => `${r.empresa}|${r.proveedor_id}|${r.sucursal}`
+  const analizarCumplimiento = async () => {
+    const s = grid?.getSelectedRows() ?? []
+    const base = (s.length ? s : rows).filter((r: any) => r.proveedor_id).slice(0, 300)
+    if (!base.length) { setMsg('No hay proveedores para analizar'); return }
+    setCump({ cargando: true, res: [], avisos: [], desde: '', marcas: {} })
+    try {
+      const r = await api('/compras/cumplimiento/analizar', { method: 'POST', body: JSON.stringify({ meses: 12, proveedores: base.map((x: any) => ({ empresa: String(x.empresa), proveedor_id: String(x.proveedor_id), sucursal: String(x.sucursal ?? '001') })) }) })
+      const marcas: Record<string, boolean> = {}
+      r.resultados.forEach((x: any) => { marcas[kProv(x)] = x.sugerido.factor_tor != null || x.sugerido.pedir_verde != null || x.sugerido.leadtime != null })
+      setCump({ cargando: false, res: r.resultados, avisos: r.avisos ?? [], desde: r.desde, marcas })
+    } catch (x: any) { setCump(null); setMsg('Error: ' + x.message) }
+  }
+  const aplicarCumplimiento = async () => {
+    if (!cump) return
+    const items = cump.res.filter(x => cump.marcas[kProv(x)]).map(x => ({ empresa: x.empresa, proveedor_id: x.proveedor_id, sucursal: x.sucursal,
+      leadtime: x.sugerido.leadtime ?? undefined, factor_tor: x.sugerido.factor_tor ?? undefined, pedir_verde: x.sugerido.pedir_verde ?? undefined }))
+    if (!items.length) { setMsg('No marcaste ningún proveedor'); return }
+    try {
+      const r = await api('/compras/cumplimiento/aplicar', { method: 'POST', body: JSON.stringify({ items }) })
+      setCump(null); setMsg(`Configuración aplicada a ${r.actualizados} proveedor(es). Recalcula el CEDI (o corre el motor) para ver el efecto en Necesidades de compra.`); cargar()
+    } catch (x: any) { setMsg('Error: ' + x.message) }
+  }
+
   const describirFiltros = () => {
     const x: string[] = []
     if (f.tienda.length) x.push(`Tienda(s): ${f.tienda.join(', ')}`)
@@ -304,6 +331,7 @@ function ConfigTabla({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
         <Button startIcon={<ContentPaste />} onClick={() => setPegar(!pegar)}>Pegar desde Excel</Button>
         {!def?.solo_existentes && <Button startIcon={<AddCircleOutline />} onClick={() => { setNueva({}); setAgregar(true) }}>Agregar fila</Button>}
         {def && !def.sin_reemplazo && <Button color="error" startIcon={<DeleteOutline />} onClick={eliminar}>Eliminar seleccionadas</Button>}
+        {def?.clave === 'proveedores' && <Tooltip title="Mide el cumplimiento de los proveedores seleccionados (o de los que se ven) con su historial de OC en Siesa y propone lead time, colchón de la zona roja y si pedir también en verde"><span><Button color="secondary" variant="outlined" startIcon={<Insights />} onClick={analizarCumplimiento}>Aplicar configuración sugerida</Button></span></Tooltip>}
         {def?.puede_vaciar && <Tooltip title="Borra TODAS las filas que cumplen los filtros de abajo (sin filtros: el maestro completo), no solo las que ves. Sirve para limpiar y volver a subir.">
           <span><Button color="error" variant="outlined" startIcon={<DeleteSweep />} onClick={vaciar} disabled={!total}>{hayFiltro ? `Eliminar todo lo filtrado (${total.toLocaleString('es-CO')})` : 'Vaciar maestro'}</Button></span></Tooltip>}</>}
         <Box sx={{ flex: 1 }} />
@@ -368,6 +396,42 @@ function ConfigTabla({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
           <Typography variant="caption" color="text.secondary">Si la llave ya existe, se actualizan los valores. Las referencias van de 6 dígitos (ej. 019901).</Typography>
         </DialogContent>
         <DialogActions><Button onClick={() => setAgregar(false)}>Cancelar</Button><Button variant="contained" onClick={guardarNueva}>Guardar</Button></DialogActions>
+      </Dialog>
+      <Dialog open={!!cump} onClose={() => setCump(null)} maxWidth="lg" fullWidth>
+        <DialogTitle>Configuración sugerida por proveedor</DialogTitle>
+        <DialogContent>
+          {cump?.cargando ? <Typography sx={{ py: 3 }}>Analizando el historial de OC en Siesa…</Typography> : <>
+            <Alert severity="info" sx={{ mb: 1 }}>Se mide con las OC de los últimos 12 meses (desde {cump?.desde}) y sus entradas reales de mercancía: cuánto demora de verdad desde la OC hasta la primera entrada (las OC montadas el mismo día de la entrada no cuentan), qué % llega a tiempo frente a la fecha pactada, qué parte de lo pedido llega (surtido) y el OTIF (a tiempo y completa). Es una sugerencia: marca los que quieres aplicar y después puedes ajustar cada valor en la tabla.</Alert>
+            {cump?.avisos.map(a => <Alert key={a} severity="warning" sx={{ mb: 1 }}>{a}</Alert>)}
+            <Table size="small">
+              <TableHead><TableRow>
+                <TableCell>Aplicar</TableCell><TableCell>Proveedor</TableCell><TableCell align="right">OC (cumplidas / total)</TableCell><TableCell align="right">Surtido</TableCell>
+                <TableCell align="right">OC completas</TableCell><TableCell align="right">Lead time real (mediana / p75) · pactado</TableCell><TableCell align="right">A tiempo / OTIF</TableCell>
+                <TableCell>Lead time (actual → sugerido)</TableCell><TableCell>Colchón zona roja (actual → sugerido)</TableCell><TableCell>Pedir en verde (actual → sugerido)</TableCell>
+              </TableRow></TableHead>
+              <TableBody>
+                {cump?.res.map(x => {
+                  const sug = x.sugerido, m = x.metricas, hay = sug.factor_tor != null || sug.pedir_verde != null || sug.leadtime != null
+                  const pv = (v: any) => v == null ? 'regla general' : v ? 'Sí' : 'No'
+                  return <TableRow key={kProv(x)} hover>
+                    <TableCell><Checkbox size="small" checked={!!cump!.marcas[kProv(x)]} disabled={!hay} onChange={e => setCump({ ...cump!, marcas: { ...cump!.marcas, [kProv(x)]: e.target.checked } })} /></TableCell>
+                    <TableCell><Tooltip title={<Box>{x.motivos.map((t: string) => <div key={t}>• {t}</div>)}</Box>}><span>{x.nombre ?? x.proveedor_id}<Typography variant="caption" display="block" color="text.secondary">{x.empresa} · {x.proveedor_id}-{x.sucursal}</Typography></span></Tooltip></TableCell>
+                    <TableCell align="right">{m.oc_maduras} / {m.oc_total}</TableCell>
+                    <TableCell align="right">{m.surtido_pct == null ? '—' : m.surtido_pct + '%'}</TableCell>
+                    <TableCell align="right">{m.oc_completas_pct == null ? '—' : m.oc_completas_pct + '%'}</TableCell>
+                    <TableCell align="right">{m.lt_real_p50 == null ? (m.plazo_p50 == null ? '—' : `pactado ${m.plazo_p50} / ${m.plazo_p75} d`) : `${m.lt_real_p50} / ${m.lt_real_p75} d · pactado ${m.plazo_p75 ?? '—'} d`}</TableCell>
+                    <TableCell align="right">{m.a_tiempo_pct == null ? '—' : `${m.a_tiempo_pct}% / ${m.otif_pct}%`}</TableCell>
+                    <TableCell>{x.actual.leadtime ?? 'general'} → <b>{sug.leadtime ?? '—'}</b></TableCell>
+                    <TableCell>{x.actual.factor_tor ?? 1} → <b>{sug.factor_tor ?? '—'}</b></TableCell>
+                    <TableCell>{pv(x.actual.pedir_verde)} → <b>{sug.pedir_verde == null ? '—' : sug.pedir_verde ? 'Sí' : 'No'}</b></TableCell>
+                  </TableRow>
+                })}
+              </TableBody>
+            </Table>
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>Pasa el mouse sobre el proveedor para ver el motivo de cada sugerencia. «—» = pocas OC cumplidas (menos de 5): no hay base para sugerir.</Typography>
+          </>}
+        </DialogContent>
+        <DialogActions><Button onClick={() => setCump(null)}>Cerrar</Button><Button variant="contained" disabled={!cump || cump.cargando || !Object.values(cump.marcas).some(Boolean)} onClick={aplicarCumplimiento}>Aplicar a los marcados</Button></DialogActions>
       </Dialog>
       <Aviso msg={msg} onClose={() => setMsg('')} />
     </Box>)
