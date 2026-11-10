@@ -246,22 +246,34 @@ function ConfigTabla({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
   }
 
   const kProv = (r: any) => `${r.empresa}|${r.proveedor_id}|${r.sucursal}`
+  // qué campos cambiarían de verdad (sugerido distinto del actual); lo que ya está igual no se toca
+  const cambiosDe = (x: any) => {
+    const sg = x.sugerido, ac = x.actual
+    return {
+      leadtime: sg.leadtime != null && Number(sg.leadtime) !== Number(ac.leadtime ?? NaN),
+      factor_tor: sg.factor_tor != null && Number(sg.factor_tor) !== Number(ac.factor_tor ?? 1),
+      pedir_verde: sg.pedir_verde != null && (ac.pedir_verde == null || Number(sg.pedir_verde) !== Number(ac.pedir_verde)),
+    }
+  }
+  const hayCambio = (x: any) => { const c = cambiosDe(x); return c.leadtime || c.factor_tor || c.pedir_verde }
   const analizarCumplimiento = async () => {
     const s = grid?.getSelectedRows() ?? []
-    const base = (s.length ? s : rows).filter((r: any) => r.proveedor_id).slice(0, 300)
+    const todos = (s.length ? s : rows).filter((r: any) => r.proveedor_id)
+    const base = todos.slice(0, 2000)
     if (!base.length) { setMsg('No hay proveedores para analizar'); return }
+    if (todos.length > base.length) setMsg(`Hay ${todos.length.toLocaleString()} proveedores: se analizan los primeros 2.000. Filtra más para el resto.`)
     setCump({ cargando: true, res: [], avisos: [], desde: '', marcas: {} })
     try {
       const r = await api('/compras/cumplimiento/analizar', { method: 'POST', body: JSON.stringify({ meses: 12, proveedores: base.map((x: any) => ({ empresa: String(x.empresa), proveedor_id: String(x.proveedor_id), sucursal: String(x.sucursal ?? '001') })) }) })
       const marcas: Record<string, boolean> = {}
-      r.resultados.forEach((x: any) => { marcas[kProv(x)] = x.sugerido.factor_tor != null || x.sugerido.pedir_verde != null || x.sugerido.leadtime != null })
+      r.resultados.forEach((x: any) => { marcas[kProv(x)] = !!hayCambio(x) })
       setCump({ cargando: false, res: r.resultados, avisos: r.avisos ?? [], desde: r.desde, marcas })
     } catch (x: any) { setCump(null); setMsg('Error: ' + x.message) }
   }
   const aplicarCumplimiento = async () => {
     if (!cump) return
-    const items = cump.res.filter(x => cump.marcas[kProv(x)]).map(x => ({ empresa: x.empresa, proveedor_id: x.proveedor_id, sucursal: x.sucursal,
-      leadtime: x.sugerido.leadtime ?? undefined, factor_tor: x.sugerido.factor_tor ?? undefined, pedir_verde: x.sugerido.pedir_verde ?? undefined }))
+    const items = cump.res.filter(x => cump.marcas[kProv(x)] && hayCambio(x)).map(x => { const c = cambiosDe(x); return { empresa: x.empresa, proveedor_id: x.proveedor_id, sucursal: x.sucursal,
+      leadtime: c.leadtime ? x.sugerido.leadtime : undefined, factor_tor: c.factor_tor ? x.sugerido.factor_tor : undefined, pedir_verde: c.pedir_verde ? x.sugerido.pedir_verde : undefined } })
     if (!items.length) { setMsg('No marcaste ningún proveedor'); return }
     try {
       const r = await api('/compras/cumplimiento/aplicar', { method: 'POST', body: JSON.stringify({ items }) })
@@ -398,7 +410,7 @@ function ConfigTabla({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
         <DialogActions><Button onClick={() => setAgregar(false)}>Cancelar</Button><Button variant="contained" onClick={guardarNueva}>Guardar</Button></DialogActions>
       </Dialog>
       <Dialog open={!!cump} onClose={() => setCump(null)} maxWidth="lg" fullWidth>
-        <DialogTitle>Configuración sugerida por proveedor</DialogTitle>
+        <DialogTitle>Configuración sugerida por proveedor · revisa y aprueba</DialogTitle>
         <DialogContent>
           {cump?.cargando ? <Typography sx={{ py: 3 }}>Analizando el historial de OC en Siesa…</Typography> : <>
             <Alert severity="info" sx={{ mb: 1 }}>Se mide con las OC de los últimos 12 meses (desde {cump?.desde}) y sus entradas reales de mercancía: cuánto demora de verdad desde la OC hasta la primera entrada (las OC montadas el mismo día de la entrada no cuentan), qué % llega a tiempo frente a la fecha pactada, qué parte de lo pedido llega (surtido) y el OTIF (a tiempo y completa). Es una sugerencia: marca los que quieres aplicar y después puedes ajustar cada valor en la tabla.</Alert>
@@ -410,7 +422,8 @@ function ConfigTabla({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
                 <TableCell>Lead time (actual → sugerido)</TableCell><TableCell>Colchón zona roja (actual → sugerido)</TableCell><TableCell>Pedir en verde (actual → sugerido)</TableCell>
               </TableRow></TableHead>
               <TableBody>
-                {cump?.res.map(x => {
+                {cump?.res.filter(x => hayCambio(x)).map(x => {
+                  const cb = cambiosDe(x)
                   const sug = x.sugerido, m = x.metricas, hay = sug.factor_tor != null || sug.pedir_verde != null || sug.leadtime != null
                   const pv = (v: any) => v == null ? 'regla general' : v ? 'Sí' : 'No'
                   return <TableRow key={kProv(x)} hover>
@@ -421,17 +434,19 @@ function ConfigTabla({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
                     <TableCell align="right">{m.oc_completas_pct == null ? '—' : m.oc_completas_pct + '%'}</TableCell>
                     <TableCell align="right">{m.lt_real_p50 == null ? (m.plazo_p50 == null ? '—' : `pactado ${m.plazo_p50} / ${m.plazo_p75} d`) : `${m.lt_real_p50} / ${m.lt_real_p75} d · pactado ${m.plazo_p75 ?? '—'} d`}</TableCell>
                     <TableCell align="right">{m.a_tiempo_pct == null ? '—' : `${m.a_tiempo_pct}% / ${m.otif_pct}%`}</TableCell>
-                    <TableCell>{x.actual.leadtime ?? 'general'} → <b>{sug.leadtime ?? '—'}</b></TableCell>
-                    <TableCell>{x.actual.factor_tor ?? 1} → <b>{sug.factor_tor ?? '—'}</b></TableCell>
-                    <TableCell>{pv(x.actual.pedir_verde)} → <b>{sug.pedir_verde == null ? '—' : sug.pedir_verde ? 'Sí' : 'No'}</b></TableCell>
+                    <TableCell>{cb.leadtime ? <>{x.actual.leadtime ?? 'general'} → <b>{sug.leadtime}</b></> : <Typography variant="caption" color="text.secondary">sin cambio</Typography>}</TableCell>
+                    <TableCell>{cb.factor_tor ? <>{x.actual.factor_tor ?? 1} → <b>{sug.factor_tor}</b></> : <Typography variant="caption" color="text.secondary">sin cambio</Typography>}</TableCell>
+                    <TableCell>{cb.pedir_verde ? <>{pv(x.actual.pedir_verde)} → <b>{sug.pedir_verde ? 'Sí' : 'No'}</b></> : <Typography variant="caption" color="text.secondary">sin cambio</Typography>}</TableCell>
                   </TableRow>
                 })}
               </TableBody>
             </Table>
+            {cump && !cump.res.some(hayCambio) && <Alert severity="success" sx={{ mt: 1 }}>Ningún proveedor cambia: lo sugerido ya es lo que tienen configurado (o no hay OC suficientes).</Alert>}
+            {cump && cump.res.some(x => !hayCambio(x)) && <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>{cump.res.filter(x => !hayCambio(x)).length} proveedor(es) no se muestran porque no cambian o tienen menos de 5 OC cumplidas (sin base para sugerir).</Typography>}
             <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>Pasa el mouse sobre el proveedor para ver el motivo de cada sugerencia. «—» = pocas OC cumplidas (menos de 5): no hay base para sugerir.</Typography>
           </>}
         </DialogContent>
-        <DialogActions><Button onClick={() => setCump(null)}>Cerrar</Button><Button variant="contained" disabled={!cump || cump.cargando || !Object.values(cump.marcas).some(Boolean)} onClick={aplicarCumplimiento}>Aplicar a los marcados</Button></DialogActions>
+        <DialogActions><Button onClick={() => setCump(null)}>Cancelar</Button><Button variant="contained" color="success" disabled={!cump || cump.cargando || !cump.res.some(x => hayCambio(x) && cump.marcas[kProv(x)])} onClick={aplicarCumplimiento}>Aprobar y aplicar ({cump ? cump.res.filter(x => hayCambio(x) && cump.marcas[kProv(x)]).length : 0})</Button></DialogActions>
       </Dialog>
       <Aviso msg={msg} onClose={() => setMsg('')} />
     </Box>)

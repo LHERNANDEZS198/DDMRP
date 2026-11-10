@@ -155,8 +155,8 @@ def evaluar(filas: list[tuple], hoy: date) -> dict:
 def analizar(b: AnalisisIn):
     if not b.proveedores:
         raise HTTPException(400, "Elige al menos un proveedor")
-    if len(b.proveedores) > 300:
-        raise HTTPException(400, "Máximo 300 proveedores por análisis")
+    if len(b.proveedores) > 2000:
+        raise HTTPException(400, "Máximo 2000 proveedores por análisis")
     meses = min(max(int(b.meses or 12), 3), 36)
     hoy = date.today()
     desde = hoy - timedelta(days=30 * meses)
@@ -174,14 +174,20 @@ def analizar(b: AnalisisIn):
             continue
         nits = sorted({p.proveedor_id.strip() for p in provs})
         try:
-            prm = {"cia": settings.siesa_cia, "desde": desde, "nits": nits}
+            filas = []
+            sql = SQL_OC_ENTRADAS
             with siesa_engine(db).connect() as cx:
-                try:
-                    filas = cx.execute(text(SQL_OC_ENTRADAS).bindparams(bindparam("nits", expanding=True)), prm).all()
-                except Exception as e1:   # sin el enlace con las entradas: se cae al plazo pactado (sin lead time real ni % a tiempo)
-                    cx.rollback()
-                    avisos.append(f"Empresa {emp}: no se pudieron leer las entradas de mercancía ({str(e1).splitlines()[0][:120]}); se usa el plazo pactado en la OC")
-                    filas = cx.execute(text(SQL_OC).bindparams(bindparam("nits", expanding=True)), prm).all()
+                for i in range(0, len(nits), 500):   # SQL Server admite ~2100 parametros por consulta: se va por tandas
+                    prm = {"cia": settings.siesa_cia, "desde": desde, "nits": nits[i:i + 500]}
+                    try:
+                        filas += cx.execute(text(sql).bindparams(bindparam("nits", expanding=True)), prm).all()
+                    except Exception as e1:   # sin el enlace con las entradas: se cae al plazo pactado (sin lead time real ni % a tiempo)
+                        if sql is SQL_OC:
+                            raise
+                        cx.rollback()
+                        sql = SQL_OC
+                        avisos.append(f"Empresa {emp}: no se pudieron leer las entradas de mercancía ({str(e1).splitlines()[0][:120]}); se usa el plazo pactado en la OC")
+                        filas += cx.execute(text(sql).bindparams(bindparam("nits", expanding=True)), prm).all()
         except Exception as e:
             avisos.append(f"Empresa {emp}: no se pudo leer Siesa ({str(e).splitlines()[0][:160]})")
             continue

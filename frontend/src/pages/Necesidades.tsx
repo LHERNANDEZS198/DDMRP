@@ -7,6 +7,7 @@ import Download from '@mui/icons-material/Download'
 import HelpOutline from '@mui/icons-material/HelpOutline'
 import Refresh from '@mui/icons-material/Refresh'
 import SendIcon from '@mui/icons-material/Send'
+import SwapHoriz from '@mui/icons-material/SwapHoriz'
 import { useSearchParams } from 'react-router-dom'
 import { api, bajar, conProgreso } from '../api'
 import { useYo } from '../Yo'
@@ -110,6 +111,28 @@ export default function Necesidades() {
   // justificación opcional para el aprobador, por proveedor (clave empresa|proveedor|sucursal) + el proveedor que se está editando en este momento
   const [justif, setJustif] = useState<Record<string, string>>({}); const [justEd, setJustEd] = useState<{ k: string; nombre: string; txt: string } | null>(null)
   const [ocRes, setOcRes] = useState<{ ordenes: any[]; avisos: string[] } | null>(null); const [ocErr, setOcErr] = useState('')
+  // cambio de proveedor antes de enviar (por OC, clave de ORIGEN empresa|proveedor|sucursal): el proveedor del maestro (misma empresa) al que se le monta esa OC
+  const [cambioProv, setCambioProv] = useState<Record<string, any>>({})
+  const [provEd, setProvEd] = useState<null | { k: string; empresa: string; origen: string }>(null)
+  const [provOpc, setProvOpc] = useState<any[]>([]); const [provQ, setProvQ] = useState(''); const [provSel, setProvSel] = useState<any>(null); const [provCorreo, setProvCorreo] = useState({ para: '', cc: '' })
+  useEffect(() => {
+    if (!provEd) return
+    const t = setTimeout(() => { api(`/compras/oc/proveedores?empresa=${encodeURIComponent(provEd.empresa)}&q=${encodeURIComponent(provQ)}`).then(r => setProvOpc(r.datos)).catch(() => setProvOpc([])) }, 250)
+    return () => clearTimeout(t)
+  }, [provEd, provQ])
+  const elegirProvDestino = (p: any) => { setProvSel(p); setProvCorreo({ para: p?.email_para ?? '', cc: p?.email_cc ?? '' }) }
+  const guardarCambioProv = async () => {
+    if (!provEd) return
+    if (!provSel) { setCambioProv(({ [provEd.k]: _x, ...r }) => r); setProvEd(null); return }
+    if (provCorreo.para !== (provSel.email_para ?? '') || provCorreo.cc !== (provSel.email_cc ?? '')) {      // los correos que corrijas aquí se guardan en el maestro de proveedores (igual que en la vista por proveedor)
+      try { await api('/compras/proveedor-correo', { method: 'PUT', body: JSON.stringify({ empresa: provEd.empresa, proveedor_id: provSel.proveedor_id, sucursal: provSel.sucursal, email_para: provCorreo.para, email_cc: provCorreo.cc }) }) }
+      catch (e: any) { setOcErr(e.message || String(e)); return }
+    }
+    const origenId = provEd.k.split('|')[1]
+    if (provSel.proveedor_id === origenId && provSel.sucursal === provEd.k.split('|')[2]) setCambioProv(({ [provEd.k]: _x, ...r }) => r)      // eligió el mismo de origen = sin cambio
+    else setCambioProv(c => ({ ...c, [provEd.k]: { ...provSel, email_para: provCorreo.para, email_cc: provCorreo.cc } }))
+    setProvEd(null)
+  }
   const [histAbierta, setHistAbierta] = useState(false); const [hist, setHist] = useState<any[]>([]); const [histCarga, setHistCarga] = useState(false)
   const [histF, setHistF] = useState({ desde: haceDias(30), hasta: '', estado: '', proveedor: '', q: '', creado_por: '' })      // por defecto: últimos 30 días
   const apiDet = useRef<GridApi | null>(null); const apiProv = useRef<GridApi | null>(null)
@@ -161,24 +184,30 @@ export default function Necesidades() {
   const resumenSel = useMemo(() => {
     const g = new Map<string, any>()
     for (const f of elegidas) {
-      const k = kProv(f)
-      const r = g.get(k) ?? { empresa: f.empresa, proveedor_id: f.proveedor_id, sucursal: f.sucursal, proveedor_nombre: f.proveedor_nombre, cond_pago: f.cond_pago, activo: !!f.prov_activo, pedido_minimo: f.pedido_minimo, items: 0, unidades: 0, valor: 0, iva: 0, total: 0, sin_costo: 0, editadas: 0, no_multiplo: 0 }
+      const orig = kProv(f); const dst = cambioProv[orig]
+      const k = dst ? `${f.empresa}|${dst.proveedor_id}|${dst.sucursal}` : orig
+      const r = g.get(k) ?? (dst
+        ? { empresa: f.empresa, proveedor_id: dst.proveedor_id, sucursal: dst.sucursal, proveedor_nombre: dst.nombre, cond_pago: dst.cond_pago, activo: !!dst.activo, pedido_minimo: dst.pedido_minimo, email_para: dst.email_para, origenes: [] as string[], cambiado: true, antes: new Set<string>(), items: 0, unidades: 0, valor: 0, iva: 0, total: 0, sin_costo: 0, editadas: 0, no_multiplo: 0 }
+        : { empresa: f.empresa, proveedor_id: f.proveedor_id, sucursal: f.sucursal, proveedor_nombre: f.proveedor_nombre, cond_pago: f.cond_pago, activo: !!f.prov_activo, pedido_minimo: f.pedido_minimo, email_para: f.prov_email_para, origenes: [] as string[], cambiado: false, antes: new Set<string>(), items: 0, unidades: 0, valor: 0, iva: 0, total: 0, sin_costo: 0, editadas: 0, no_multiplo: 0 })
+      if (!r.origenes.includes(orig)) r.origenes.push(orig)
+      if (dst) r.antes.add(f.proveedor_nombre)
       r.items++; r.unidades += f.qty_pedir
       if (f.valor == null) r.sin_costo++; else { r.valor += f.valor; r.iva += f.iva ?? 0; r.total += f.total ?? 0 }
       if (f.editada) { r.editadas++; if (f.unidad_pedido > 1 && Math.abs(f.qty_manual / f.unidad_pedido - Math.round(f.qty_manual / f.unidad_pedido)) > 1e-9) r.no_multiplo++ }
       g.set(k, r)
     }
     return [...g.values()].map(r => ({ ...r, bajo_minimo: !!(r.pedido_minimo && r.pedido_minimo > 0 && r.items > r.sin_costo && r.valor < r.pedido_minimo) }))
-  }, [elegidas])
+  }, [elegidas, cambioProv])
 
   // ---- órdenes de compra a Siesa
-  const cuerpoOC = (soloPlano: boolean) => JSON.stringify({ items: elegidas.map(f => ({ empresa: f.empresa, producto_id: f.producto_id })), solo_plano: soloPlano, justificaciones: Object.fromEntries(Object.entries(justif).filter(([, v]) => v.trim())) })
+  const cuerpoOC = (soloPlano: boolean) => JSON.stringify({ items: elegidas.map(f => ({ empresa: f.empresa, producto_id: f.producto_id })), solo_plano: soloPlano, justificaciones: Object.fromEntries(Object.entries(justif).filter(([, v]) => v.trim())),
+    cambios_proveedor: Object.fromEntries(resumenSel.flatMap(r => r.origenes.filter((o: string) => cambioProv[o]).map((o: string) => [o, { proveedor_id: cambioProv[o].proveedor_id, sucursal: cambioProv[o].sucursal }]))) })
   const enviarOC = async (soloPlano: boolean) => {
     setOcEnviando(true); setOcErr(''); setOcRes(null)
     try {
       const r = await api('/compras/oc/enviar', { method: 'POST', body: cuerpoOC(soloPlano) })
       setOcRes(r)
-      if (!soloPlano) { setSel(new Set()); setOcEntiendo(false); setJustif({}); recargar() }      // el resultado queda a la vista con el botón «Ir a OC enviadas a Siesa»
+      if (!soloPlano) { setSel(new Set()); setOcEntiendo(false); setJustif({}); setCambioProv({}); recargar() }      // el resultado queda a la vista con el botón «Ir a OC enviadas a Siesa»
     } catch (e: any) { setOcErr(e.message || String(e)) } finally { setOcEnviando(false) }
   }
   const bajarPlano = (o: any) => {
@@ -425,20 +454,28 @@ export default function Necesidades() {
         <DialogContent dividers>
           <Typography variant="body2" sx={{ mb: 1 }}>Una orden por proveedor y empresa, con los {elegidas.length.toLocaleString('es-CO')} ítems elegidos. Revisa las alertas antes de enviar.</Typography>
           <Table size="small">
-            <TableHead><TableRow>{['Emp.', 'NIT', 'Proveedor', 'Cond. pago', 'Ítems', 'Unidades', 'Valor sin IVA', 'IVA estimado', 'Total', 'Alertas', 'Justificación'].map(h => <TableCell key={h} sx={{ fontWeight: 700 }} align={['Ítems', 'Unidades', 'Valor sin IVA', 'IVA estimado', 'Total'].includes(h) ? 'right' : 'left'}>{h}</TableCell>)}</TableRow></TableHead>
+            <TableHead><TableRow>{['Emp.', 'NIT', 'Proveedor', 'Correo(s)', 'Cond. pago', 'Ítems', 'Unidades', 'Valor sin IVA', 'IVA estimado', 'Total', 'Alertas', 'Justificación'].map(h => <TableCell key={h} sx={{ fontWeight: 700 }} align={['Ítems', 'Unidades', 'Valor sin IVA', 'IVA estimado', 'Total'].includes(h) ? 'right' : 'left'}>{h}</TableCell>)}</TableRow></TableHead>
             <TableBody>
               {resumenSel.map(r => {
                 const al = [r.sin_costo ? `${r.sin_costo} sin cotización` : '', r.editadas ? `${r.editadas} editadas` : '', r.no_multiplo ? `${r.no_multiplo} no múltiplo` : '', r.bajo_minimo ? 'Bajo el pedido mínimo' : '', !r.cond_pago ? 'Sin condición de pago: no se podrá crear la OC' : '', !r.activo ? 'Proveedor inactivo' : ''].filter(Boolean)
                 return (
-                  <TableRow key={kProv(r)}>
-                    <TableCell>{r.empresa}</TableCell><TableCell>{r.proveedor_id}</TableCell><TableCell>{r.proveedor_nombre}</TableCell><TableCell sx={{ fontWeight: 600, color: r.cond_pago ? 'inherit' : '#c62828' }}>{r.cond_pago || 'Falta'}</TableCell>
+                  <TableRow key={`${r.empresa}|${r.proveedor_id}|${r.sucursal}`}>
+                    <TableCell>{r.empresa}</TableCell><TableCell>{r.proveedor_id}</TableCell>
+                    <TableCell>
+                      {r.proveedor_nombre}
+                      {r.cambiado && <Tooltip title={`Calculado por DDMRP para: ${[...r.antes].join(', ')}`}><Chip size="small" color="warning" label="Cambiado" sx={{ ml: 0.5 }} /></Tooltip>}
+                      <Tooltip title="Cambiar el proveedor de esta OC (razón social, NIT y correos) antes de enviarla"><span><Button size="small" startIcon={<SwapHoriz />} sx={{ ml: 0.5 }} disabled={ocEnviando}
+                        onClick={() => { const o = r.origenes[0]; setProvEd({ k: o, empresa: r.empresa, origen: [...(r.cambiado ? r.antes : [r.proveedor_nombre])].join(', ') }); setProvQ(''); setProvOpc([]); const cur = cambioProv[o]; elegirProvDestino(cur ?? null); if (cur) setProvCorreo({ para: cur.email_para ?? '', cc: cur.email_cc ?? '' }) }}>Cambiar</Button></span></Tooltip>
+                    </TableCell>
+                    <TableCell sx={{ maxWidth: 220, wordBreak: 'break-word', color: (r.email_para ?? '').trim() ? 'inherit' : '#c62828' }}>{(r.email_para ?? '').trim() || 'Falta'}</TableCell>
+                    <TableCell sx={{ fontWeight: 600, color: r.cond_pago ? 'inherit' : '#c62828' }}>{r.cond_pago || 'Falta'}</TableCell>
                     <TableCell align="right">{r.items}</TableCell><TableCell align="right">{Math.round(r.unidades).toLocaleString('es-CO')}</TableCell>
                     <TableCell align="right">{COP({ value: r.valor })}</TableCell><TableCell align="right">{COP({ value: r.iva })}</TableCell><TableCell align="right" sx={{ fontWeight: 700 }}>{COP({ value: r.total })}</TableCell>
                     <TableCell sx={{ color: al.length ? '#b45309' : '#2e7d32' }}>{al.length ? al.join(' · ') : 'OK'}</TableCell>
                     <TableCell>
-                      <Tooltip title={justif[kProv(r)] ? justif[kProv(r)] : 'Explícale al aprobador por qué hiciste esta compra (opcional). Le llega junto con los motivos de revisión.'} arrow>
-                        <Button size="small" variant={justif[kProv(r)]?.trim() ? 'contained' : 'outlined'} disabled={ocEnviando}
-                          onClick={() => setJustEd({ k: kProv(r), nombre: r.proveedor_nombre, txt: justif[kProv(r)] || '' })}>{justif[kProv(r)]?.trim() ? 'Editar justificación' : 'Agregar justificación'}</Button>
+                      <Tooltip title={justif[r.origenes[0]] ? justif[r.origenes[0]] : 'Explícale al aprobador por qué hiciste esta compra (opcional). Le llega junto con los motivos de revisión.'} arrow>
+                        <Button size="small" variant={justif[r.origenes[0]]?.trim() ? 'contained' : 'outlined'} disabled={ocEnviando}
+                          onClick={() => setJustEd({ k: r.origenes[0], nombre: r.proveedor_nombre, txt: justif[r.origenes[0]] || '' })}>{justif[r.origenes[0]]?.trim() ? 'Editar justificación' : 'Agregar justificación'}</Button>
                       </Tooltip>
                     </TableCell>
                   </TableRow>)
@@ -473,6 +510,31 @@ export default function Necesidades() {
           <Button onClick={() => setOcAbierta(false)}>Cerrar</Button>
           <Button disabled={ocEnviando || !elegidas.length} onClick={() => enviarOC(true)}>Vista previa del plano</Button>
           <Button variant="contained" disabled={ocEnviando || ocDestino === 'pausado' || (ocExigir && !ocEntiendo) || !elegidas.length} startIcon={<SendIcon />} onClick={() => enviarOC(false)}>{ocEnviando ? 'Enviando…' : ocDestino === 'bpm' ? 'Enviar al BPM' : 'Crear OC en Siesa'}</Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog open={!!provEd} onClose={() => setProvEd(null)} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ fontWeight: 700 }}>Cambiar el proveedor de la OC</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" sx={{ mb: 1.5 }}>La OC que DDMRP armó para <b>{provEd?.origen}</b> se monta a otro proveedor de la empresa {provEd?.empresa} (por ejemplo, si el laboratorio tiene más de un proveedor). Las cantidades y costos no cambian; la condición de pago, el pedido mínimo, el lead time y los correos pasan a ser los del proveedor elegido. El aprobador verá que se cambió.</Typography>
+          <Autocomplete size="small" options={provOpc} value={provSel} onChange={(_, v) => elegirProvDestino(v)} onInputChange={(_, v, why) => { if (why === 'input') setProvQ(v) }}
+            filterOptions={x => x} isOptionEqualToValue={(o, v) => o.proveedor_id === v.proveedor_id && o.sucursal === v.sucursal} noOptionsText="Sin proveedores con ese nombre o NIT"
+            getOptionLabel={(o: any) => `${o.nombre ?? ''} · ${o.proveedor_id}-${o.sucursal}${o.activo ? '' : ' (inactivo)'}`}
+            renderInput={ps => <TextField {...ps} label="Buscar proveedor (razón social o NIT)" autoFocus />} />
+          {provSel && (
+            <Box sx={{ mt: 2, display: 'grid', gap: 1.5, gridTemplateColumns: '1fr 1fr' }}>
+              <TextField size="small" label="Razón social" value={provSel.nombre ?? ''} InputProps={{ readOnly: true }} sx={{ gridColumn: '1 / -1' }} />
+              <TextField size="small" label="NIT" value={provSel.proveedor_id} InputProps={{ readOnly: true }} />
+              <TextField size="small" label="Sucursal" value={provSel.sucursal} InputProps={{ readOnly: true }} />
+              <TextField size="small" label="Condición de pago" value={provSel.cond_pago ?? ''} InputProps={{ readOnly: true }} error={!provSel.cond_pago} helperText={provSel.cond_pago ? '' : 'Falta: no se podrá crear la OC (se pone en el maestro de proveedores)'} />
+              <TextField size="small" label="Estado" value={provSel.activo ? 'Activo' : 'Inactivo'} InputProps={{ readOnly: true }} error={!provSel.activo} />
+              <TextField size="small" label="Correo(s) para" value={provCorreo.para} onChange={e => setProvCorreo(c => ({ ...c, para: e.target.value }))} sx={{ gridColumn: '1 / -1' }} helperText="Varios separados por ; o coma. Si los cambias aquí se guardan en el maestro de proveedores." />
+              <TextField size="small" label="Correo(s) con copia" value={provCorreo.cc} onChange={e => setProvCorreo(c => ({ ...c, cc: e.target.value }))} sx={{ gridColumn: '1 / -1' }} />
+            </Box>)}
+        </DialogContent>
+        <DialogActions>
+          {provEd && cambioProv[provEd.k] && <Button color="error" onClick={() => { setCambioProv(({ [provEd.k]: _x, ...r }) => r); setProvEd(null) }}>Volver al proveedor original</Button>}
+          <Button onClick={() => setProvEd(null)}>Cancelar</Button>
+          <Button variant="contained" disabled={!provSel} onClick={guardarCambioProv}>Usar este proveedor</Button>
         </DialogActions>
       </Dialog>
       <Dialog open={!!justEd} onClose={() => setJustEd(null)} maxWidth="sm" fullWidth>

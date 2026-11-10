@@ -26,10 +26,16 @@ class Sel(BaseModel):
     producto_id: str
 
 
+class ProvDestino(BaseModel):
+    proveedor_id: str
+    sucursal: str = "001"
+
+
 class EnviarIn(BaseModel):
     items: list[Sel]
     solo_plano: bool = False      # vista previa: arma el plano y lo devuelve, sin guardar ni enviar
     justificaciones: dict[str, str] = {}      # por «empresa|proveedor|sucursal»: lo que compras le explica al aprobador (opcional)
+    cambios_proveedor: dict[str, ProvDestino] = {}      # por «empresa|proveedor|sucursal» de origen: el proveedor del maestro (misma empresa) al que se le monta esa OC en su lugar
 
 
 def _comprador(user) -> str:
@@ -39,7 +45,23 @@ def _comprador(user) -> str:
     return uid
 
 
-def _grupos(user, items: list[Sel]) -> tuple[list[dict], list[str]]:
+def _destinos(cambios: dict[str, ProvDestino]) -> dict[str, dict]:
+    """Datos del maestro de proveedores de cada proveedor al que se redirige una OC (siempre de la MISMA empresa que el origen). Lanza 400 si alguno no existe."""
+    out: dict[str, dict] = {}
+    with pg.connect() as c:
+        for k, d in cambios.items():
+            emp = k.split("|")[0]
+            r = c.execute(text("""SELECT proveedor_id, sucursal, nombre, COALESCE(activo, 1) AS activo, cond_pago, COALESCE(email_para, '') AS email_para, COALESCE(email_cc, '') AS email_cc,
+                                         pedido_minimo::float8 AS pedido_minimo, leadtime::float8 AS leadtime
+                                    FROM ddmrp.proveedor WHERE empresa = :e AND proveedor_id = :p AND sucursal = :s"""),
+                          {"e": emp, "p": d.proveedor_id.strip(), "s": d.sucursal.strip() or "001"}).mappings().first()
+            if not r:
+                raise HTTPException(400, f"El proveedor {d.proveedor_id}-{d.sucursal} no existe en el maestro de proveedores de la empresa {emp}")
+            out[k] = dict(r)
+    return out
+
+
+def _grupos(user, items: list[Sel], cambios: dict[str, ProvDestino] | None = None) -> tuple[list[dict], list[str]]:
     """Recalcula en el servidor (no se confia en cantidades ni costos que mande el navegador) y arma una OC por empresa+proveedor+sucursal."""
     pedido = {(i.empresa, i.producto_id) for i in items}
     r = _necesidades(user, None, None, None, None, None, None, 20000)
@@ -48,6 +70,7 @@ def _grupos(user, items: list[Sel]) -> tuple[list[dict], list[str]]:
     hoy = siesa_oc.hoy()
     dec = settings.oc_decimales_precio
     cfg = _cfg_revision()
+    destinos = _destinos(cambios or {})
     por: dict[tuple, dict] = {}
     for k in sorted(pedido):
         f = filas.get(k)
@@ -58,12 +81,22 @@ def _grupos(user, items: list[Sel]) -> tuple[list[dict], list[str]]:
             avisos.append(f"{k[1]}: cantidad a pedir 0, no se incluye"); continue
         if f["costo"] is None or f["costo"] <= 0:
             avisos.append(f"{k[1]}: sin cotización/costo, no se incluye"); continue
-        g = por.setdefault((f["empresa"], f["proveedor_id"], f["sucursal"], bool(f.get("consignacion"))), {
-            "consignacion": bool(f.get("consignacion")), "empresa": f["empresa"], "proveedor_id": f["proveedor_id"], "sucursal": f["sucursal"], "proveedor_nombre": f["proveedor_nombre"], "cond_pago": (f["cond_pago"] or "").strip(),
-            "activo": bool(f["prov_activo"]), "pedido_minimo": f["pedido_minimo"], "email_para": (f.get("prov_email_para") or "").strip(),
-            "exigir_email": cfg["oc_exigir_email"] >= 1, "lineas": []})
+        orig = f"{f['empresa']}|{f['proveedor_id']}|{f['sucursal']}"
+        dst = destinos.get(orig)      # compras cambio el proveedor de esta OC: el nombre, cond. de pago, correos y pedido minimo son los del nuevo
+        pid, suc = (dst["proveedor_id"], dst["sucursal"]) if dst else (f["proveedor_id"], f["sucursal"])
+        g = por.setdefault((f["empresa"], pid, suc, bool(f.get("consignacion"))), {
+            "consignacion": bool(f.get("consignacion")), "empresa": f["empresa"], "proveedor_id": pid, "sucursal": suc,
+            "proveedor_nombre": dst["nombre"] if dst else f["proveedor_nombre"], "cond_pago": ((dst["cond_pago"] if dst else f["cond_pago"]) or "").strip(),
+            "activo": bool(dst["activo"]) if dst else bool(f["prov_activo"]), "pedido_minimo": dst["pedido_minimo"] if dst else f["pedido_minimo"],
+            "email_para": ((dst["email_para"] if dst else f.get("prov_email_para")) or "").strip(),
+            "exigir_email": cfg["oc_exigir_email"] >= 1, "lineas": [], "origenes": set(), "cambio_de": {}})
+        g["origenes"].add(orig)
+        if dst:
+            g["cambio_de"][orig] = f"{f['proveedor_nombre']} ({f['proveedor_id']})"
         costo = round(float(f["costo"]), dec)
         lt = f["lead_time"] if f["lead_time"] is not None else (f["leadtime_proveedor"] if f["leadtime_proveedor"] is not None else 8)
+        if dst and dst.get("leadtime") is not None:
+            lt = dst["leadtime"]      # el lead time del proveedor al que se redirige
         g["lineas"].append({"producto_id": f["producto_id"], "descripcion": f["descripcion"], "cantidad": cant, "costo": costo, "iva_tasa": f["iva_tasa"],
                             "origen_costo": f["origen_costo"], "fecha_entrega": siesa_oc.fecha_entrega(hoy, lt),
                             "qty_calculada": f.get("qty_calculada"), "costo_ref": f.get("costo_calculado")})
@@ -72,6 +105,8 @@ def _grupos(user, items: list[Sel]) -> tuple[list[dict], list[str]]:
         g["iva"] = sum(l["cantidad"] * l["costo"] * (l["iva_tasa"] or 0) / 100 for l in g["lineas"])
         g["unidades"] = sum(l["cantidad"] for l in g["lineas"])
         g["motivos"] = _motivos_revision(g, cfg)
+        if g["cambio_de"]:      # el aprobador debe ver que no es el proveedor que calculo DDMRP
+            g["motivos"].insert(0, "Proveedor cambiado por compras: " + ", ".join(sorted(set(g["cambio_de"].values()))) + f" → {g['proveedor_nombre']} ({g['proveedor_id']})")
     return list(por.values()), avisos
 
 
@@ -279,6 +314,18 @@ def config_oc():
     return {"destino": _destino(), "revision": cfg, "exigir_entiendo": cfg["oc_exigir_entiendo"] >= 1, "listado_dias": int(cfg["oc_listado_dias"])}
 
 
+@router.get("/proveedores")
+def buscar_proveedores(empresa: str, q: str = "", limite: int = 25):
+    """Proveedores del maestro de la empresa para cambiar el proveedor de una OC antes de enviarla (nombre o NIT contienen `q`). Los activos primero."""
+    like = f"%{q.strip()}%"
+    with pg.connect() as c:
+        rows = c.execute(text("""SELECT proveedor_id, sucursal, nombre, COALESCE(activo, 1) AS activo, cond_pago, COALESCE(email_para, '') AS email_para, COALESCE(email_cc, '') AS email_cc,
+                                        pedido_minimo::float8 AS pedido_minimo, leadtime::float8 AS leadtime
+                                   FROM ddmrp.proveedor WHERE empresa = :e AND (:v OR nombre ILIKE :q OR proveedor_id ILIKE :q)
+                                  ORDER BY COALESCE(activo, 1) DESC, nombre LIMIT :l"""), {"e": empresa, "q": like, "v": not q.strip(), "l": min(max(limite, 1), 100)}).mappings().all()
+    return {"datos": [dict(r) | {"activo": bool(r["activo"])} for r in rows]}
+
+
 @router.post("/enviar")
 def enviar(b: EnviarIn, user=Depends(requiere("gestionar_compras"))):
     """Crea en Siesa una OC por proveedor y empresa con los items elegidos (cantidad y costo salen del servidor). `solo_plano`: devuelve el plano sin enviar."""
@@ -287,7 +334,7 @@ def enviar(b: EnviarIn, user=Depends(requiere("gestionar_compras"))):
     comprador = _comprador(user)
     if not b.items:
         raise HTTPException(400, "No elegiste ningún ítem")
-    grupos, avisos = _grupos(user, b.items)
+    grupos, avisos = _grupos(user, b.items, b.cambios_proveedor)
     if not grupos:
         raise HTTPException(400, "Nada para enviar: " + ("; ".join(avisos[:5]) or "los ítems no tienen cantidad o costo"))
     if len(grupos) > MAX_POR_ENVIO:
@@ -311,7 +358,7 @@ def enviar(b: EnviarIn, user=Depends(requiere("gestionar_compras"))):
                                       VALUES (:e, :p, :s, :n, :cp, :co, :b, 'tmp-' || gen_random_uuid()::text, :v, :iva, :t, :it, :u, :us, (SELECT email FROM ddmrp.usuario WHERE usuario_id = :uid), :rr, :mr, :cg, :jf) RETURNING id"""),
                               {"e": g["empresa"], "p": g["proveedor_id"], "s": g["sucursal"], "n": g["proveedor_nombre"], "cp": g["cond_pago"], "co": comprador, "b": siesa_oc.bodega_oc(g["empresa"]),
                                "v": g["valor"], "iva": g["iva"], "t": g["valor"] + g["iva"], "it": len(g["lineas"]), "u": g["unidades"], "us": usuario, "uid": str((user or {}).get("id") or ""),
-                               "rr": bool(g["motivos"]), "mr": "; ".join(g["motivos"])[:1000] or None, "cg": g["consignacion"], "jf": (b.justificaciones.get(f"{g['empresa']}|{g['proveedor_id']}|{g['sucursal']}") or "").strip()[:1000] or None}).scalar()
+                               "rr": bool(g["motivos"]), "mr": "; ".join(g["motivos"])[:1000] or None, "cg": g["consignacion"], "jf": " | ".join(t for t in ((b.justificaciones.get(k) or "").strip() for k in sorted(g["origenes"])) if t)[:1000] or None}).scalar()
             c.execute(text("UPDATE ddmrp.orden_compra SET referencia = :r WHERE id = :i"), {"r": siesa_oc.referencia(oc_id), "i": oc_id})
             for n, l in enumerate(g["lineas"], start=1):
                 c.execute(text("INSERT INTO ddmrp.orden_compra_linea (oc_id, nro, producto_id, descripcion, cantidad, costo, iva_tasa, origen_costo, fecha_entrega, cantidad_calculada, costo_calculado) VALUES (:i,:n,:p,:d,:q,:c,:t,:o,:f,:qc,:cc)"),
