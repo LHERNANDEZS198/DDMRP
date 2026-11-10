@@ -517,8 +517,47 @@ SENTENCIAS_APERTURA = [
 ]
 
 
+
+# Reportes de compras (Ventas por producto, Proveedor / PT): historico mensual traido de Siesa por etl/reportes_compras.py. Son agregados por mes: pesan poco y
+# hacen que los informes abran al instante sin golpear Siesa. Se alimentan aparte del ETL diario (boton «Actualizar datos» del informe y un refresco automatico).
+SENTENCIAS_REPORTES = [
+    # ventas facturadas por mes, item, canal (tipo de cliente) y unidad de negocio: bruto, descuento de linea y costo promedio (la venta neta = bruto - descuento)
+    """CREATE TABLE IF NOT EXISTS ddmrp.rep_venta_mes (
+         empresa TEXT NOT NULL, periodo CHAR(6) NOT NULL, producto_id TEXT NOT NULL, canal TEXT NOT NULL DEFAULT '', unidad_negocio TEXT NOT NULL DEFAULT '',
+         cantidad NUMERIC(16,2) NOT NULL DEFAULT 0, valor_bruto NUMERIC(18,2) NOT NULL DEFAULT 0, descuento NUMERIC(18,2) NOT NULL DEFAULT 0, costo NUMERIC(18,2) NOT NULL DEFAULT 0,
+         PRIMARY KEY (empresa, periodo, producto_id, canal, unidad_negocio))""",
+    "CREATE INDEX IF NOT EXISTS idx_rep_venta_prod ON ddmrp.rep_venta_mes (empresa, producto_id, periodo)",
+    # compras por mes, item y proveedor (lo que devuelve el analisis de documentos de compras de Siesa)
+    """CREATE TABLE IF NOT EXISTS ddmrp.rep_compra_mes (
+         empresa TEXT NOT NULL, periodo CHAR(6) NOT NULL, producto_id TEXT NOT NULL, proveedor_id TEXT NOT NULL DEFAULT '', proveedor_nombre TEXT,
+         cantidad NUMERIC(16,2) NOT NULL DEFAULT 0, valor NUMERIC(18,2) NOT NULL DEFAULT 0,
+         PRIMARY KEY (empresa, periodo, producto_id, proveedor_id))""",
+    "CREATE INDEX IF NOT EXISTS idx_rep_compra_prod ON ddmrp.rep_compra_mes (empresa, producto_id, periodo)",
+    # cumplimiento del proveedor por linea de OC (OC x item): a tiempo y completa; el periodo es el de la ultima entrada (como el OTIF de Power BI)
+    """CREATE TABLE IF NOT EXISTS ddmrp.rep_otif (
+         empresa TEXT NOT NULL, oc TEXT NOT NULL, producto_id TEXT NOT NULL, proveedor_id TEXT NOT NULL DEFAULT '', proveedor_nombre TEXT,
+         fecha_oc DATE, fecha_pactada DATE, fecha_entrada DATE, cant_pedida NUMERIC(16,2), cant_entrada NUMERIC(16,2),
+         periodo CHAR(6), a_tiempo SMALLINT, completa SMALLINT, PRIMARY KEY (empresa, oc, producto_id))""",
+    "CREATE INDEX IF NOT EXISTS idx_rep_otif_prod ON ddmrp.rep_otif (empresa, producto_id, periodo)",
+    # cuando y como quedo la ultima actualizacion de cada tarea (ventas / compras / otif) por empresa
+    """CREATE TABLE IF NOT EXISTS ddmrp.rep_actualizacion (
+         empresa TEXT NOT NULL, tarea TEXT NOT NULL, fecha TIMESTAMPTZ NOT NULL DEFAULT now(), filas INT, desde CHAR(6), mensaje TEXT, PRIMARY KEY (empresa, tarea))""",
+    # reglas (editables en Config > Reglas de compras): nada de esto va en el .env
+    """INSERT INTO ddmrp.compras_config (clave, valor, detalle) VALUES
+         ('rep_meses_historia', 48, 'Reportes de compras: cuantos meses de historia se traen de Siesa en la carga completa'),
+         ('rep_meses_refresco', 3, 'Reportes de compras: en cada actualizacion se vuelven a leer los ultimos N meses (captura documentos tardios); la primera vez se lee todo'),
+         ('rep_auto', 1, 'Reportes de compras: 1 = se actualizan solos una vez al dia; 0 = solo con el boton Actualizar datos'),
+         ('rep_hora', 4, 'Reportes de compras: hora (0-23, Colombia) en que corre la actualizacion automatica'),
+         ('rep_otif_dias_tolerancia', 0, 'OTIF: dias de gracia sobre la fecha pactada para contar una entrega como a tiempo'),
+         ('rep_otif_pct_completo', 98, 'OTIF: % de lo pedido que debe haber llegado para contar la linea como completa (98 = tolera un faltante del 2 %)'),
+         ('rep_otif_excluir_regularizadas', 1, 'OTIF: 1 = no cuentan las OC montadas el mismo dia (o despues) de la entrada (regularizaciones: no miden al proveedor); 0 = cuentan'),
+         ('rep_plan_categoria', 1, 'Reportes de compras: plan de criterios de Siesa que es la CATEGORIA (001 = productos Funat / terceros / maquila)'),
+         ('rep_plan_accion', 3, 'Reportes de compras: plan de criterios de Siesa que es la ACCION (003)')
+       ON CONFLICT DO NOTHING""",
+]
+
 def esquema_cedi() -> None:
-    for s in SENTENCIAS_CEDI + SENTENCIAS_BITACORA + SENTENCIAS_COMPRAS + SENTENCIAS_APERTURA:
+    for s in SENTENCIAS_CEDI + SENTENCIAS_BITACORA + SENTENCIAS_COMPRAS + SENTENCIAS_APERTURA + SENTENCIAS_REPORTES:
         try:
             with pg.begin() as c:
                 c.execute(text(s))

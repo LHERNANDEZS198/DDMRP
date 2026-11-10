@@ -31,6 +31,8 @@ export const VISTAS = [
   { grupo: 'Control DDMRP', to: '/control/tendencia', label: 'Tendencia en el tiempo', ayuda: 'Curva del buffer, inventario y flujo neto', req: ['ver_control'] },
   { grupo: 'Control DDMRP', to: '/control/mapa', label: 'Mapa de calor', ayuda: 'Item × tienda × fecha con el color de la zona, como el Excel', req: ['ver_control'] },
   { grupo: 'Compras', to: '/compras/tablero', label: 'Control compras', ayuda: 'Qué pedir, OC en vuelo, lo no recibido, riesgo y exceso del CEDI', req: ['ver_control_compras'] },
+  { grupo: 'Compras', to: '/compras/reportes/ventas', label: 'Ventas por producto', ayuda: 'Unidades, venta neta, costo y % rentabilidad por producto', req: ['ver_control_compras'] },
+  { grupo: 'Compras', to: '/compras/reportes/proveedor', label: 'Proveedor / PT', ayuda: 'Compras vs ventas, rentabilidad y cumplimiento (OTIF) por mes', req: ['ver_control_compras'] },
   { grupo: 'Análisis', to: '/dashboard', label: 'Alertas', ayuda: 'Zona roja y lo que hay que atender', req: ['ver_alertas'] },
   { grupo: 'Análisis', to: '/salud-inventario', label: 'Salud del inventario', ayuda: 'Zona de hoy × importancia del item: qué atender primero', req: ['ver_control'] },
   { grupo: 'Análisis', to: '/clasificacion', label: 'Clasificación ABC', ayuda: 'ABC por margen × XYZ por variabilidad, con filtros', req: ['ver_control'] },

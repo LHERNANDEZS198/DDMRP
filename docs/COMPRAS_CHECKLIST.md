@@ -93,3 +93,12 @@ Estados: ✅ listo · 🟡 hecho, sin validar en producción · ⬜ pendiente ·
 
 - ✅ 26-oct: el 413 al subir maestros era el nginx del host (client_max_body_size); subir a 30m en /etc/nginx y recargar
 - 🟡 Modo BPM: DDMRP ya tiene `OC_DESTINO=bpm|directo`, `POST /api/bpm/oc/{id}/estado` y `/plano` (contrato en `docs/OC_BPM_CONTRATO.md`); falta el lado BPM (router 202, acción crear en Siesa, BPMN)
+
+## Reportes de compras (réplica del Power BI «BI_Compras_2022», sin la hoja MP)
+- 🟡 Informes > Compras > **Ventas por producto** y **Proveedor / PT** (rutas `/compras/reportes/ventas` y `/proveedor`, permiso `ver_control_compras`). El % Rent va en su propio gráfico (sin eje doble)
+- 🟡 Datos en tablas nuevas `rep_venta_mes`, `rep_compra_mes`, `rep_otif` (ETL aparte: `etl/reportes_compras.py`, consultas editables en `etl/sql/rep_*.sql`). Botón «Actualizar datos» (permiso `gestionar_compras`) y refresco automático diario
+- 🟡 Reglas editables en Config > Reglas de compras > «Reportes de compras»: auto, hora, meses de historia/refresco, tolerancia y % completo del OTIF, planes de categoría y acción
+- ⬜ Validar contra el Power BI: (1) ventas netas y % rent de un laboratorio y un mes; (2) compras del mismo mes (usa el mismo procedimiento `sp_pv_cons_analisis_docto_com_FUNAT`); (3) % a tiempo / completo de un proveedor frente al Sheet OTIF (el app lo calcula de Siesa: última entrada de la OC vs fecha pactada)
+- ⬜ Primera carga: «Recarga completa» (48 meses). Si el procedimiento de compras falla por fechas, revisar `SET DATEFORMAT` en `rep_compras_siesa.sql`
+- ⏸ Solo Funat (05) y compañía 1; Stores (21) = agregar la empresa en `EMPRESAS` de `etl/reportes_compras.py`
+- ⏸ Hoja MP (consumos, inventario a 6 meses, planes) queda para después

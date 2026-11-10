@@ -211,3 +211,45 @@ def test_reparto_desempate_y_regla_clase():
     assert a == {"A1": 6, "B1": 6, "C1": 6} or sum(a.values()) == 18   # cabe todo: cada una lo que pide
     a = reparto.repartir([("A1", 4, 1, 1, 1, "A"), ("A2", 4, 1, 1, 3, "A")], 4, 5)
     assert a["A2"] == 3 and a["A1"] == 1                            # dentro de la clase: proporcional a la rotacion
+
+
+# ---- reportes de compras ----
+def test_otif_a_tiempo_y_completa():
+    from app.etl.reportes_compras import calcular_otif
+    f = lambda **k: ("OC-1", "A", "9", "P", k.get("oc", date(2026, 1, 1)), k.get("pact", date(2026, 1, 10)), k.get("ped", 100), k.get("ent", 100), k.get("ult", date(2026, 1, 10)))
+    assert calcular_otif(f(), 0, .98, True) == ("202601", 1, 1)
+    assert calcular_otif(f(ult=date(2026, 1, 12)), 0, .98, True)[1] == 0          # tarde
+    assert calcular_otif(f(ult=date(2026, 1, 12)), 2, .98, True)[1] == 1          # con 2 dias de gracia
+    assert calcular_otif(f(ent=97), 0, .98, True)[2] == 0 and calcular_otif(f(ent=98), 0, .98, True)[2] == 1
+    assert calcular_otif(f(ult=None), 0, .98, True) is None                       # sin entrada no mide
+    assert calcular_otif(f(oc=date(2026, 1, 10), ult=date(2026, 1, 10)), 0, .98, True) is None   # regularizacion
+    assert calcular_otif(f(oc=date(2026, 1, 10), ult=date(2026, 1, 10)), 0, .98, False) is not None
+
+
+def test_sql_reportes_y_parametros():
+    import re
+    from app.etl.reportes_compras import _sql
+    for n in ("rep_ventas_siesa.sql", "rep_compras_siesa.sql", "rep_otif_siesa.sql"):
+        q = _sql(n)
+        assert q and not q.lstrip().startswith("--")
+    c = _sql("rep_compras_siesa.sql")
+    assert re.findall(r":(\w+)", c) == ["desde", "hasta", "desde", "hasta"]         # el orden de los ? depende de esto
+    assert set(re.findall(r":(\w+)", _sql("rep_ventas_siesa.sql"))) == {"cia", "periodo_desde"}
+    assert set(re.findall(r":(\w+)", _sql("rep_otif_siesa.sql"))) == {"cia", "desde"}
+
+
+def test_filtros_reporte_sql():
+    from app.routers import reportes_compras as r
+    r.cfg_rep = lambda: {"rep_plan_categoria": 1, "rep_plan_accion": 3}
+    r._labs_permitidos = lambda u: ["L1"]
+    f = r.Filtros({"id": "x"}, "05", "202601", "202612", "A,B", "0002", None, "SUR", "ab", None)
+    j, w, p = f.base("ddmrp.rep_venta_mes", con_un=True)
+    assert p["plan_cat"] == "001" and p["plan_acc"] == "003" and p["labs"] == ["A", "B"] and p["cats"] == ["0002"] and p["un"] == ["SUR"] and p["perm"] == ["L1"]
+    assert "x.periodo >= :desde" in w and "x.unidad_negocio = ANY(:un)" in w and "FROM ddmrp.rep_venta_mes x" in j
+    _, w2, p2 = f.base("ddmrp.rep_compra_mes")
+    assert "unidad_negocio" not in w2 and "un" not in p2
+    try:
+        r.Filtros({"id": "x"}, desde="2026")
+        assert False
+    except Exception as e:
+        assert getattr(e, "status_code", 0) == 400

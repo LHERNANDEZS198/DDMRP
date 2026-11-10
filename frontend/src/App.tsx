@@ -20,6 +20,8 @@ import Lanzamientos from './pages/Lanzamientos'
 import Clasificacion from './pages/Clasificacion'
 import Necesidades from './pages/Necesidades'
 import Tablero from './pages/Tablero'
+import ReporteVentas from './pages/ReporteVentas'
+import ReporteProveedor from './pages/ReporteProveedor'
 import TableroDetalle from './pages/TableroDetalle'
 import SaludInventario from './pages/Salud'
 import Apertura from './pages/Apertura'
@@ -40,6 +42,8 @@ export const PANTALLAS = [
   { to: '/config', req: ['ver_maestros', 'cargar_maestros', 'sincronizar_siesa'] },
   { to: '/apertura-tienda', req: ['ver_maestros', 'cargar_maestros'] },
   { to: '/compras/tablero', req: ['ver_control_compras'] },
+  { to: '/compras/reportes/ventas', req: ['ver_control_compras'] },
+  { to: '/compras/reportes/proveedor', req: ['ver_control_compras'] },
   { to: '/compras/necesidades', req: ['ver_compras'] },
   { to: '/compras/maestros', req: ['ver_compras', 'cargar_maestros_compras'] },
   { to: '/compras/reglas', req: ['ver_compras', 'cargar_maestros_compras', 'editar_reglas_compras'] },
@@ -94,6 +98,8 @@ export default function App() {
           <Route path="/apertura-tienda" element={<Req to="/apertura-tienda"><Apertura /></Req>} />
           <Route path="/compras/tablero" element={<Req to="/compras/tablero"><Tablero /></Req>} />
           <Route path="/compras/tablero/:tipo" element={<Req to="/compras/tablero"><TableroDetalle /></Req>} />
+          <Route path="/compras/reportes/ventas" element={<Req to="/compras/reportes/ventas"><ReporteVentas /></Req>} />
+          <Route path="/compras/reportes/proveedor" element={<Req to="/compras/reportes/proveedor"><ReporteProveedor /></Req>} />
           <Route path="/compras/necesidades" element={<Req to="/compras/necesidades"><Necesidades /></Req>} />
           <Route path="/compras/maestros" element={<Req to="/compras/maestros"><Config key="compras" grupo="compras" /></Req>} />
           <Route path="/usuarios" element={<Req to="/usuarios"><Usuarios /></Req>} />

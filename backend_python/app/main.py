@@ -9,7 +9,8 @@ from .esquema import asegurar_esquema
 from .bitacora import cerrar_huerfanas
 from .progreso import Ocupado
 from .orchestrator import revisar_pipeline
-from .routers import auth, alertas, maestros, despacho, admin, reglas, control, usuarios, log, auditoria, lanzamientos, clasificacion, salud, vistas, diagnostico, compras, tablero, cumplimiento, oc, bpm_oc, apertura
+from .etl.reportes_compras import revisar_reportes
+from .routers import auth, alertas, maestros, despacho, admin, reglas, control, usuarios, log, auditoria, lanzamientos, clasificacion, salud, vistas, diagnostico, compras, tablero, cumplimiento, oc, bpm_oc, apertura, reportes_compras
 from . import consultas
 
 logging.basicConfig(level=logging.INFO)
@@ -23,6 +24,8 @@ async def lifespan(app: FastAPI):
     sch = BackgroundScheduler(timezone="America/Bogota")
     # cada minuto mira en Reglas de pedido si toca correr (si esta activa, la hora y cada cuantos dias); asi se prende, apaga o mueve sin reiniciar
     sch.add_job(revisar_pipeline, "cron", minute="*", id="nocturno", max_instances=1, coalesce=True)
+    # reportes de compras (historico de ventas / compras / OTIF): cada 10 minutos mira si toca la actualizacion diaria (regla rep_auto y rep_hora)
+    sch.add_job(revisar_reportes, "cron", minute="*/10", id="reportes_compras", max_instances=1, coalesce=True)
     sch.start()
     yield
     sch.shutdown()
@@ -65,7 +68,7 @@ async def _registrar_consulta(request: Request, call_next):
     return resp
 
 
-for r in (auth, alertas, maestros, despacho, admin, reglas, control, usuarios, log, auditoria, lanzamientos, clasificacion, salud, vistas, diagnostico, compras, tablero, cumplimiento, oc, bpm_oc, apertura):
+for r in (auth, alertas, maestros, despacho, admin, reglas, control, usuarios, log, auditoria, lanzamientos, clasificacion, salud, vistas, diagnostico, compras, tablero, cumplimiento, oc, bpm_oc, apertura, reportes_compras):
     app.include_router(r.router, prefix="/api")
 
 
