@@ -33,6 +33,25 @@ def _sql(nombre: str) -> str:
     return q.strip()
 
 
+SP_COMPRAS_DEFECTO = {"05": "sp_pv_cons_analisis_docto_com_FUNAT", "21": "sp_pv_cons_analisis_docto_com_stores"}
+
+
+def _sp_compras(empresa: str) -> str:
+    """Procedimiento de compras de la empresa. Se cambia sin tocar el codigo: fila ddmrp.compras_config con clave rep_sp_compras_<empresa> y el nombre en «detalle»
+    (p. ej. rep_sp_compras_21); si no hay, el de SP_COMPRAS_DEFECTO. Se valida como identificador porque se pega en el texto de la consulta."""
+    nombre = SP_COMPRAS_DEFECTO.get(empresa, SP_COMPRAS_DEFECTO["05"])
+    try:
+        with pg.connect() as c:
+            v = c.execute(text("SELECT detalle FROM ddmrp.compras_config WHERE clave = :k"), {"k": f"rep_sp_compras_{empresa}"}).scalar()
+        if v and str(v).strip():
+            nombre = str(v).strip()
+    except Exception:       # noqa: BLE001
+        log.exception("No se pudo leer rep_sp_compras_%s: se usa %s", empresa, nombre)
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", nombre):
+        raise RuntimeError(f"Nombre de procedimiento de compras no valido: {nombre!r}")
+    return nombre
+
+
 def config() -> dict:
     cfg = dict(CFG_DEFECTO)
     try:
@@ -137,7 +156,9 @@ def _compras(eng, empresa: str, cfg: dict, hoy: date, completo: bool) -> tuple[i
     periodo = f"{desde:%Y%m}"
     hasta = date(hoy.year + 1, 12, 31)
     progreso.avance(f"Leyendo las compras de Siesa desde {periodo}… puede tardar unos minutos")
-    sql = _sql("rep_compras_siesa.sql")
+    sp = _sp_compras(empresa)
+    sql = _sql("rep_compras_siesa.sql").replace("{sp}", sp)
+    log.info("  compras %s: procedimiento %s", empresa, sp)
     prm = {"desde": f"{desde:%d/%m/%Y}", "hasta": f"{hasta:%d/%m/%Y}"}
 
     def filas():
