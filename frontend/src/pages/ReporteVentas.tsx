@@ -3,7 +3,7 @@ import { Alert, Box, CircularProgress, ToggleButton, ToggleButtonGroup, Typograp
 import { ColDef } from 'ag-grid-community'
 import Tabla from '../Tabla'
 import { api } from '../api'
-import { Actualizacion, BarraFiltros, COLOR, Kpi, Lineas, MM, Panel, ent, mesLargo, pct, pesos, useFiltros } from '../reportes/comun'
+import { Actualizacion, AvisoEmpresa, BarraFiltros, COLOR, Kpi, Lineas, MM, Panel, ejeM, ent, mesLargo, pct, pesos, useFiltros } from '../reportes/comun'
 
 /** Ventas por producto: lo que era la hoja «Ventas x Producto» del Power BI de compras. */
 export default function ReporteVentas() {
@@ -50,6 +50,7 @@ export default function ReporteVentas() {
         <Actualizacion op={op} alTerminar={() => { recargarOpciones(); cargar() }} />
       </Box>
       <BarraFiltros op={op} f={f} setF={setF} conUn />
+      <AvisoEmpresa op={op} />
       {e2 && <Alert severity="error">{e2}</Alert>}
       {!!d && !d.filas.length && !cargando && <Alert severity="info">No hay ventas con estos filtros. Si es la primera vez, un usuario con permiso debe pulsar «Actualizar datos».</Alert>}
       <Box sx={{ display: 'flex', gap: 1.25, flexWrap: 'wrap', opacity: cargando ? .6 : 1 }}>
@@ -61,7 +62,7 @@ export default function ReporteVentas() {
         <Kpi titulo="Descuento" valor={k ? MM(k.descuento) : '…'} />
       </Box>
       <Panel titulo="Venta neta y costo por mes" ayuda="Pasa el cursor por un mes para ver las cifras.">
-        <Lineas periodos={per} fmt={v => MM(v)} fmtEje={v => (v / 1e6).toLocaleString('es-CO', { maximumFractionDigits: 0 }) + ' M'} alto={220}
+        <Lineas periodos={per} fmt={v => MM(v)} fmtEje={ejeM} alto={220}
           series={[{ nombre: 'Venta neta', color: COLOR.azul, valores: d?.serie.map((s: any) => s.neta) ?? [] }, { nombre: 'Costo', color: COLOR.naranja, valores: d?.serie.map((s: any) => s.costo) ?? [] }]} />
       </Panel>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
@@ -72,9 +73,10 @@ export default function ReporteVentas() {
           {d ? `${ent(d.filas.length)} de ${ent(d.total_filas)} filas${d.recortado ? ' (afina los filtros para ver el resto)' : ''}` : ''} · Ctrl+A y Ctrl+C copian la tabla a Excel
         </Typography>
       </Box>
-      <Box className="ag-theme-quartz" sx={{ height: 'min(70vh, 640px)', minHeight: 360 }}>
+      <Box className="ag-theme-quartz">
         <Tabla memoria={'rep_ventas_' + agrupar} cargando={cargando} textoCargando="Cargando ventas…" vacio="Sin ventas con estos filtros" rowData={d?.filas || []} columnDefs={cols}
-          pinnedBottomRowData={total} defaultColDef={{ resizable: true, sortable: true }} tooltipShowDelay={300} />
+          pinnedBottomRowData={total} defaultColDef={{ resizable: true, sortable: true }} tooltipShowDelay={300}
+          pagination paginationPageSize={100} paginationPageSizeSelector={[25, 50, 100, 200]} domLayout="autoHeight" />
       </Box>
     </Box>)
 }

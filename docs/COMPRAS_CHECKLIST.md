@@ -102,3 +102,9 @@ Estados: ✅ listo · 🟡 hecho, sin validar en producción · ⬜ pendiente ·
 - ⬜ Primera carga: «Recarga completa» (48 meses). Si el procedimiento de compras falla por fechas, revisar `SET DATEFORMAT` en `rep_compras_siesa.sql`
 - ⏸ Solo Funat (05) y compañía 1; Stores (21) = agregar la empresa en `EMPRESAS` de `etl/reportes_compras.py`
 - ⏸ Hoja MP (consumos, inventario a 6 meses, planes) queda para después
+
+### Reportes de compras: ajustes tras la primera prueba
+- [ ] Empresa de la barra (Funat / Stores / ambas): los reportes piden las listas y los datos de la empresa elegida y recuerdan los filtros por empresa. Stores (21) se trae solo si `SIESA_DB_S` está configurado; si no, el informe avisa que aún no hay datos.
+- [ ] Criterio de ítems + valores (igual que Clasificación), con «+ Otro criterio»; categoría y acción siguen con su filtro propio.
+- [ ] Ejes de las gráficas: se ajustan al rango real (pasos redondos, sin «-0 M»); el % rent usa su propio eje con un rango mínimo de 10 puntos.
+- [ ] Una sola barra de desplazamiento: las tablas usan paginación (50 o 100 filas) en vez de scroll propio.

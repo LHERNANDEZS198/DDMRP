@@ -4,7 +4,7 @@ historicas mas pesadas: se lanza con el boton «Actualizar datos» del informe o
   - ventas   etl/sql/rep_ventas_siesa.sql   facturas de venta por mes, item, canal y unidad de negocio (bruto, descuento, costo)
   - compras  etl/sql/rep_compras_siesa.sql  el mismo procedimiento del Power BI (analisis de documentos de compras), agregado por mes, item y proveedor
   - otif     etl/sql/rep_otif_siesa.sql     lineas de OC con su ultima entrada real; aqui se calcula a tiempo y completa con los umbrales de compras_config
-Cada tarea falla sola: si una no se puede leer las otras igual se cargan y el informe avisa cual quedo sin actualizar. Por ahora solo Funat (empresa 05) y compania 1."""
+Cada tarea falla sola: si una no se puede leer las otras igual se cargan y el informe avisa cual quedo sin actualizar. Funat (05) y, si tiene base configurada, Stores (21); compania 1 en ambas."""
 import logging
 import re
 from datetime import date, datetime, timedelta
@@ -19,7 +19,7 @@ from .replicacion import _stream
 
 log = logging.getLogger("etl.reportes")
 SQL_DIR = Path(__file__).parent / "sql"
-EMPRESAS = (("05", lambda: settings.siesa_db),)      # Stores (21): agregar ("21", lambda: settings.siesa_db_s) cuando compras lo necesite
+EMPRESAS = (("05", lambda: settings.siesa_db), ("21", lambda: settings.siesa_db_s))      # Stores (21) solo si hay base configurada (SIESA_DB_S); si no, se salta
 CFG_DEFECTO = {"rep_meses_historia": 48.0, "rep_meses_refresco": 3.0, "rep_auto": 1.0, "rep_hora": 4.0, "rep_otif_dias_tolerancia": 0.0,
                "rep_otif_pct_completo": 98.0, "rep_otif_excluir_regularizadas": 1.0}
 COLS_COMPRAS = ("f_fecha", "f_valor_bruto_local", "f_cant_base", "f_proveedor", "f_proveedor_razon_soc", "f_referencia")

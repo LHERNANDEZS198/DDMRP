@@ -3,7 +3,7 @@ import { Alert, Box, CircularProgress, Typography } from '@mui/material'
 import { ColDef } from 'ag-grid-community'
 import Tabla from '../Tabla'
 import { api } from '../api'
-import { Actualizacion, BarraFiltros, COLOR, Kpi, Lineas, MM, Panel, ent, pct, pesos, useFiltros } from '../reportes/comun'
+import { Actualizacion, AvisoEmpresa, BarraFiltros, COLOR, Kpi, Lineas, MM, Panel, ejeM, ejePct, ent, pct, pesos, useFiltros } from '../reportes/comun'
 
 /** Proveedor / PT: compras vs ventas, rentabilidad y cumplimiento (OTIF) por mes. Reemplaza las hojas «Ficha Proveedor» y «PT» del Power BI de compras. */
 export default function ReporteProveedor() {
@@ -36,7 +36,6 @@ export default function ReporteProveedor() {
   if (err) return <Alert severity="error">{err}</Alert>
   if (!op || !f) return <Box sx={{ display: 'grid', placeItems: 'center', height: '40vh' }}><CircularProgress /></Box>
   const k = d?.kpis, s: any[] = d?.serie ?? [], per = s.map(x => x.periodo)
-  const eje = (v: number) => (v / 1e6).toLocaleString('es-CO', { maximumFractionDigits: 0 }) + ' M'
   return (
     <Box sx={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 1.5, pb: 3 }}>
       <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 2, flexWrap: 'wrap' }}>
@@ -44,6 +43,7 @@ export default function ReporteProveedor() {
         <Actualizacion op={op} alTerminar={() => { recargarOpciones(); cargar() }} />
       </Box>
       <BarraFiltros op={op} f={f} setF={setF} conUn />
+      <AvisoEmpresa op={op} />
       {e2 && <Alert severity="error">{e2}</Alert>}
       {!!d && !s.length && !cargando && <Alert severity="info">No hay datos con estos filtros. Si es la primera vez, un usuario con permiso debe pulsar «Actualizar datos».</Alert>}
       <Box sx={{ display: 'flex', gap: 1.25, flexWrap: 'wrap', opacity: cargando ? .6 : 1 }}>
@@ -56,25 +56,26 @@ export default function ReporteProveedor() {
       </Box>
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0, 1fr)', lg: 'minmax(0, 3fr) minmax(0, 2fr)' }, gap: 1.5 }}>
         <Panel titulo="Compras vs ventas por mes" ayuda="Las ventas son netas (sin descuento de línea). Pasa el cursor por un mes.">
-          <Lineas periodos={per} fmt={v => MM(v)} fmtEje={eje} alto={250}
+          <Lineas periodos={per} fmt={v => MM(v)} fmtEje={ejeM} alto={250}
             series={[{ nombre: 'Ventas netas', color: COLOR.azul, valores: s.map(x => x.ventas) }, { nombre: 'Compras', color: COLOR.naranja, valores: s.map(x => x.compras) }]} />
         </Panel>
-        <Panel titulo="% Rentabilidad por mes" ayuda="Gráfico propio: no comparte eje con los pesos.">
-          <Lineas periodos={per} fmt={v => pct(v, 1)} fmtEje={v => (v * 100).toFixed(0) + ' %'} alto={250} piso={0}
+        <Panel titulo="% Rentabilidad por mes" ayuda="Gráfico propio: no comparte eje con los pesos. El eje se ajusta al rango real de los datos.">
+          <Lineas periodos={per} fmt={v => pct(v, 1)} fmtEje={ejePct} alto={250} spanMin={0.1}
             series={[{ nombre: '% Rent', color: COLOR.violeta, valores: s.map(x => x.rent) }]} />
         </Panel>
       </Box>
       <Panel titulo="Cumplimiento del proveedor por mes (OTIF)" ayuda="Mes de la última entrada de cada línea de OC. Completo: llegó lo pedido. A tiempo: llegó en la fecha pactada.">
-        <Lineas periodos={per} fmt={v => pct(v, 0)} fmtEje={v => (v * 100).toFixed(0) + ' %'} alto={220} techo={1} piso={0}
+        <Lineas periodos={per} fmt={v => pct(v, 0)} fmtEje={ejePct} alto={220} techo={1} piso={0}
           series={[{ nombre: '% Completo', color: COLOR.azul, valores: s.map(x => x.infull) }, { nombre: '% A tiempo', color: COLOR.naranja, valores: s.map(x => x.ontime) }]} />
       </Panel>
       <Typography sx={{ fontWeight: 700, mt: 1 }}>Proveedores con más compras</Typography>
-      <Box className="ag-theme-quartz" sx={{ height: 360 }}>
-        <Tabla memoria="rep_prov_prov" cargando={cargando} vacio="Sin compras con estos filtros" rowData={d?.proveedores || []} columnDefs={colsProv} defaultColDef={{ resizable: true, sortable: true }} />
+      <Box className="ag-theme-quartz">
+        <Tabla memoria="rep_prov_prov" cargando={cargando} vacio="Sin compras con estos filtros" rowData={d?.proveedores || []} columnDefs={colsProv} defaultColDef={{ resizable: true, sortable: true }} domLayout="autoHeight" />
       </Box>
       <Typography sx={{ fontWeight: 700, mt: 1 }}>Productos <Typography component="span" variant="caption" color="text.secondary">{d ? `${ent(d.productos.length)} filas${d.recortado ? ' (afina los filtros para ver el resto)' : ''} · Ctrl+A y Ctrl+C copian a Excel` : ''}</Typography></Typography>
-      <Box className="ag-theme-quartz" sx={{ height: 'min(70vh, 560px)', minHeight: 340 }}>
-        <Tabla memoria="rep_prov_prod" cargando={cargando} vacio="Sin productos con estos filtros" rowData={d?.productos || []} columnDefs={colsProd} defaultColDef={{ resizable: true, sortable: true }} tooltipShowDelay={300} />
+      <Box className="ag-theme-quartz">
+        <Tabla memoria="rep_prov_prod" cargando={cargando} vacio="Sin productos con estos filtros" rowData={d?.productos || []} columnDefs={colsProd} defaultColDef={{ resizable: true, sortable: true }} tooltipShowDelay={300}
+          pagination paginationPageSize={50} paginationPageSizeSelector={[25, 50, 100, 200]} domLayout="autoHeight" />
       </Box>
     </Box>)
 }

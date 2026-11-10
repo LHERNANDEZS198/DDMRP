@@ -38,7 +38,7 @@ def _labs_permitidos(user) -> list[str] | None:
 class Filtros:
     """Filtros comunes. `base()` arma el FROM y el WHERE de una tabla de hechos (alias x: empresa, periodo, producto_id) con los maestros de item unidos."""
 
-    def __init__(self, user, empresa=None, desde=None, hasta=None, labs=None, categorias=None, acciones=None, un=None, q=None, proveedores=None):
+    def __init__(self, user, empresa=None, desde=None, hasta=None, labs=None, categorias=None, acciones=None, un=None, q=None, proveedores=None, crit=None):
         cfg = cfg_rep()
         self.p: dict = {"plan_cat": _plan(cfg.get("rep_plan_categoria", 1)), "plan_acc": _plan(cfg.get("rep_plan_accion", 3))}
         self.emp = _csv(empresa)
@@ -48,6 +48,11 @@ class Filtros:
                 raise HTTPException(400, f"El periodo «{nombre}» debe ser AAAAMM (ej. 202601)")
         self.labs, self.cats, self.accs, self.un = _csv(labs), _csv(categorias), _csv(acciones), _csv(un)
         self.q, self.provs = (q or "").strip(), _csv(proveedores)
+        self.crit: dict[str, list[str]] = {}     # criterios de items (cualquier plan de Siesa): «plan:valor,plan:valor»; valores del mismo plan = O, planes distintos = Y
+        for x in _csv(crit):
+            if ":" in x:
+                pl, cr = x.split(":", 1)
+                self.crit.setdefault(pl, []).append(cr)
         self.perm = _labs_permitidos(user)
 
     def base(self, tabla: str, con_un: bool = False, con_prov: bool = False) -> tuple[str, str, dict]:
@@ -73,6 +78,9 @@ class Filtros:
             w.append("ic3.criterio_id = ANY(:accs)"); p["accs"] = self.accs
         if self.q:
             w.append("(x.producto_id ILIKE :q OR mi.descripcion ILIKE :q)"); p["q"] = f"%{self.q}%"
+        for i, (pl, crs) in enumerate(self.crit.items()):
+            w.append(f"EXISTS (SELECT 1 FROM ddmrp.item_criterio icx{i} WHERE icx{i}.producto_id = x.producto_id AND icx{i}.plan_id = :cp{i} AND icx{i}.criterio_id = ANY(:cc{i}))")
+            p[f"cp{i}"] = pl; p[f"cc{i}"] = crs
         if con_un and self.un:
             w.append("x.unidad_negocio = ANY(:un)"); p["un"] = self.un
         if con_prov and self.provs:
@@ -111,20 +119,36 @@ def opciones(empresa: str | None = None, user=Depends(requiere("ver_control_comp
                                 WHERE cr.plan_id = :plan AND EXISTS (SELECT 1 FROM ddmrp.item_criterio ic WHERE ic.plan_id = cr.plan_id AND ic.criterio_id = cr.criterio_id)
                                 ORDER BY 1""", {"plan": plan, "e": emp[0]})
         cats, accs = criterios(f.p["plan_cat"]), criterios(f.p["plan_acc"])
-        unidades = [r[0] for r in c.execute(text("SELECT DISTINCT unidad_negocio FROM ddmrp.rep_venta_mes WHERE unidad_negocio <> '' ORDER BY 1")).all()]
-        rango = c.execute(text("""SELECT min(periodo), max(periodo) FROM (SELECT periodo FROM ddmrp.rep_venta_mes UNION ALL SELECT periodo FROM ddmrp.rep_compra_mes) t""")).one()
+        # los datos de las listas son los de la empresa elegida en la barra (vacio = ambas)
+        pe = {"emp": f.emp} if f.emp else {}
+        fe = "AND empresa = ANY(:emp)" if f.emp else ""
+        unidades = [r[0] for r in c.execute(text(f"SELECT DISTINCT unidad_negocio FROM ddmrp.rep_venta_mes WHERE unidad_negocio <> '' {fe} ORDER BY 1"), pe).all()]
+        rango = c.execute(text(f"""SELECT min(periodo), max(periodo) FROM (SELECT periodo FROM ddmrp.rep_venta_mes WHERE TRUE {fe} UNION ALL
+                                   SELECT periodo FROM ddmrp.rep_compra_mes WHERE TRUE {fe}) t"""), pe).one()
         act = _actualizacion(c)
-    return {"labs": labs, "categorias": cats, "acciones": accs, "unidades": unidades, "periodo_min": rango[0], "periodo_max": rango[1], "actualizacion": act}
+        # criterios de items (mismos planes que los filtros de Clasificacion); categoria y accion ya tienen su propio filtro
+        crit_rows = c.execute(text("""SELECT ic.plan_id, COALESCE(p.nombre, ic.plan_id), ic.criterio_id, COALESCE(cr.nombre, ic.criterio_id), count(*)
+                                      FROM ddmrp.item_criterio ic LEFT JOIN ddmrp.criterio_plan p ON p.plan_id = ic.plan_id
+                                      LEFT JOIN ddmrp.criterio cr ON cr.plan_id = ic.plan_id AND cr.criterio_id = ic.criterio_id
+                                      WHERE COALESCE(p.en_filtros, 1) = 1 AND ic.plan_id <> ALL(:excl) GROUP BY 1, 2, 3, 4 ORDER BY 1, 3"""),
+                              {"excl": [f.p["plan_cat"], f.p["plan_acc"]]}).all()
+    por_plan: dict[str, dict] = {}
+    for pid, pnom, cid, cnom, n in crit_rows:
+        por_plan.setdefault(pid, {"plan_id": pid, "nombre": pnom, "valores": []})["valores"].append({"id": cid, "nombre": cnom, "items": n})
+    # empresas con datos traidos: la pantalla avisa si la elegida en la barra aun no tiene
+    con_datos = sorted({a["empresa"] for a in act if a.get("fecha") and not a.get("mensaje")})
+    return {"labs": labs, "categorias": cats, "acciones": accs, "unidades": unidades, "periodo_min": rango[0], "periodo_max": rango[1], "actualizacion": act,
+            "criterios": list(por_plan.values()), "empresas_con_datos": con_datos}
 
 
 @router.get("/ventas-producto")
 def ventas_producto(empresa: str | None = None, desde: str | None = None, hasta: str | None = None, labs: str | None = None, categorias: str | None = None,
-                    acciones: str | None = None, un: str | None = None, q: str | None = None, agrupar: str = "producto", limite: int = 3000,
+                    acciones: str | None = None, un: str | None = None, q: str | None = None, crit: str | None = None, agrupar: str = "producto", limite: int = 3000,
                     user=Depends(requiere("ver_control_compras"))):
     """Ventas facturadas por producto (o por mes y producto con agrupar=mes) con inventario y rotacion, KPI del filtro y la serie mensual."""
     if agrupar not in ("producto", "mes"):
         raise HTTPException(400, "agrupar debe ser producto o mes")
-    f = Filtros(user, empresa, desde, hasta, labs, categorias, acciones, un, q)
+    f = Filtros(user, empresa, desde, hasta, labs, categorias, acciones, un, q, crit=crit)
     joins, w, p = f.base("ddmrp.rep_venta_mes", con_un=True)
     lim = min(max(int(limite), 10), TOPE_FILAS)
     per = "x.periodo, " if agrupar == "mes" else ""
@@ -161,11 +185,11 @@ def ventas_producto(empresa: str | None = None, desde: str | None = None, hasta:
 
 @router.get("/proveedor")
 def proveedor(empresa: str | None = None, desde: str | None = None, hasta: str | None = None, labs: str | None = None, categorias: str | None = None,
-              acciones: str | None = None, un: str | None = None, q: str | None = None, proveedores: str | None = None, limite: int = 3000,
+              acciones: str | None = None, un: str | None = None, q: str | None = None, proveedores: str | None = None, crit: str | None = None, limite: int = 3000,
               user=Depends(requiere("ver_control_compras"))):
     """Ficha de proveedor / producto terminado: compras vs ventas netas y % rent por mes, OTIF por mes, productos con su venta y su compra y los proveedores con mas compras.
     La unidad de negocio solo filtra las ventas; el proveedor solo filtra las compras y el OTIF."""
-    f = Filtros(user, empresa, desde, hasta, labs, categorias, acciones, un, q, proveedores)
+    f = Filtros(user, empresa, desde, hasta, labs, categorias, acciones, un, q, proveedores, crit=crit)
     jv, wv, pv = f.base("ddmrp.rep_venta_mes", con_un=True)
     jc, wc, pc = f.base("ddmrp.rep_compra_mes", con_prov=True)
     jo, wo, po = f.base("ddmrp.rep_otif", con_prov=True)

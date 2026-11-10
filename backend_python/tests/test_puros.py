@@ -253,3 +253,14 @@ def test_filtros_reporte_sql():
         assert False
     except Exception as e:
         assert getattr(e, "status_code", 0) == 400
+
+
+def test_filtros_reporte_criterios_de_items():
+    from app.routers import reportes_compras as r
+    r.cfg_rep = lambda: {"rep_plan_categoria": 1, "rep_plan_accion": 3}
+    r._labs_permitidos = lambda u: None
+    f = r.Filtros({"id": "x"}, crit="007:A,007:B,009:Z,sinplan")
+    _, w, p = f.base("ddmrp.rep_venta_mes")
+    assert f.crit == {"007": ["A", "B"], "009": ["Z"]}                       # mismo plan = O (lista), planes distintos = Y (un EXISTS por plan)
+    assert w.count("EXISTS") == 2 and p["cp0"] == "007" and p["cc0"] == ["A", "B"] and p["cp1"] == "009" and p["cc1"] == ["Z"]
+    assert "x.producto_id" in w and "perm" not in p
