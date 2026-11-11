@@ -353,7 +353,7 @@ def indicadores(empresa: str | None = None, desde: str | None = None, hasta: str
         SELECT m.mes, SUM(m.valor)::float8 AS venta, SUM(CASE WHEN ci.costo IS NOT NULL THEN m.valor - m.cant * ci.costo END)::float8 AS margen,
                SUM(CASE WHEN ci.costo IS NOT NULL THEN m.cant * ci.costo END)::float8 AS costo_venta,
                SUM(CASE WHEN m.dias > 0 AND ci.costo IS NOT NULL THEN m.inv_prom * ci.costo END)::float8 AS inv_costo,
-               SUM(m.dias_roja)::float8 AS roja, SUM(m.dias_z)::float8 AS dz
+               SUM(m.dias_roja)::float8 AS roja, SUM(m.dias_ag)::float8 AS ag, SUM(m.dias_z)::float8 AS dz
         FROM ddmrp.rep_indicadores_mes m LEFT JOIN ddmrp.costo_item ci ON ci.empresa = m.empresa AND ci.producto_id = m.producto_id
         WHERE m.alcance = :alc AND m.mes BETWEEN :per_d AND :per_h AND m.producto_id = ANY(:ids){w_emp} GROUP BY m.mes"""), base_p).mappings()}, {})
     inv = ven = mensual
@@ -412,6 +412,7 @@ def indicadores(empresa: str | None = None, desde: str | None = None, hasta: str
     kp["pct_capital_bajo"] = None if kp["inv_prom_costo"] <= 0 else 100.0 * kp["capital_bajo"] / kp["inv_prom_costo"]
     dz = sum(i.get("dz") or 0 for i in inv.values())
     kp["abast"] = None if dz <= 0 else 1.0 - sum(i.get("roja") or 0 for i in inv.values()) / dz
+    kp["agot"] = None if dz <= 0 else sum(i.get("ag") or 0 for i in inv.values()) / dz      # % agotado: combinaciones con buffer e inventario 0 (la linea punteada del Control)
     kp.update(infull=kot["infull"], ontime=kot["ontime"], otif=kot["otif"], lineas_otif=kot["lineas"])
     lim = min(max(int(limite), 10), TOPE_FILAS)
     orden = sorted(items, key=lambda it: (-(it.get("inv_prom_costo") or 0.0), it["producto_id"]))

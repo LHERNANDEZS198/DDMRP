@@ -193,6 +193,7 @@ export default function Control() {
     { field: 'verde', headerName: 'Verde', type: 'numericColumn', width: 85 },
     { field: 'exceso', headerName: 'Exceso', type: 'numericColumn', width: 90 },
     { field: 'no_aplica', headerName: 'No aplica', type: 'numericColumn', width: 100, headerTooltip: AYUDA['No aplica'] },
+    { field: 'agotado', headerName: 'Agotado', type: 'numericColumn', width: 100, headerTooltip: AYUDA['Agotado'], cellStyle: { fontWeight: 600 } },
     { field: 'pct_prom', headerName: '% buffer prom.', type: 'numericColumn', width: 130, valueFormatter: p => p.value == null ? '' : p.value + '%' },
     { field: 'a_pedir', headerName: 'A pedir', type: 'numericColumn', width: 100 },
     { field: 'unidades', headerName: 'Unidades sug.', type: 'numericColumn', width: 130, valueFormatter: p => Math.round(p.value).toLocaleString() },
@@ -283,7 +284,7 @@ export default function Control() {
         {!tendModo && kpi && <Chip size="small" label={`${(cambiosModo ? kpi.n_fin : kpi.n)?.toLocaleString()} combinaciones`} />}
         {!tendModo && kpi && ZONAS.map(z => <Chip key={z} size="small" label={`${ETQ[z]} ${(kpi[KEY[z] + (cambiosModo ? '_fin' : '')] ?? 0).toLocaleString()}`} sx={{ bgcolor: COLOR[z], color: '#fff' }} />)}
         {hayFiltros && <Chip size="small" variant="outlined" label="con filtros" />}</>}>
-      {!tendModo && <Box sx={{ display: 'grid', flexShrink: 0, gridTemplateColumns: { xs: 'repeat(2, 1fr)', md: 'repeat(6, 1fr)' }, gap: 1.5 }}>
+      {!tendModo && <Box sx={{ display: 'grid', flexShrink: 0, gridTemplateColumns: { xs: 'repeat(2, 1fr)', md: 'repeat(7, 1fr)' }, gap: 1.5 }}>
         <Card variant="outlined" sx={{ borderLeft: '6px solid #6e8a37', flexShrink: 0 }}>
           <Box sx={{ p: 1.25 }}>
             <Typography variant="caption" color="text.secondary">Alcance actual</Typography>
@@ -304,6 +305,13 @@ export default function Control() {
               </CardActionArea>
             </Card></Tooltip>)
         })}
+        <Tooltip title={AYUDA['Agotado']} placement="top"><Card variant="outlined" sx={{ borderLeft: '6px solid #000' }}>
+          <Box sx={{ p: 1.25 }}>
+            <Typography variant="caption" color="text.secondary">Agotado (inv. 0)</Typography>
+            <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2 }}>{cambiosModo || kpi?.agotado == null ? '—' : kpi.agotado.toLocaleString()}</Typography>
+            <Typography variant="caption" color="text.secondary">{cambiosModo || kpi?.agotado == null ? 'foto del día (no aplica a cambios)' : `${((kpi.agotado / Math.max(kpi.n - (kpi.no_aplica ?? 0), 1)) * 100).toFixed(1)}% de las con buffer`}</Typography>
+          </Box>
+        </Card></Tooltip>
       </Box>}
 
       {/* Filtros */}
@@ -385,7 +393,7 @@ export default function Control() {
       {tendModo && (
         <Paper variant="outlined" sx={{ p: 1.5, flexShrink: 0 }}>
           <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>Semáforo en el tiempo (% de combinaciones con buffer por zona){serie.length ? ` · ${(serie[serie.length - 1].n - (serie[serie.length - 1].no_aplica ?? 0)).toLocaleString()} con buffer de ${serie[serie.length - 1].n.toLocaleString()}` : ''}</Typography>
-          <Typography variant="caption" color="text.secondary">Cada día es la foto de la corrida del motor; la línea punteada es el % disponible (todas las zonas menos la roja) sobre las combinaciones con buffer: las «No aplica» (sin ventas y sin stock) no cuentan. Necesitas al menos 2 días de historia para ver la curva.</Typography>
+          <Typography variant="caption" color="text.secondary">Cada día es la foto de la corrida del motor; la línea punteada es el % agotado (combinaciones con buffer e inventario 0), un indicador paralelo al semáforo: roja es riesgo de agotarse, agotado es estar en cero. Las «No aplica» (sin ventas y sin stock) no cuentan. Necesitas al menos 2 días de historia para ver la curva.</Typography>
           <ZonaShare serie={serie} />
           <Typography variant="subtitle2" sx={{ fontWeight: 700, mt: 2 }}>Buffer en el tiempo (unidades)</Typography>
           <Typography variant="caption" color="text.secondary">Para la curva de un solo item en una sola tienda, elige esa tienda y escribe el código del item. Si no, las unidades de todo lo filtrado se suman.</Typography>

@@ -92,9 +92,9 @@ def puntos(items: list[dict], tope: int = 800) -> list[dict]:
 
 
 def unir_series(periodos: list[str], dias: dict[str, int], ventas: dict, inv: dict, otif: dict) -> list[dict]:
-    """Una fila por mes con todos los indicadores. ventas[mes] = {venta, margen, costo_venta}; inv[mes] = {inv_costo, roja, dz}; otif[mes] = {infull, ontime, otif, lineas} (otif = a tiempo Y completo en la misma linea).
+    """Una fila por mes con todos los indicadores. ventas[mes] = {venta, margen, costo_venta}; inv[mes] = {inv_costo, roja, ag, dz}; otif[mes] = {infull, ontime, otif, lineas} (otif = a tiempo Y completo en la misma linea).
     GMROI del mes = margen del mes anualizado (x 365 / dias del mes) / inventario promedio a costo del mes; abastecimiento = 1 - dias en roja / dias con zona
-    (el mismo «disponible» de la tendencia del Control: todas las zonas menos la roja). Sin dato de un indicador en un mes queda None, nunca 0."""
+    (fuera de riesgo de agotarse); agot = dias agotados (con buffer e inventario 0) / dias con zona (la linea punteada del Control). Sin dato de un indicador en un mes queda None, nunca 0."""
     out = []
     for p in periodos:
         v, i, o = ventas.get(p) or {}, inv.get(p) or {}, otif.get(p) or {}
@@ -106,5 +106,6 @@ def unir_series(periodos: list[str], dias: dict[str, int], ventas: dict, inv: di
                     "inv_costo": ic, "gmroi": None if not ic or ic <= 0 or mg is None else mg * f / ic,
                     "meses_inv": None if not ic or not cv or cv <= 0 else ic / (cv * f / 12.0),
                     "abast": None if dz <= 0 else 1.0 - float(i.get("roja") or 0) / dz,
+                    "agot": None if dz <= 0 else float(i.get("ag") or 0) / dz,
                     "infull": o.get("infull"), "ontime": o.get("ontime"), "otif": o.get("otif"), "lineas_otif": o.get("lineas") or 0})
     return out

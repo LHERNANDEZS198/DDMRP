@@ -108,7 +108,8 @@ export default function ReporteIndicadores() {
     num('gmroi', 'GMROI', v => dec(v), 95, 'Margen del mes anualizado ÷ inventario promedio a costo del mes'),
     num('margen', 'Margen $', pesos, 130), num('margen_pct', 'Margen %', v => dec(v, 1) + ' %', 100), num('venta', 'Venta neta', pesos, 135),
     num('inv_costo', 'Inv. prom. a costo', pesos, 145), num('meses_inv', 'Meses inv.', v => dec(v, 1), 105),
-    num('abast', '% abastecimiento', p100, 140, 'Combinaciones tienda × item que NO estuvieron en zona roja (el «disponible» de la tendencia del Control), promedio de los días del mes'),
+    num('abast', '% abastecimiento', p100, 140, 'Combinaciones tienda × item que NO estuvieron en zona roja (fuera de riesgo de agotarse), promedio de los días del mes'),
+    num('agot', '% agotado', p100, 110, 'Combinaciones tienda × item CON buffer cuyo inventario fue 0 (la línea punteada de la tendencia del Control), promedio de los días del mes'),
     num('otif', 'OTIF', p100, 90, 'Líneas de OC que llegaron a tiempo Y completas, sobre las líneas con última entrada ese mes'), num('infull', '% completo', p100, 110, 'Líneas de OC cuya última entrada fue ese mes y llegaron completas'), num('ontime', '% a tiempo', p100, 110, 'Líneas de OC cuya última entrada fue ese mes y llegó en la fecha pactada'),
     num('lineas_otif', 'Líneas OC', ent, 100),
   ], [])
@@ -167,7 +168,8 @@ export default function ReporteIndicadores() {
       {!!d && !d.filas.length && !cargando && <Alert severity="info">No hay productos con venta o inventario con estos filtros.</Alert>}
       <Box sx={{ display: 'flex', gap: 1.25, flexWrap: 'wrap', opacity: cargando ? .6 : 1 }}>
         <Kpi titulo="GMROI anual" valor={k ? <span style={{ color: colorG }}>{dec(k.gmroi)}</span> : '…'} sub={m ? `mínimo ${dec(m.minimo, 1)} · meta ${dec(m.objetivo, 1)}` : ''} ayuda="Margen anualizado ÷ inventario promedio a costo del periodo, sobre las sumas del filtro. Pesos de margen al año por cada peso invertido en inventario." />
-        <Kpi titulo="% Abastecimiento" valor={k ? (k.abast == null ? '—' : p100(k.abast)) : '…'} ayuda="Combinaciones tienda × item que NO estuvieron en zona roja, promedio de los días del periodo: el «disponible» (línea punteada) de la tendencia del Control." />
+        <Kpi titulo="% Abastecimiento" valor={k ? (k.abast == null ? '—' : p100(k.abast)) : '…'} ayuda="Combinaciones tienda × item que NO estuvieron en zona roja (fuera de riesgo de agotarse), promedio de los días del periodo." />
+        <Kpi titulo="% Agotado" valor={k ? (k.agot == null ? '—' : p100(k.agot)) : '…'} ayuda="Combinaciones tienda × item CON buffer cuyo inventario fue 0, promedio de los días del periodo: la línea punteada de la tendencia del Control. Las «No aplica» no cuentan. Menos es mejor." />
         <Kpi titulo="OTIF (a tiempo y completo)" valor={k ? pct(k.otif, 0) : '…'} sub={k ? `${ent(k.lineas_otif)} líneas de OC` : ''} ayuda="Líneas de OC que llegaron a tiempo Y completas a la vez (no es el producto de los dos porcentajes: se mide línea por línea). Umbrales en Reglas de compras." />
         <Kpi titulo="% Completo (infull)" valor={k ? pct(k.infull, 0) : '…'} sub={k ? `${ent(k.lineas_otif)} líneas de OC` : ''} ayuda="Líneas de OC que llegaron completas (umbral en Reglas de compras)" />
         <Kpi titulo="% A tiempo (ontime)" valor={k ? pct(k.ontime, 0) : '…'} ayuda="Líneas de OC cuya última entrada llegó en la fecha pactada (días de gracia en Reglas de compras)" />
@@ -180,8 +182,8 @@ export default function ReporteIndicadores() {
         <Panel titulo="GMROI por mes" ayuda={m ? `Margen del mes anualizado ÷ inventario promedio a costo del mes. Mínimo ${dec(m.minimo, 1)} · meta ${dec(m.objetivo, 1)}.` : ''}>
           <LineasAnio modo={modo} periodos={per} fmt={v => dec(v)} fmtEje={v => dec(v, 1)} alto={230} series={[{ nombre: 'GMROI', color: COLOR.azul, valores: s.map(x => x.gmroi) }]} />
         </Panel>
-        <Panel titulo="% de abastecimiento por mes" ayuda="Combinaciones tienda × item fuera de zona roja (el «disponible» del Control), promedio de los días del mes.">
-          <LineasAnio modo={modo} periodos={per} fmt={v => pct(v, 1)} fmtEje={ejePct} alto={230} techo={1} spanMin={0.1} series={[{ nombre: '% Abastecimiento', color: COLOR.violeta, valores: s.map(x => x.abast) }]} />
+        <Panel titulo="% de abastecimiento y % agotado por mes" ayuda="Abastecimiento: combinaciones tienda × item fuera de zona roja. Agotado: combinaciones con buffer e inventario 0 (la línea punteada del Control). Promedio de los días del mes.">
+          <LineasAnio modo={modo} periodos={per} fmt={v => pct(v, 1)} fmtEje={ejePct} alto={230} techo={1} spanMin={0.1} series={[{ nombre: '% Abastecimiento', color: COLOR.violeta, valores: s.map(x => x.abast) }, { nombre: '% Agotado', color: COLOR.naranja, valores: s.map(x => x.agot) }]} />
         </Panel>
         <Panel titulo="Cumplimiento del proveedor por mes (OTIF)" ayuda="Mes de la última entrada de cada línea de OC. Completo: llegó lo pedido. A tiempo: llegó en la fecha pactada. OTIF: ambas cosas a la vez en la misma línea.">
           <LineasAnio modo={modo} periodos={per} fmt={v => pct(v, 0)} fmtEje={ejePct} alto={230} techo={1} piso={0}
@@ -236,7 +238,8 @@ export default function ReporteIndicadores() {
         <AccordionDetails>
           <Typography variant="body2" component="div">
             <p><b>GMROI</b> = margen anualizado ÷ inventario promedio a costo = margen % × (venta anual ÷ inventario promedio a costo). Dice cuántos pesos de margen deja cada peso invertido en inventario durante un año. Es el mismo cálculo de la Clasificación (venta neta sin IVA de las tiendas, costo promedio actual, inventario promedio de la foto mensual), así que las cifras coinciden. Por mes: el margen del mes se anualiza (× 365 ÷ días del mes) y se divide por el inventario promedio del mes.</p>
-            <p><b>% Abastecimiento</b> = combinaciones tienda × item que no estuvieron en zona roja del buffer, promedio de los días del mes: el «disponible» (línea punteada) de la tendencia del Control. Se guarda por mes desde que existe esta pantalla; los meses anteriores que ya no conservan la foto diaria salen vacíos.</p>
+            <p><b>% Abastecimiento</b> = combinaciones tienda × item que no estuvieron en zona roja del buffer, promedio de los días del mes: fuera de riesgo de agotarse. Se guarda por mes desde que existe esta pantalla; los meses anteriores que ya no conservan la foto diaria salen vacíos.</p>
+            <p><b>% Agotado</b> = combinaciones tienda × item <i>con buffer</i> cuyo inventario fue 0, promedio de los días del mes (la línea punteada de la tendencia del Control). Va en paralelo al abastecimiento: la zona roja es riesgo de agotarse; agotado es estar en cero. Los meses calculados antes de esta versión salen vacíos hasta que pulses «Recalcular».</p>
             <p><b>OTIF</b> sale de las órdenes de compra: «completo» si lo recibido es al menos el % de lo pedido definido en Reglas de compras y «a tiempo» si la última entrada llegó en la fecha pactada más los días de gracia. Cada línea cuenta en el mes de su última entrada.</p>
             <p><b>Totales, grupos y meses</b> se calculan sobre sumas en pesos, no promediando el GMROI de cada producto.</p>
             <p><b>Bandas:</b> baja (por debajo del mínimo), media (entre el mínimo y la meta) y en meta; aparte, productos sin venta con inventario (capital dormido), sin inventario promedio o sin costo conocido. El mínimo y la meta se cambian en Reglas de compras.</p>

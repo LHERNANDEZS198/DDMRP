@@ -109,6 +109,7 @@ def resumen(agrupar: str = "bodega", bodegas: str | None = None, labs: str | Non
     sql = f"""SELECT {clave} AS clave, MAX({nombre}) AS nombre, MAX(tc.clase) AS clase_tienda, count(*) AS n,
                      count(*) FILTER (WHERE s.zona = 'ROJA') AS roja, count(*) FILTER (WHERE s.zona = 'AMARILLA') AS amarilla,
                      count(*) FILTER (WHERE s.zona = 'VERDE') AS verde, count(*) FILTER (WHERE s.zona = 'EXCESO') AS exceso, count(*) FILTER (WHERE s.zona = 'NO_APLICA') AS no_aplica,
+                     count(*) FILTER (WHERE s.zona::text <> 'NO_APLICA' AND COALESCE(s.inventario, 0) <= 0) AS agotado,
                      round(avg(LEAST(COALESCE(s.pct_buffer, 0), 200)), 1) AS pct_prom,
                      count(*) FILTER (WHERE s.cantidad_sugerida > 0) AS a_pedir,
                      COALESCE(sum(s.cantidad_sugerida), 0) AS unidades,
@@ -117,6 +118,7 @@ def resumen(agrupar: str = "bodega", bodegas: str | None = None, labs: str | Non
               {frm} WHERE {w} GROUP BY 1{", s.empresa" if agrupar in ("bodega", "item") else ""} ORDER BY (count(*) FILTER (WHERE s.zona = 'ROJA'))::float / count(*) DESC, 1 LIMIT :lim"""
     tot = f"""SELECT count(*) AS n, count(*) FILTER (WHERE s.zona = 'ROJA') AS roja, count(*) FILTER (WHERE s.zona = 'AMARILLA') AS amarilla,
                      count(*) FILTER (WHERE s.zona = 'VERDE') AS verde, count(*) FILTER (WHERE s.zona = 'EXCESO') AS exceso, count(*) FILTER (WHERE s.zona = 'NO_APLICA') AS no_aplica,
+                     count(*) FILTER (WHERE s.zona::text <> 'NO_APLICA' AND COALESCE(s.inventario, 0) <= 0) AS agotado,
                      round(avg(LEAST(COALESCE(s.pct_buffer, 0), 200)), 1) AS pct_prom,
                      COALESCE(sum(s.cantidad_sugerida), 0) AS unidades,
                      COALESCE(sum(s.inventario), 0) AS inventario, COALESCE(sum(s.en_transito), 0) AS en_transito,
@@ -284,7 +286,8 @@ def tendencia(desde: date | None = None, hasta: date | None = None, bodegas: str
                      count(*) FILTER (WHERE h.inventario > 0) AS con_stock,
                      count(*) FILTER (WHERE h.zona = 'ROJA') AS roja, count(*) FILTER (WHERE h.zona = 'AMARILLA') AS amarilla,
                      count(*) FILTER (WHERE h.zona = 'VERDE') AS verde, count(*) FILTER (WHERE h.zona = 'EXCESO') AS exceso,
-                     count(*) FILTER (WHERE h.zona = 'NO_APLICA') AS no_aplica
+                     count(*) FILTER (WHERE h.zona = 'NO_APLICA') AS no_aplica,
+                     count(*) FILTER (WHERE h.zona::text <> 'NO_APLICA' AND COALESCE(h.inventario, 0) <= 0) AS agotado
               FROM ddmrp.buffer_historia h
               LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = h.empresa AND mi.producto_id = h.producto_id
               WHERE {' AND '.join(cond)} GROUP BY h.fecha ORDER BY h.fecha"""
@@ -380,7 +383,7 @@ def _dic_filtros(bodegas, labs, q, zonas, dia, empresa, crit):
 
 COLS_GRUPO = [{"t": "Clave", "k": "clave", "w": 16}, {"t": "Nombre", "k": "nombre", "w": 32}, {"t": "Clase tienda", "k": "clase_tienda", "w": 8}, {"t": "Combinaciones", "k": "n", "f": "int"},
               {"t": "Rojo", "k": "roja", "f": "int"}, {"t": "Amarillo", "k": "amarilla", "f": "int"}, {"t": "Verde", "k": "verde", "f": "int"},
-              {"t": "Exceso", "k": "exceso", "f": "int"}, {"t": "No aplica", "k": "no_aplica", "f": "int"}, {"t": "% buffer prom", "k": "pct_prom", "f": "dec1"},
+              {"t": "Exceso", "k": "exceso", "f": "int"}, {"t": "No aplica", "k": "no_aplica", "f": "int"}, {"t": "Agotado (inv. 0)", "k": "agotado", "f": "int"}, {"t": "% buffer prom", "k": "pct_prom", "f": "dec1"},
               {"t": "A pedir", "k": "a_pedir", "f": "int"}, {"t": "Unidades sugeridas", "k": "unidades", "f": "int"},
               {"t": "Inventario", "k": "inventario", "f": "int"}, {"t": "En transito", "k": "en_transito", "f": "int"},
               {"t": "Flujo neto", "k": "flujo_neto", "f": "int"}, {"t": "TOG ajustado", "k": "tog_aj", "f": "int"}]

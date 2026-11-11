@@ -314,22 +314,22 @@ def _calcular_indicadores() -> dict:
             c.execute(text("SET LOCAL statement_timeout = 0"))
             _ejec(c, f"{alc}: borrar", "DELETE FROM ddmrp.rep_indicadores_mes WHERE alcance = :a", {"a": alc})
             n = _ejec(c, f"{alc}: item por mes", f"""
-                INSERT INTO ddmrp.rep_indicadores_mes (alcance, mes, empresa, producto_id, cant, valor, inv_prom, dias, dias_tot, dias_cero, dias_z, dias_roja)
+                INSERT INTO ddmrp.rep_indicadores_mes (alcance, mes, empresa, producto_id, cant, valor, inv_prom, dias, dias_tot, dias_cero, dias_z, dias_roja, dias_ag)
                 WITH v AS (
                   SELECT a.mes, a.empresa, COALESCE(r.original_id, a.producto_id) AS producto_id, SUM(a.cantidad)::float8 AS cant, SUM(a.valor)::float8 AS valor
                   {v_from} LEFT JOIN ddmrp.v_item_rec r ON r.empresa = a.empresa AND r.rec_id = a.producto_id
                   WHERE a.mes >= :mes_min AND {v_sin} GROUP BY 1, 2, 3),
                 h AS (
                   SELECT mes, empresa, producto_id, SUM(CASE WHEN dias > 0 THEN inv_suma::float8 / dias ELSE 0 END) AS inv_prom, MAX(dias) AS dias, SUM(dias) AS dias_tot,
-                         SUM(dias_cero) AS dias_cero, SUM(dias_z) AS dias_z, SUM(dias_roja) AS dias_roja
+                         SUM(dias_cero) AS dias_cero, SUM(dias_z) AS dias_z, SUM(dias_roja) AS dias_roja, COALESCE(SUM(dias_ag), 0) AS dias_ag
                   FROM ddmrp.inventario_mes
                   WHERE mes >= :mes_min AND (empresa, bodega_id) {h_cedi} (SELECT empresa, bodega_id FROM ddmrp.maestro_cedi) GROUP BY 1, 2, 3),
                 k AS (
                   SELECT COALESCE(v.mes, h.mes) AS mes, COALESCE(v.empresa, h.empresa) AS empresa, COALESCE(v.producto_id, h.producto_id) AS producto_id,
-                         v.cant, v.valor, h.inv_prom, h.dias, h.dias_tot, h.dias_cero, h.dias_z, h.dias_roja
+                         v.cant, v.valor, h.inv_prom, h.dias, h.dias_tot, h.dias_cero, h.dias_z, h.dias_roja, h.dias_ag
                   FROM v FULL JOIN h ON h.mes = v.mes AND h.empresa = v.empresa AND h.producto_id = v.producto_id)
                 SELECT CAST(:a AS TEXT), k.mes, k.empresa, k.producto_id, COALESCE(k.cant, 0), COALESCE(k.valor, 0), COALESCE(k.inv_prom, 0), COALESCE(k.dias, 0), COALESCE(k.dias_tot, 0),
-                       COALESCE(k.dias_cero, 0), COALESCE(k.dias_z, 0), COALESCE(k.dias_roja, 0)
+                       COALESCE(k.dias_cero, 0), COALESCE(k.dias_z, 0), COALESCE(k.dias_roja, 0), COALESCE(k.dias_ag, 0)
                 FROM k WHERE {solo_activos('k')}""", {"a": alc, "mes_min": mes_min}).rowcount
             _ejec(c, f"{alc}: borrar inventario", "DELETE FROM ddmrp.rep_indicadores_item WHERE alcance = :a", {"a": alc})
             _ejec(c, f"{alc}: inventario de hoy", f"""

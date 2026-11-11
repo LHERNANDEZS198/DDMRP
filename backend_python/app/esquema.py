@@ -147,7 +147,7 @@ SENTENCIAS = [
          PRIMARY KEY (empresa, bodega_id, producto_id, mes))""",
     "CREATE INDEX IF NOT EXISTS idx_invmes_mes ON ddmrp.inventario_mes (mes)",
     # dias con zona y dias en zona roja de cada mes (base del % de abastecimiento mensual de Indicadores de compras); los meses viejos quedan NULL hasta completarse
-    "ALTER TABLE ddmrp.inventario_mes ADD COLUMN IF NOT EXISTS dias_z INT, ADD COLUMN IF NOT EXISTS dias_roja INT",
+    "ALTER TABLE ddmrp.inventario_mes ADD COLUMN IF NOT EXISTS dias_z INT, ADD COLUMN IF NOT EXISTS dias_roja INT, ADD COLUMN IF NOT EXISTS dias_ag INT",
     """CREATE TABLE IF NOT EXISTS ddmrp.vista_guardada (
          usuario_id  TEXT NOT NULL,
          informe     TEXT NOT NULL,
@@ -668,6 +668,7 @@ SENTENCIAS_REPORTES = [
          cant FLOAT8 NOT NULL DEFAULT 0, valor FLOAT8 NOT NULL DEFAULT 0, inv_prom FLOAT8 NOT NULL DEFAULT 0, dias INT NOT NULL DEFAULT 0, dias_tot INT NOT NULL DEFAULT 0,
          dias_cero INT NOT NULL DEFAULT 0, dias_z INT NOT NULL DEFAULT 0, dias_roja INT NOT NULL DEFAULT 0, calculado TIMESTAMPTZ NOT NULL DEFAULT now(),
          PRIMARY KEY (alcance, mes, empresa, producto_id))""",
+    "ALTER TABLE ddmrp.rep_indicadores_mes ADD COLUMN IF NOT EXISTS dias_ag INT NOT NULL DEFAULT 0",
     "CREATE INDEX IF NOT EXISTS idx_rep_ind_item ON ddmrp.rep_indicadores_mes (alcance, empresa, producto_id)",
     """CREATE TABLE IF NOT EXISTS ddmrp.rep_indicadores_item (
          alcance TEXT NOT NULL, empresa TEXT NOT NULL, producto_id TEXT NOT NULL, inventario FLOAT8 NOT NULL DEFAULT 0, PRIMARY KEY (alcance, empresa, producto_id))""",

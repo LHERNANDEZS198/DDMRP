@@ -294,11 +294,11 @@ def test_gmroi_serie_mensual():
     from app import gmroi as gm
     ps = ["202610", "202611", "202612"]
     ven = {"202610": {"venta": 1000.0, "margen": 400.0, "costo_venta": 600.0}, "202611": {"venta": 0.0, "margen": 0.0, "costo_venta": 0.0}}
-    inv = {"202610": {"inv_costo": 1000.0, "roja": 30.0, "dz": 300.0}, "202611": {"inv_costo": 0.0, "roja": None, "dz": None}}
+    inv = {"202610": {"inv_costo": 1000.0, "roja": 30.0, "ag": 15.0, "dz": 300.0}, "202611": {"inv_costo": 0.0, "roja": None, "dz": None}}
     ot = {"202610": {"infull": 0.9, "ontime": 0.5, "otif": 0.45, "lineas": 12}}
     s = {x["periodo"]: x for x in gm.unir_series(ps, {"202610": 31, "202611": 30, "202612": 31}, ven, inv, ot)}
     a = s["202610"]
-    assert abs(a["gmroi"] - 400.0 * (365 / 31) / 1000.0) < 1e-9 and abs(a["abast"] - 0.9) < 1e-9 and a["margen_pct"] == 40.0 and a["infull"] == 0.9 and a["otif"] == 0.45 and a["lineas_otif"] == 12
+    assert abs(a["gmroi"] - 400.0 * (365 / 31) / 1000.0) < 1e-9 and abs(a["abast"] - 0.9) < 1e-9 and abs(a["agot"] - 0.05) < 1e-9 and a["margen_pct"] == 40.0 and a["infull"] == 0.9 and a["otif"] == 0.45 and a["lineas_otif"] == 12
     assert abs(a["meses_inv"] - 1000.0 / (600.0 * (365 / 31) / 12.0)) < 1e-9
-    assert s["202611"]["gmroi"] is None and s["202611"]["abast"] is None and s["202611"]["margen_pct"] is None       # sin inventario o sin dato: vacio, no cero
+    assert s["202611"]["gmroi"] is None and s["202611"]["abast"] is None and s["202611"]["agot"] is None and s["202611"]["margen_pct"] is None       # sin inventario o sin dato: vacio, no cero
     assert s["202612"]["gmroi"] is None and s["202612"]["infull"] is None and s["202612"]["lineas_otif"] == 0

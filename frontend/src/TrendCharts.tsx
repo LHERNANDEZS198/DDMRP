@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Box, Typography } from '@mui/material'
 
 export type Punto = { fecha: string; n: number; tor: number; toy_aj: number; tog_aj: number; inventario: number; flujo_neto: number
-  roja: number; amarilla: number; verde: number; exceso: number; no_aplica?: number; con_stock?: number }
+  roja: number; amarilla: number; verde: number; exceso: number; no_aplica?: number; con_stock?: number; agotado?: number }
 const C = { roja: '#e0584d', amarilla: '#f4d03f', verde: '#7bbf5a', exceso: '#1565c0', inv: '#111', nfp: '#d500f9' }
 const fmt = (v: number) => Math.abs(v) >= 1000 ? (v / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 }) + 'k' : String(Math.round(v))
 const dm = (s: string) => `${s.slice(8, 10)}/${s.slice(5, 7)}`
@@ -75,7 +75,7 @@ export function BufferTrend({ serie }: { serie: Punto[] }) {
 }
 
 /** Semáforo en el tiempo: % de combinaciones en cada zona por día, como áreas apiladas al 100% (rojo abajo, azul/exceso arriba),
- *  y la línea punteada "Disponible" = % de combinaciones con inventario > 0. */
+ *  y la línea punteada "Agotado" = % de combinaciones con buffer e inventario 0 (indicador paralelo al semáforo: roja = en riesgo, agotado = en cero). */
 export function ZonaShare({ serie }: { serie: Punto[] }) {
   const [ref, W] = useAncho(); const [hover, setHover] = useState<number | null>(null); const [modo, setModo] = useState<'apilado' | 'cambio'>('apilado')
   const H = 300, M = { l: 52, r: 14, t: 8, b: 48 }
@@ -83,7 +83,7 @@ export function ZonaShare({ serie }: { serie: Punto[] }) {
   const n = serie.length, pw = W - M.l - M.r, ph = H - M.t - M.b
   const bw = pw / n, x = (i: number) => (n === 1 ? M.l + pw / 2 : M.l + (pw * i) / (n - 1)), ypc = (f: number) => H - M.b - f * ph
   const zonas = ['roja', 'amarilla', 'verde', 'exceso'] as const
-  const ap = (p: Punto) => Math.max(p.n - (p.no_aplica ?? 0), 1)      // combinaciones CON buffer: las «No aplica» (sin ADU y sin stock) no entran al semaforo ni al disponible
+  const ap = (p: Punto) => Math.max(p.n - (p.no_aplica ?? 0), 1)      // combinaciones CON buffer: las «No aplica» (sin ADU y sin stock) no entran al semaforo ni al agotado
   const paso = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(pw / 70))))
   const h = hover != null ? serie[hover] : null
   // frontera acumulada de cada zona por dia (0..1)
@@ -93,15 +93,15 @@ export function ZonaShare({ serie }: { serie: Punto[] }) {
     const inf = serie.map((_, i) => `${x(i)},${ypc(k === 0 ? 0 : acum[i][k - 1])}`).reverse()
     return [...sup, ...inf].join(' ')
   }
-  const hayDisp = serie.length > 0   // Disponible = todas las zonas menos la roja
+  const hayDisp = serie.some(p => p.agotado != null)   // linea punteada = % agotado (con buffer e inventario 0)
   // modo "cambio": puntos porcentuales de cada zona frente al primer dia, con el eje ajustado a lo que realmente se mueve
-  const pc = (p: Punto, z: typeof zonas[number] | 'disp') => ((z === 'disp' ? ap(p) - p.roja : p[z]) / ap(p)) * 100
+  const pc = (p: Punto, z: typeof zonas[number] | 'disp') => ((z === 'disp' ? (p.agotado ?? 0) : p[z]) / ap(p)) * 100
   const ser = [...zonas, ...(hayDisp ? ['disp' as const] : [])]
   const delta = ser.map(z => serie.map(p => pc(p, z) - pc(serie[0], z)))
   const dmax = Math.max(0.5, ...delta.flat().map(Math.abs)), lim = Math.ceil(dmax * 1.15 * 2) / 2
   const yd = (v: number) => M.t + ph / 2 - (v / lim) * (ph / 2)
   const colS = (z: string) => (z === 'disp' ? '#000' : C[z as keyof typeof C])
-  const disp = serie.map((p, i) => `${x(i)},${ypc((ap(p) - p.roja) / ap(p))}`).join(' ')
+  const disp = serie.map((p, i) => `${x(i)},${ypc((p.agotado ?? 0) / ap(p))}`).join(' ')
   return (
     <Box ref={ref} sx={{ width: '100%', position: 'relative' }}>
       <Box sx={{ display: 'flex', gap: 1, fontSize: 12, mb: .5, alignItems: 'center' }}>Vista:
@@ -127,11 +127,11 @@ export function ZonaShare({ serie }: { serie: Punto[] }) {
       {h && <Box sx={{ position: 'absolute', top: 4, left: Math.min(Math.max(x(hover!) + 10, 8), W - 210), bgcolor: 'rgba(255,255,255,.96)', border: '1px solid #bbb', borderRadius: 1, p: 1, fontSize: 12, pointerEvents: 'none', boxShadow: 2, minWidth: 190 }}>
         <b>{h.fecha}</b> · {ap(h).toLocaleString()} combinaciones con buffer{(h.no_aplica ?? 0) > 0 && <span style={{ color: '#777' }}> (+{(h.no_aplica ?? 0).toLocaleString()} no aplica)</span>}
         {(['exceso', 'verde', 'amarilla', 'roja'] as const).map(z => <div key={z} style={{ color: z === 'amarilla' ? '#b8860b' : C[z] }}>{z === 'exceso' ? 'AZUL (exceso)' : z.toUpperCase()}: {h[z].toLocaleString()} ({((h[z] / ap(h)) * 100).toFixed(1)}%)</div>)}
-        <div><b>Disponible:</b> {(((ap(h) - h.roja) / ap(h)) * 100).toFixed(1)}% (todo menos zona roja, sobre las que tienen buffer)</div>
+        <div><b>Agotado:</b> {(((h.agotado ?? 0) / ap(h)) * 100).toFixed(1)}% ({(h.agotado ?? 0).toLocaleString()} con buffer e inventario 0)</div>
       </Box>}
       <Box sx={{ display: 'flex', gap: 2, justifyContent: 'center', flexWrap: 'wrap', fontSize: 12, mt: .5 }}>
         {[['Rojo', C.roja], ['Amarillo', C.amarilla], ['Verde', C.verde], ['Azul (exceso)', C.exceso]].map(([l, c]) => <span key={l}><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, background: c, marginRight: 4 }} />{l}</span>)}
-        {hayDisp && <span><span style={{ display: 'inline-block', width: 18, borderTop: '2px dashed #000', marginRight: 4, verticalAlign: 'middle' }} />Disponible (% fuera de zona roja)</span>}
+        {hayDisp && <span><span style={{ display: 'inline-block', width: 18, borderTop: '2px dashed #000', marginRight: 4, verticalAlign: 'middle' }} />Agotado (% con buffer e inventario 0)</span>}
       </Box>
     </Box>)
 }

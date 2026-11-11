@@ -23,6 +23,7 @@ export const AYUDA: Record<string, string> = {
   Amarillo: 'Hay que reponer: el flujo neto está sobre el nivel de emergencia pero por debajo del nivel de pedido (TOY).',
   Verde: 'Saludable: el flujo neto está entre el nivel de pedido y el tope (TOG). No hay que pedir. Un producto sin buffer definido (sin ventas) y sin stock ya no sale verde: es «No aplica».',
   Exceso: 'Sobra: el flujo neto supera el tope (TOG). No se pide. También sale en exceso un producto sin buffer definido pero con stock (capital sin demanda).',
+  'Agotado': 'Combinaciones CON buffer cuyo inventario en la tienda es 0 (agotado de verdad). Es un indicador paralelo al semáforo: una combinación puede estar en zona roja con stock, o agotada en amarilla si tiene tránsito. Las «No aplica» no cuentan.',
   'No aplica': 'Sin buffer definido (sin ADU, no se vende en esa tienda) y sin stock: no hay nada que gestionar. No cuenta como disponible ni como faltante, y queda fuera del % de abastecimiento.',
   '% buffer prom.': 'Promedio del porcentaje de buffer: flujo neto ÷ tope verde (TOG) × 100. Cerca de 0% es vacío, 100% es el tope.',
   '% buffer': 'Qué tan lleno está el buffer: flujo neto ÷ tope verde (TOG) × 100. Sobre 100% es exceso.',
