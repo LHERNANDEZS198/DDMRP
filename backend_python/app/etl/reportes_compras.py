@@ -282,6 +282,18 @@ def calcular_indicadores(origen: str = "manual", usuario: str | None = None) -> 
         return res
 
 
+def _ejec(c, paso: str, sql: str, params: dict):
+    """Ejecuta una sentencia del calculo y, si Postgres la rechaza, deja en el Log el mensaje REAL de Postgres (columna o tabla que falta, sintaxis...) con el nombre del paso,
+    no el volcado de la consulta (el Log guarda solo los ultimos 500 caracteres y el mensaje queda al principio)."""
+    try:
+        return c.execute(text(sql), params)
+    except Exception as e:      # noqa: BLE001
+        d = getattr(getattr(e, "orig", None), "diag", None)
+        msg = (getattr(d, "message_primary", None) or str(getattr(e, "orig", e)).splitlines()[0])[:300]
+        det = f" · {d.message_detail}"[:150] if d is not None and getattr(d, "message_detail", None) else ""
+        raise RuntimeError(f"Indicadores · {paso}: {msg}{det}") from None
+
+
 def _calcular_indicadores() -> dict:
     from ..activos import solo_activos
     hoy, res = date.today(), {}
@@ -296,8 +308,8 @@ def _calcular_indicadores() -> dict:
         ultima = "ANY (SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok' GROUP BY empresa)"
         with pg.begin() as c:
             c.execute(text("SET LOCAL statement_timeout = 0"))
-            c.execute(text("DELETE FROM ddmrp.rep_indicadores_mes WHERE alcance = :a"), {"a": alc})
-            n = c.execute(text(f"""
+            _ejec(c, f"{alc}: borrar", "DELETE FROM ddmrp.rep_indicadores_mes WHERE alcance = :a", {"a": alc})
+            n = _ejec(c, f"{alc}: item por mes", f"""
                 INSERT INTO ddmrp.rep_indicadores_mes (alcance, mes, empresa, producto_id, cant, valor, inv_prom, dias, dias_tot, dias_cero, dias_z, dias_roja)
                 WITH v AS (
                   SELECT a.mes, a.empresa, COALESCE(r.original_id, a.producto_id) AS producto_id, SUM(a.cantidad)::float8 AS cant, SUM(a.valor)::float8 AS valor
@@ -314,12 +326,12 @@ def _calcular_indicadores() -> dict:
                   FROM v FULL JOIN h ON h.mes = v.mes AND h.empresa = v.empresa AND h.producto_id = v.producto_id)
                 SELECT CAST(:a AS TEXT), k.mes, k.empresa, k.producto_id, COALESCE(k.cant, 0), COALESCE(k.valor, 0), COALESCE(k.inv_prom, 0), COALESCE(k.dias, 0), COALESCE(k.dias_tot, 0),
                        COALESCE(k.dias_cero, 0), COALESCE(k.dias_z, 0), COALESCE(k.dias_roja, 0)
-                FROM k WHERE {solo_activos('k')}"""), {"a": alc, "mes_min": mes_min}).rowcount
-            c.execute(text("DELETE FROM ddmrp.rep_indicadores_item WHERE alcance = :a"), {"a": alc})
-            c.execute(text(f"""
+                FROM k WHERE {solo_activos('k')}""", {"a": alc, "mes_min": mes_min}).rowcount
+            _ejec(c, f"{alc}: borrar inventario", "DELETE FROM ddmrp.rep_indicadores_item WHERE alcance = :a", {"a": alc})
+            _ejec(c, f"{alc}: inventario de hoy", f"""
                 INSERT INTO ddmrp.rep_indicadores_item (alcance, empresa, producto_id, inventario)
                 SELECT CAST(:a AS TEXT), s.empresa, s.producto_id, SUM(GREATEST(s.inventario, 0))::float8
-                FROM {t_sug} s WHERE s.ejecucion_id = {ultima} AND {solo_activos('s')} GROUP BY s.empresa, s.producto_id"""), {"a": alc})
+                FROM {t_sug} s WHERE s.ejecucion_id = {ultima} AND {solo_activos('s')} GROUP BY s.empresa, s.producto_id""", {"a": alc})
         res[f"filas_{alc}"] = n
         log.info("Indicadores de compras (%s): %s filas item-mes", alc, n)
     return res
