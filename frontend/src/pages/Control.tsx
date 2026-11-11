@@ -37,15 +37,15 @@ const qs = (f: F, sinZonas = false) => {
   return p
 }
 
-/** Barra apilada con el % de combinaciones en cada zona. */
+/** Barra apilada con el % de combinaciones en cada zona. Solo las que tienen buffer: las «No aplica» (sin ADU y sin stock) no ocupan espacio. */
 function ZonaBar(p: ICellRendererParams) {
-  const g = p.data; if (!g?.n) return null
+  const g = p.data; const base = (g?.n ?? 0) - (g?.no_aplica ?? 0); if (!g?.n || base <= 0) return null
   return (
     <Box sx={{ display: 'flex', height: 18, width: '100%', borderRadius: 1, overflow: 'hidden', alignSelf: 'center', mt: '9px' }}>
-      {ZONAS.map(z => g[KEY[z]] > 0 && (
-        <Tooltip key={z} title={`${z}: ${g[KEY[z]].toLocaleString()} (${((g[KEY[z]] / g.n) * 100).toFixed(1)}%)`}>
-          <Box sx={{ width: `${(g[KEY[z]] / g.n) * 100}%`, bgcolor: COLOR[z], color: '#fff', fontSize: 10, textAlign: 'center', lineHeight: '18px' }}>
-            {(g[KEY[z]] / g.n) * 100 >= 9 ? Math.round((g[KEY[z]] / g.n) * 100) + '%' : ''}</Box>
+      {ZONAS.filter(z => z !== 'NO_APLICA').map(z => g[KEY[z]] > 0 && (
+        <Tooltip key={z} title={`${z}: ${g[KEY[z]].toLocaleString()} (${((g[KEY[z]] / base) * 100).toFixed(1)}% de las ${base.toLocaleString()} con buffer${g.no_aplica ? ` · ${g.no_aplica.toLocaleString()} no aplican` : ''})`}>
+          <Box sx={{ width: `${(g[KEY[z]] / base) * 100}%`, bgcolor: COLOR[z], color: '#fff', fontSize: 10, textAlign: 'center', lineHeight: '18px' }}>
+            {(g[KEY[z]] / base) * 100 >= 9 ? Math.round((g[KEY[z]] / base) * 100) + '%' : ''}</Box>
         </Tooltip>))}
     </Box>)
 }
@@ -90,10 +90,11 @@ function Antes({ p, ini, fin, malo }: { p: ICellRendererParams; ini: string; fin
 /** Dos barras finas: zonas al inicio y al final del periodo. */
 function ZonaBar2(p: ICellRendererParams) {
   const g = p.data; if (!g) return null
-  const una = (suf: string, n: number) => (
+  const una = (suf: string, n0: number) => { const n = n0 - (g['no_aplica' + suf] ?? 0)      // solo combinaciones con buffer: «No aplica» no ocupa espacio
+    return (
     <Box sx={{ display: 'flex', height: 9, width: '100%', borderRadius: .5, overflow: 'hidden', bgcolor: '#eee' }}>
-      {ZONAS.map(z => g[KEY[z] + suf] > 0 && n > 0 && <Box key={z} sx={{ width: `${(g[KEY[z] + suf] / n) * 100}%`, bgcolor: COLOR[z] }} />)}
-    </Box>)
+      {ZONAS.filter(z => z !== 'NO_APLICA').map(z => g[KEY[z] + suf] > 0 && n > 0 && <Box key={z} sx={{ width: `${(g[KEY[z] + suf] / n) * 100}%`, bgcolor: COLOR[z] }} />)}
+    </Box>) }
   return <Box sx={{ display: 'grid', gap: '3px', alignSelf: 'center', width: '100%', mt: '9px' }}>{una('_ini', g.n_ini)}{una('_fin', g.n_fin)}</Box>
 }
 
@@ -298,7 +299,7 @@ export default function Control() {
               <CardActionArea sx={{ p: 1.25 }} onClick={() => setF(x => ({ ...x, zonas: activo ? x.zonas.filter(y => y !== z) : [...x.zonas, z] }))}>
                 <Typography variant="caption" color="text.secondary">{ETQ[z]}</Typography>
                 <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2 }}>{n.toLocaleString()}</Typography>
-                <Typography variant="caption" color="text.secondary">{((n / total) * 100).toFixed(1)}% del alcance
+                <Typography variant="caption" color="text.secondary">{((n / (z === 'NO_APLICA' ? total : Math.max(total - (kpi?.[cambiosModo ? 'no_aplica_fin' : 'no_aplica'] ?? 0), 1))) * 100).toFixed(1)}% {z === 'NO_APLICA' ? 'del alcance' : 'de las con buffer'}
                   {cambiosModo && <> · {delta(n0, n, z === 'VERDE' ? 'baja' : z === 'AMARILLA' || z === 'NO_APLICA' ? null : 'sube')}</>}</Typography>
               </CardActionArea>
             </Card></Tooltip>)
