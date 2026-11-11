@@ -13,6 +13,7 @@ from ..security import empresas_permitidas, filtro_sql_permisos, requiere
 from ..modo import fijar_modo
 from .control import FROM, ULTIMA, _filtros, filtros as _filtros_control
 
+from ..reglas_empresa import todas_param
 router = APIRouter(prefix="/auditoria", tags=["auditoria"])
 TOPE = 20000
 
@@ -70,9 +71,10 @@ def _generar_excel(user, w: str, p: dict, limite: int, origen: str = ""):
         total = c.execute(text(f"SELECT count(*) {FROM} WHERE {w}"), p).scalar()
         if not total:
             return Response("Ninguna de esas filas está en la última corrida del motor (¿cambió la corrida?). Recarga la matriz.", status_code=404)
-        prm = {r[0]: float(r[1]) for r in c.execute(text("SELECT clave, valor FROM ddmrp.parametro"))}
+        emp_aud = c.execute(text(f"SELECT min(s.empresa) {FROM} WHERE {w}"), p).scalar() or "05"     # el Excel lleva las reglas de la empresa de las filas
+        prm = todas_param(c, emp_aud)
         factores = [dict(r) for r in c.execute(text(
-            "SELECT tipo, descripcion, factor::float8 factor, desde::float8 desde, hasta::float8 hasta FROM ddmrp.factor_tramo ORDER BY tipo, desde")).mappings()]
+            "SELECT tipo, descripcion, factor::float8 factor, desde::float8 desde, hasta::float8 hasta FROM ddmrp.factor_tramo WHERE empresa = :e ORDER BY tipo, desde"), {"e": emp_aud}).mappings()]
         filas = [dict(r) for r in c.execute(text(f"""
             SELECT s.empresa, s.bodega_id, s.producto_id, mi.descripcion, COALESCE(lb.nombre, mi.categoria) AS laboratorio,
                    COALESCE(pn.pronostico, 0)::float8 AS pronostico, s.lead_time::float8 lead_time, s.frecuencia::float8 frecuencia,

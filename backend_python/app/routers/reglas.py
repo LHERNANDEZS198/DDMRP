@@ -5,6 +5,18 @@ from sqlalchemy import text
 from ..db import pg
 from ..security import usuario_actual, requiere
 from .maestros import _puede_global
+from ..reglas_empresa import es_global_param, es_global_compras
+
+EMPRESAS = ('05', '21')
+
+
+def _emp(empresa: str | None, obligatoria: bool = False) -> str | None:
+    e = (empresa or '').strip() or None
+    if e and e not in EMPRESAS:
+        raise HTTPException(400, 'Empresa no valida (05 Funat, 21 Stores)')
+    if obligatoria and not e:
+        raise HTTPException(400, 'Elige una empresa: esta regla se configura por empresa')
+    return e
 
 router = APIRouter(prefix="/reglas", tags=["reglas"])
 
@@ -53,6 +65,9 @@ REGLAS = [
     dict(clave="pron_divisor", titulo="Forecast calculado: divisor entre TOY aj y TOG aj",
          ayuda="Pronostico = TOY aj + (TOG aj - TOY aj) / divisor del buffer del ADU de referencia.", opciones=None, min=1, max=10),
     dict(clave="meses_adu", titulo="Meses que entran al ADU (+ forecast)", ayuda="1 hasta los meses de historia.", opciones=None, min=1, max=12, entero=True),
+    dict(clave="cedi_solo_ubicaciones_validas", titulo="Inventario del CEDI: qué ubicaciones cuentan",
+         ayuda="Siesa guarda la existencia del CEDI por ubicación. Sí: solo cuentan las ubicaciones ACTIVAS y COMPROMETIBLES (no suman averías, devoluciones, novedades, feria ni las inactivas). No: cuenta toda la existencia de la bodega. Se lee en Siesa cada vez que se refresca el inventario del CEDI.",
+         opciones=[{"valor": 1, "label": "Sí: solo ubicaciones activas y comprometibles"}, {"valor": 0, "label": "No: toda la existencia de la bodega"}]),
     dict(clave="cedi_regla_reparto", titulo="Si el inventario del CEDI no alcanza",
          ayuda="Se aplica en cada corrida del motor, sumando la necesidad de la referencia en TODAS las tiendas. El inventario es el fresco de la bodega del CEDI (PT001) menos la reserva por item. Si la necesidad total cabe, cada tienda recibe lo que pide.",
          opciones=[{"valor": 1, "label": "Proporcional a la rotación de cada tienda (ADU): (rotación de la tienda / rotación total) × inventario del CEDI"},
@@ -116,47 +131,56 @@ CLAVES = {r["clave"]: r for r in REGLAS}
 
 
 @router.get("")
-def listar(user=Depends(usuario_actual)):
+def listar(empresa: str | None = None, user=Depends(usuario_actual)):
+    """Reglas de pedido. Con `empresa` el valor es el vigente para ella (propio o, si no lo cambio, el general) y `propio` dice si lo cambio; sin empresa, el general."""
+    e = _emp(empresa)
     with pg.connect() as c:
-        vals = dict(c.execute(text("SELECT clave, valor::float8 FROM ddmrp.parametro")).all())
-    return [{**r, "valor": vals.get(r["clave"])} for r in REGLAS]
+        if e:
+            vals = {k: (v, pr) for k, v, pr in c.execute(text("SELECT clave, valor::float8, propio FROM ddmrp.v_parametro WHERE empresa = :e"), {"e": e}).all()}
+        else:
+            vals = {k: (v, False) for k, v in c.execute(text("SELECT clave, valor::float8 FROM ddmrp.parametro")).all()}
+    return [{**r, "valor": vals.get(r["clave"], (None, False))[0], "propio": bool(e) and vals.get(r["clave"], (None, False))[1], "global": es_global_param(r["clave"])} for r in REGLAS]
 
 
 # ---- A que tiendas se reparte el inventario del CEDI cuando no alcanza ----
 @router.get("/reparto-dias")
-def reparto_dias(user=Depends(usuario_actual)):
-    """DIAs elegidos (vacio = todas las tiendas) y los DIAs que existen con cuantas tiendas tiene cada uno."""
+def reparto_dias(empresa: str | None = None, user=Depends(usuario_actual)):
+    """DIAs elegidos (vacio = todas las tiendas) y los DIAs que existen con cuantas tiendas tiene cada uno, de la empresa."""
+    e = _emp(empresa, True)
     with pg.connect() as c:
-        elegidos = [r[0] for r in c.execute(text("SELECT dia FROM ddmrp.reparto_dia ORDER BY dia")).all()]
-        dias = [{"dia": d, "tiendas": n} for d, n in c.execute(text("SELECT dia, count(*) FROM ddmrp.bodega_dia GROUP BY dia ORDER BY dia")).all()]
+        elegidos = [r[0] for r in c.execute(text("SELECT dia FROM ddmrp.reparto_dia WHERE empresa = :e ORDER BY dia"), {"e": e}).all()]
+        dias = [{"dia": d, "tiendas": n} for d, n in c.execute(text("SELECT dia, count(*) FROM ddmrp.bodega_dia WHERE empresa = :e GROUP BY dia ORDER BY dia"), {"e": e}).all()]
     return {"elegidos": elegidos, "dias": dias}
 
 
 class Dias(BaseModel):
     dias: list[int]
+    empresa: str | None = None
 
 
 @router.put("/reparto-dias")
 def cambiar_reparto_dias(body: Dias, user=Depends(requiere("editar_reglas"))):
     if not _puede_global(user):
         raise HTTPException(403, "Requiere permiso de edicion sobre todas las bodegas")
+    e = _emp(body.empresa, True)
     with pg.begin() as c:
-        ant = [r[0] for r in c.execute(text("SELECT dia FROM ddmrp.reparto_dia ORDER BY dia")).all()]
-        existentes = {r[0] for r in c.execute(text("SELECT DISTINCT dia FROM ddmrp.bodega_dia")).all()}
+        ant = [r[0] for r in c.execute(text("SELECT dia FROM ddmrp.reparto_dia WHERE empresa = :e ORDER BY dia"), {"e": e}).all()]
+        existentes = {r[0] for r in c.execute(text("SELECT DISTINCT dia FROM ddmrp.bodega_dia WHERE empresa = :e"), {"e": e}).all()}
         nuevos = sorted(set(body.dias))
         if set(nuevos) - existentes:
             raise HTTPException(400, f"DIA(s) sin tiendas: {sorted(set(nuevos) - existentes)}")
-        c.execute(text("DELETE FROM ddmrp.reparto_dia"))
+        c.execute(text("DELETE FROM ddmrp.reparto_dia WHERE empresa = :e"), {"e": e})
         for d in nuevos:
-            c.execute(text("INSERT INTO ddmrp.reparto_dia (dia) VALUES (:d)"), {"d": d})
+            c.execute(text("INSERT INTO ddmrp.reparto_dia (empresa, dia) VALUES (:e, :d)"), {"e": e, "d": d})
         c.execute(text("INSERT INTO ddmrp.config_audit (tabla, llave, campo, valor_anterior, valor_nuevo, usuario) "
-                       "VALUES ('reglas', 'reparto_dias', 'valor', :a, :n, :u)"),
-                  {"a": ",".join(map(str, ant)) or "todas", "n": ",".join(map(str, nuevos)) or "todas", "u": user["nombre"]})
+                       "VALUES ('reglas', :ll, 'valor', :a, :n, :u)"),
+                  {"ll": f"reparto_dias [{e}]", "a": ",".join(map(str, ant)) or "todas", "n": ",".join(map(str, nuevos)) or "todas", "u": user["nombre"]})
     return {"ok": True, "aviso": "Se aplica en la proxima corrida del motor (o con 'Recalcular ahora')."}
 
 
 class Cambio(BaseModel):
     valor: float
+    empresa: str | None = None
 
 
 # ---- Reglas de compras: viven en ddmrp.compras_config (las leen Necesidades de compra y las OC) ----
@@ -218,6 +242,9 @@ REGLAS_COMPRAS = [
     dict(grupo="Reportes de compras", clave="rep_recalcular_compras", titulo="Corrida automática: también recalcular las necesidades de compra",
          ayuda="Sí: en la misma corrida automática (misma hora, minuto y días de arriba) se recalculan antes las necesidades de compra: inventario fresco del CEDI, órdenes de compra abiertas de Siesa y buffer del CEDI, igual que el botón «Recalcular» de Necesidades. Sirve para que compras no quede desactualizado si el ETL del motor está apagado. No refresca las ventas ni las tiendas (eso lo hace el ETL) y necesita que el motor haya corrido al menos una vez. No: solo se actualizan los reportes.",
          opciones=[{"valor": 1, "label": "Sí"}, {"valor": 0, "label": "No: solo los reportes"}]),
+    dict(grupo="Reportes de compras", clave="rep_calcular_indicadores", titulo="Corrida automática: también calcular los indicadores de compras",
+         ayuda="Sí: en la misma corrida automática (misma hora, minuto y días de arriba) se calculan los indicadores de compras (GMROI, abastecimiento, bandas) y se guardan en la base; el informe «Indicadores de compras» solo lee eso, así abre rápido y no compite con el motor ni el ETL. También se puede calcular con el botón del informe.",
+         opciones=[{"valor": 1, "label": "Sí"}, {"valor": 0, "label": "No: solo con el botón"}]),
     dict(grupo="Reportes de compras", clave="rep_meses_historia", titulo="Meses de historia que se traen",
          ayuda="Cuántos meses hacia atrás se cargan de Siesa en la primera actualización (o con «Recarga completa»). El año completo que muestran los informes sale de aquí.", opciones=None, min=12, max=120, entero=True),
     dict(grupo="Reportes de compras", clave="rep_meses_refresco", titulo="Meses que se releen en cada actualización",
@@ -238,10 +265,14 @@ CLAVES_COMPRAS = {r["clave"]: r for r in REGLAS_COMPRAS}
 
 
 @router.get("/compras")
-def listar_compras(user=Depends(requiere("ver_compras", "cargar_maestros_compras", "editar_reglas_compras"))):
+def listar_compras(empresa: str | None = None, user=Depends(requiere("ver_compras", "cargar_maestros_compras", "editar_reglas_compras"))):
+    e = _emp(empresa)
     with pg.connect() as c:
-        vals = dict(c.execute(text("SELECT clave, valor::float8 FROM ddmrp.compras_config")).all())
-    return [{**r, "valor": vals.get(r["clave"])} for r in REGLAS_COMPRAS]
+        if e:
+            vals = {k: (v, pr) for k, v, pr in c.execute(text("SELECT clave, valor::float8, propio FROM ddmrp.v_compras_config WHERE empresa = :e"), {"e": e}).all()}
+        else:
+            vals = {k: (v, False) for k, v in c.execute(text("SELECT clave, valor::float8 FROM ddmrp.compras_config")).all()}
+    return [{**r, "valor": vals.get(r["clave"], (None, False))[0], "propio": bool(e) and vals.get(r["clave"], (None, False))[1], "global": es_global_compras(r["clave"])} for r in REGLAS_COMPRAS]
 
 
 @router.put("/compras/{clave}")
@@ -255,13 +286,36 @@ def cambiar_compras(clave: str, body: Cambio, user=Depends(requiere("cargar_maes
         raise HTTPException(400, f"Debe estar entre {r.get('min', 0)} y {r.get('max', 'sin tope')}")
     if r.get("entero") and body.valor != int(body.valor):
         raise HTTPException(400, "Debe ser un numero entero")
+    glob = es_global_compras(clave)
+    e = None if glob else _emp(body.empresa, True)
     with pg.begin() as c:
-        ant = c.execute(text("SELECT valor::text FROM ddmrp.compras_config WHERE clave = :c"), {"c": clave}).scalar()
-        c.execute(text("INSERT INTO ddmrp.compras_config (clave, valor, detalle) VALUES (:c, :v, :d) ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor"),
-                  {"c": clave, "v": body.valor, "d": r["ayuda"]})
+        if glob:
+            ant = c.execute(text("SELECT valor::text FROM ddmrp.compras_config WHERE clave = :c"), {"c": clave}).scalar()
+            c.execute(text("INSERT INTO ddmrp.compras_config (clave, valor, detalle) VALUES (:c, :v, :d) ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor"),
+                      {"c": clave, "v": body.valor, "d": r["ayuda"]})
+        else:
+            ant = c.execute(text("SELECT valor::text FROM ddmrp.v_compras_config WHERE clave = :c AND empresa = :e"), {"c": clave, "e": e}).scalar()
+            c.execute(text("INSERT INTO ddmrp.compras_config (clave, valor, detalle) VALUES (:c, :v, :d) ON CONFLICT (clave) DO NOTHING"),     # la general debe existir
+                      {"c": clave, "v": body.valor, "d": r["ayuda"]})
+            c.execute(text("INSERT INTO ddmrp.compras_config_empresa (empresa, clave, valor) VALUES (:e, :c, :v) ON CONFLICT (empresa, clave) DO UPDATE SET valor = EXCLUDED.valor"),
+                      {"e": e, "c": clave, "v": body.valor})
         c.execute(text("INSERT INTO ddmrp.config_audit (tabla, llave, campo, valor_anterior, valor_nuevo, usuario) "
-                       "VALUES ('reglas_compras', :c, 'valor', :a, :n, :u)"), {"c": clave, "a": ant, "n": str(body.valor), "u": user["nombre"]})
+                       "VALUES ('reglas_compras', :c, 'valor', :a, :n, :u)"), {"c": f"{clave} [{e}]" if e else clave, "a": ant, "n": str(body.valor), "u": user["nombre"]})
     return {"ok": True, "aviso": "Se aplica de inmediato."}
+
+
+@router.delete("/compras/{clave}")
+def restablecer_compras(clave: str, empresa: str | None = None, user=Depends(requiere("cargar_maestros_compras", "editar_reglas_compras"))):
+    """Quita lo que la empresa cambio: vuelve a regir la regla general."""
+    if clave not in CLAVES_COMPRAS or es_global_compras(clave):
+        raise HTTPException(404, "Regla desconocida o que no es por empresa")
+    e = _emp(empresa, True)
+    with pg.begin() as c:
+        ant = c.execute(text("SELECT valor::text FROM ddmrp.compras_config_empresa WHERE clave = :c AND empresa = :e"), {"c": clave, "e": e}).scalar()
+        c.execute(text("DELETE FROM ddmrp.compras_config_empresa WHERE clave = :c AND empresa = :e"), {"c": clave, "e": e})
+        c.execute(text("INSERT INTO ddmrp.config_audit (tabla, llave, campo, valor_anterior, valor_nuevo, usuario) VALUES ('reglas_compras', :c, 'valor', :a, 'general', :u)"),
+                  {"c": f"{clave} [{e}]", "a": ant, "u": user["nombre"]})
+    return {"ok": True, "aviso": "Vuelve a regir la regla general."}
 
 
 @router.put("/{clave}")
@@ -277,14 +331,38 @@ def cambiar(clave: str, body: Cambio, user=Depends(requiere("editar_reglas"))):
         raise HTTPException(400, f"Debe estar entre {r.get('min', 0)} y {r.get('max', 'sin tope')}")
     if r.get("entero") and body.valor != int(body.valor):
         raise HTTPException(400, "Debe ser un numero entero")
+    glob = es_global_param(clave)
+    e = None if glob else _emp(body.empresa, True)
     with pg.begin() as c:
-        ant = c.execute(text("SELECT valor::text FROM ddmrp.parametro WHERE clave=:c"), {"c": clave}).scalar()
-        c.execute(text("INSERT INTO ddmrp.parametro (clave, valor) VALUES (:c, :v) "
-                       "ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor"), {"c": clave, "v": body.valor})
+        if glob:
+            ant = c.execute(text("SELECT valor::text FROM ddmrp.parametro WHERE clave=:c"), {"c": clave}).scalar()
+            c.execute(text("INSERT INTO ddmrp.parametro (clave, valor) VALUES (:c, :v) "
+                           "ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor"), {"c": clave, "v": body.valor})
+        else:
+            ant = c.execute(text("SELECT valor::text FROM ddmrp.v_parametro WHERE clave = :c AND empresa = :e"), {"c": clave, "e": e}).scalar()
+            c.execute(text("INSERT INTO ddmrp.parametro (clave, valor) VALUES (:c, :v) ON CONFLICT (clave) DO NOTHING"), {"c": clave, "v": body.valor})     # la general debe existir
+            c.execute(text("INSERT INTO ddmrp.parametro_empresa (empresa, clave, valor) VALUES (:e, :c, :v) ON CONFLICT (empresa, clave) DO UPDATE SET valor = EXCLUDED.valor"),
+                      {"e": e, "c": clave, "v": body.valor})
         c.execute(text("INSERT INTO ddmrp.config_audit (tabla, llave, campo, valor_anterior, valor_nuevo, usuario) "
                        "VALUES ('reglas', :c, 'valor', :a, :n, :u)"),
-                  {"c": clave, "a": ant, "n": str(body.valor), "u": user["nombre"]})
+                  {"c": f"{clave} [{e}]" if e else clave, "a": ant, "n": str(body.valor), "u": user["nombre"]})
     if clave.startswith("pipeline_"):
         return {"ok": True, "aviso": "Se aplica en menos de un minuto: no hace falta reiniciar."}
     return {"ok": True, "aviso": "Se aplica en la proxima corrida del motor (o con 'Recalcular ahora')."}
 
+
+
+@router.delete("/{clave}")
+def restablecer(clave: str, empresa: str | None = None, user=Depends(requiere("editar_reglas"))):
+    """Quita lo que la empresa cambio: vuelve a regir la regla general."""
+    if clave not in CLAVES or es_global_param(clave):
+        raise HTTPException(404, "Regla desconocida o que no es por empresa")
+    if not _puede_global(user):
+        raise HTTPException(403, "Requiere permiso de edicion sobre todas las bodegas")
+    e = _emp(empresa, True)
+    with pg.begin() as c:
+        ant = c.execute(text("SELECT valor::text FROM ddmrp.parametro_empresa WHERE clave = :c AND empresa = :e"), {"c": clave, "e": e}).scalar()
+        c.execute(text("DELETE FROM ddmrp.parametro_empresa WHERE clave = :c AND empresa = :e"), {"c": clave, "e": e})
+        c.execute(text("INSERT INTO ddmrp.config_audit (tabla, llave, campo, valor_anterior, valor_nuevo, usuario) VALUES ('reglas', :c, 'valor', :a, 'general', :u)"),
+                  {"c": f"{clave} [{e}]", "a": ant, "u": user["nombre"]})
+    return {"ok": True, "aviso": "Vuelve a regir la regla general. Se aplica en la proxima corrida del motor."}

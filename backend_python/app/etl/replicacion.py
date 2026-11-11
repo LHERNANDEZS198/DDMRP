@@ -41,6 +41,21 @@ JOIN t120_mc_items i ON i.f120_rowid = x.f121_rowid_item
 WHERE e.f400_id_cia = :cia AND b.f150_id_cia = :cia AND i.f120_id_cia = :cia AND b.f150_id IN :bodegas /*ACTIVO:x,i*/
 GROUP BY i.f120_referencia, b.f150_id"""
 
+# Inventario del CEDI POR UBICACION (t401 = existencia por lote y ubicacion): solo ubicaciones activas (f155_ind_estado = 1) y comprometibles (f155_ind_compromiso = 1),
+# o sea sin averias, devoluciones, novedades, feria... La ubicacion se une por codigo + bodega + compania (el codigo de t155 puede traer espacios al final).
+SQL_INVENTARIO_CEDI = """
+SELECT RTRIM(i.f120_referencia), RTRIM(b.f150_id), CAST(GETDATE() AS date),
+       CONVERT(float, SUM(e.f401_cant_existencia_1 - :resta * e.f401_cant_comprometida_1))
+FROM t401_cm_existencia_lote e
+JOIN t150_mc_bodegas b ON b.f150_rowid = e.f401_rowid_bodega
+JOIN t121_mc_items_extensiones x ON x.f121_rowid = e.f401_rowid_item_ext
+JOIN t120_mc_items i ON i.f120_rowid = x.f121_rowid_item
+JOIN t155_mc_ubicacion_auxiliares u ON RTRIM(u.f155_id) = RTRIM(e.f401_id_ubicacion_aux) AND u.f155_rowid_bodega = b.f150_rowid AND u.f155_id_cia = b.f150_id_cia
+WHERE e.f401_id_cia = :cia AND b.f150_id_cia = :cia AND i.f120_id_cia = :cia AND b.f150_id IN :bodegas
+  AND u.f155_ind_estado = 1 AND u.f155_ind_compromiso = 1 /*ACTIVO:x,i*/
+GROUP BY i.f120_referencia, b.f150_id"""
+
+
 def _sql_costo() -> str:
     """Costo promedio unitario por referencia. Por defecto POR INSTALACION: tabla y columna configurables (SIESA_COSTO_TABLA /
     SIESA_COSTO_COLUMNA), unida por item y por la instalacion de la bodega (t400.f400_id_instalacion). Sin tabla, lee t400."""
@@ -826,8 +841,8 @@ def _items_de_siesa(cur, eng, primera: bool = True, empresa: str | None = None) 
     cur.executemany("INSERT INTO ddmrp.item_criterio (empresa, producto_id, plan_id, criterio_id) VALUES (%s, %s, %s, %s) "
                     "ON CONFLICT (empresa, producto_id, plan_id) DO UPDATE SET criterio_id = EXCLUDED.criterio_id", [(empresa, *c) for c in crit])
     for pid, nom in nombres_plan:
-        cur.execute("INSERT INTO ddmrp.criterio_plan (plan_id, nombre) VALUES (%s, %s) "
-                    "ON CONFLICT (plan_id) DO UPDATE SET nombre = EXCLUDED.nombre", (pid, nom))
+        cur.execute("INSERT INTO ddmrp.criterio_plan (empresa, plan_id, nombre) VALUES (%s, %s, %s) "
+                    "ON CONFLICT (empresa, plan_id) DO UPDATE SET nombre = EXCLUDED.nombre", (empresa or '05', pid, nom))
     for pid, cid, nom in nombres_crit:
         cur.execute("INSERT INTO ddmrp.criterio (plan_id, criterio_id, nombre) VALUES (%s, %s, %s) "
                     "ON CONFLICT (plan_id, criterio_id) DO UPDATE SET nombre = EXCLUDED.nombre", (pid, cid, nom))
@@ -884,9 +899,17 @@ def _cedi_de_siesa(cur, solo_emp: str | None = None) -> dict:
             if aviso:
                 avisos[emp] = aviso
             prm = {"cia": settings.siesa_cia, "bodegas": [bod], "resta": 1, "resta_sa": 0}
-            filas = list(_stream(eng, _con_estado(SQL_INVENTARIO, filtrar), prm, expanding="bodegas"))   # el CEDI siempre descuenta lo comprometido; las ventas sin acumular no aplican
+            cur.execute("SELECT COALESCE((SELECT valor FROM ddmrp.parametro_empresa WHERE empresa = %s AND clave = 'cedi_solo_ubicaciones_validas'), "
+                        "(SELECT valor FROM ddmrp.parametro WHERE clave = 'cedi_solo_ubicaciones_validas'), 1)", (emp,))
+            por_ubic = float(cur.fetchone()[0]) >= 1          # regla configurable en Reglas de pedido (por empresa)
+            sql_inv = SQL_INVENTARIO_CEDI if por_ubic else SQL_INVENTARIO
+            if por_ubic:
+                prm_u = {k: v for k, v in prm.items() if k != "resta_sa"}
+            else:
+                prm_u = prm
+            filas = list(_stream(eng, _con_estado(sql_inv, filtrar), prm_u, expanding="bodegas"))   # el CEDI siempre descuenta lo comprometido; las ventas sin acumular no aplican
             try:   # existencia FISICA (sin descontar lo comprometido) de todos los items: base de los lanzamientos. Si falla, solo se omiten los lanzamientos
-                fisica = list(_stream(eng, _con_estado(SQL_INVENTARIO, False), {**prm, "resta": 0}, expanding="bodegas"))
+                fisica = list(_stream(eng, _con_estado(sql_inv, False), {**prm_u, "resta": 0}, expanding="bodegas"))
             except Exception as e:
                 log.warning("Existencia fisica del CEDI %s no leida (lanzamientos omitidos): %s", emp, e); fisica = None
             leidos[emp] = (bod, eng, filas, fisica, filtrar)
@@ -1100,7 +1123,7 @@ def _sincronizar_ventas(solo_emp: str | None = None) -> dict:
     try:        # la clase A/B/C de las tiendas depende de estas ventas: se recalcula al traerlas (el motor tambien la recalcula)
         from ..clase_tienda import recalcular
         with pg.begin() as c:
-            res["clase_tienda"] = recalcular(c)
+            res["clase_tienda"] = recalcular(c, solo_emp)
     except Exception:
         log.exception("No se pudo recalcular la clase de las tiendas")
     return res

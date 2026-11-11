@@ -94,22 +94,26 @@ def repartir(filas: list[tuple], disponible: float, regla: int) -> dict:
 
 
 # ---- datos ----
-def datos_cedi(c) -> dict:
-    """{(empresa, producto): stock} y {producto: reserva_fraccion}. El inventario del CEDI es de cada empresa: solo se reparte
-    entre las tiendas de esa empresa. Sin filas de una empresa en inventario_cedi no se limita nada de esa empresa."""
-    stock = {(e, p): float(d) for e, p, d in c.execute(text("SELECT empresa, producto_id, disponible FROM ddmrp.inventario_cedi")).all()}
-    res = {p: float(r) for p, r in c.execute(text("SELECT producto_id, porcentaje FROM ddmrp.reserva_cedi")).all()}
+def datos_cedi(c, empresa: str | None = None) -> dict:
+    """{(empresa, producto): stock} y {(empresa, producto): reserva_fraccion}. El inventario del CEDI es de cada empresa: solo se reparte
+    entre las tiendas de esa empresa. Sin filas de una empresa en inventario_cedi no se limita nada de esa empresa. Con `empresa`, solo la de ella."""
+    stock = {(e, p): float(d) for e, p, d in c.execute(text("SELECT empresa, producto_id, disponible FROM ddmrp.inventario_cedi "
+                                                           "WHERE (CAST(:e AS text) IS NULL OR empresa = :e)"), {"e": empresa}).all()}
+    res = {(e, p): float(r) for e, p, r in c.execute(text("SELECT empresa, producto_id, porcentaje FROM ddmrp.reserva_cedi "
+                                                         "WHERE (CAST(:e AS text) IS NULL OR empresa = :e)"), {"e": empresa}).all()}
     return {"stock": stock, "reserva": res, "empresas": sorted({e for e, _ in stock})}
 
 
-def regla_actual(c) -> int:
-    v = c.execute(text("SELECT valor FROM ddmrp.parametro WHERE clave = 'cedi_regla_reparto'")).scalar()
+def regla_actual(c, empresa: str | None = None) -> int:
+    """Regla de reparto del CEDI de la empresa (sin empresa, la general)."""
+    from .reglas_empresa import param
+    v = param(c, "cedi_regla_reparto", empresa)
     return int(v) if v is not None else 1
 
 
-def dias_alcance(c) -> list[int]:
-    """DIAs de abastecimiento entre cuyas tiendas se reparte el CEDI. Vacio = todas las tiendas."""
-    return [r[0] for r in c.execute(text("SELECT dia FROM ddmrp.reparto_dia ORDER BY dia")).all()]
+def dias_alcance(c, empresa: str | None = None) -> list[int]:
+    """DIAs de abastecimiento entre cuyas tiendas se reparte el CEDI de la empresa. Vacio = todas las tiendas."""
+    return [r[0] for r in c.execute(text("SELECT DISTINCT dia FROM ddmrp.reparto_dia WHERE (CAST(:e AS text) IS NULL OR empresa = :e) ORDER BY dia"), {"e": empresa}).all()]
 
 
 def aplicar_a_ejecucion(c, eid: int) -> dict:
@@ -118,22 +122,23 @@ def aplicar_a_ejecucion(c, eid: int) -> dict:
     su buffer. Deja en sugerencias_envio: cantidad_necesaria (lo que pide el buffer), cantidad_sugerida (lo asignado) y stock_cedi
     (lo disponible de la referencia en el CEDI de su empresa: inventario menos la reserva; 0 si el CEDI no la tiene).
     Una empresa sin inventario del CEDI no se limita. Los laboratorios sin envio no compiten por el stock."""
-    regla = regla_actual(c)
+    emp = c.execute(text("SELECT empresa FROM ddmrp.ejecucion_motor WHERE id = :e"), {"e": eid}).scalar()   # la corrida es de una empresa: sus reglas, su CEDI, sus DIAs
+    regla = regla_actual(c, emp)
     try:
         with c.begin_nested():
-            clase_tienda.recalcular(c)               # la clase de tienda se calcula con cada corrida (desempate y regla 5)
+            clase_tienda.recalcular(c, emp)          # la clase de tienda se calcula con cada corrida (desempate y regla 5)
     except Exception:
         pass
     c.execute(text("UPDATE ddmrp.sugerencias_envio SET cantidad_necesaria = cantidad_sugerida, stock_cedi = NULL WHERE ejecucion_id = :e"), {"e": eid})
-    d = datos_cedi(c)
+    d = datos_cedi(c, emp)
     if regla == 0 or not d["stock"]:
         return {"limitadas": 0, "regla": regla, "aplicado": False}
-    dias = dias_alcance(c)
+    dias = dias_alcance(c, emp)
     filas = c.execute(text("SELECT s.empresa, s.producto_id, s.bodega_id, s.cantidad_sugerida::float8, s.unidad_despacho::float8, "
                            "COALESCE(s.pct_buffer::float8, 1e9), COALESCE(s.adu::float8, 0), tc.clase FROM ddmrp.sugerencias_envio s "
                            "LEFT JOIN ddmrp.v_tienda_clase tc ON tc.empresa = s.empresa AND tc.bodega_id = s.bodega_id "
                            "WHERE s.ejecucion_id = :e AND s.cantidad_sugerida > 0 AND NOT s.condenado AND s.empresa = ANY(CAST(:em AS text[])) "
-                           "AND NOT EXISTS (SELECT 1 FROM ddmrp.maestro_item mi JOIN ddmrp.laboratorio_sin_envio ls ON ls.laboratorio = mi.categoria "
+                           "AND NOT EXISTS (SELECT 1 FROM ddmrp.maestro_item mi JOIN ddmrp.laboratorio_sin_envio ls ON ls.empresa = mi.empresa AND ls.laboratorio = mi.categoria "
                            "                WHERE mi.empresa = s.empresa AND mi.producto_id = s.producto_id) "
                            f"AND {solo_activos('s')} "
                            "AND (cardinality(CAST(:d AS int[])) = 0 OR (s.empresa, s.bodega_id) IN (SELECT empresa, bodega_id FROM ddmrp.bodega_dia WHERE dia = ANY(CAST(:d AS int[]))))"),
@@ -143,7 +148,7 @@ def aplicar_a_ejecucion(c, eid: int) -> dict:
         por_item.setdefault((emp, prod), []).append((bod, q, ud, pct, adu, clase))
     cambios = []
     for (emp, prod), grupo in por_item.items():
-        util = float(max(0, math.floor(d["stock"].get((emp, prod), 0.0) * (1 - d["reserva"].get(prod, 0.0)) + EPS)))
+        util = float(max(0, math.floor(d["stock"].get((emp, prod), 0.0) * (1 - d["reserva"].get((emp, prod), 0.0)) + EPS)))
         asign = repartir(grupo, util, regla)
         for bod, q, *_ in grupo:
             if asign[bod] + EPS < q:
@@ -152,7 +157,7 @@ def aplicar_a_ejecucion(c, eid: int) -> dict:
     c.execute(text("""UPDATE ddmrp.sugerencias_envio s
                       SET stock_cedi = GREATEST(0, FLOOR(COALESCE((SELECT ic.disponible FROM ddmrp.inventario_cedi ic
                                                                    WHERE ic.empresa = s.empresa AND ic.producto_id = s.producto_id), 0)
-                                                         * (1 - COALESCE((SELECT r.porcentaje FROM ddmrp.reserva_cedi r WHERE r.producto_id = s.producto_id), 0)) + 1e-9))
+                                                         * (1 - COALESCE((SELECT r.porcentaje FROM ddmrp.reserva_cedi r WHERE r.empresa = s.empresa AND r.producto_id = s.producto_id), 0)) + 1e-9))
                       WHERE s.ejecucion_id = :e AND s.empresa = ANY(CAST(:em AS text[]))"""), {"e": eid, "em": d["empresas"]})
     if cambios:
         c.execute(text("CREATE TEMP TABLE IF NOT EXISTS stg_asig (e bigint, em text, p text, b text, q numeric) ON COMMIT DROP"))

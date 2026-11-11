@@ -93,15 +93,15 @@ MAESTROS = {
         bodega=None, producto="producto_id", global_=True),
     "reserva-cedi": dict(
         label="Reserva del CEDI: % del inventario que se guarda por item (no se despacha)", tabla="ddmrp.reserva_cedi",
-        llave=["producto_id"], editable={"porcentaje": "num"}, bodega=None, producto="producto_id", global_=True, fraccion=True),
+        llave=["empresa", "producto_id"], editable={"porcentaje": "num"}, bodega=None, producto="producto_id", global_=True, fraccion=True, empresa_obligatoria=True, reemplazo_por_empresa=True),
     "promocion": dict(
         label="Promociones (indicativo 0/1/2 y % de aumento de cotas por referencia)", tabla="ddmrp.promocion",
         llave=["empresa", "producto_id"], editable={"indicativo": "int", "aum_cota_max": "num", "aum_cota_min": "num"},
         bodega=None, producto="producto_id", global_=True),
     "factores": dict(
         label="Factores de lead time y variabilidad", tabla="ddmrp.factor_tramo",
-        llave=["tipo", "descripcion"], editable={"factor": "num", "desde": "num", "hasta": "num"},
-        bodega=None, producto=None, global_=True),
+        llave=["empresa", "tipo", "descripcion"], editable={"factor": "num", "desde": "num", "hasta": "num"},
+        bodega=None, producto=None, global_=True, empresa_obligatoria=True, reemplazo_por_empresa=True),
     "parametros": dict(
         label="Parametros del modelo", tabla="ddmrp.parametro",
         llave=["clave"], editable={"valor": "num"}, bodega=None, producto=None, global_=True,
@@ -118,17 +118,17 @@ MAESTROS = {
         llave=["empresa", "rec_id"], editable={"original_id": "txt"}, bodega=None, producto=None, global_=True),
     "criterios-filtros": dict(
         label="Criterios de items que salen en los filtros (1 = sale · 0 = no sale)", tabla="ddmrp.criterio_plan",
-        llave=["plan_id"], editable={"en_filtros": "int"}, bodega=None, producto=None, global_=True,
-        solo_existentes=True, sin_reemplazo=True),
+        llave=["empresa", "plan_id"], editable={"en_filtros": "int"}, bodega=None, producto=None, global_=True,
+        solo_existentes=True, sin_reemplazo=True, empresa_obligatoria=True),
     "reposicion-laboratorio": dict(
         label="Hasta donde se repone, por laboratorio (1 TOG aj · 2 TOY aj · 3 TOY aj + mitad de la zona verde)", tabla="ddmrp.reposicion_laboratorio",
-        llave=["laboratorio"], editable={"regla": "int"}, bodega=None, producto=None, global_=True),
+        llave=["empresa", "laboratorio"], editable={"regla": "int"}, bodega=None, producto=None, global_=True, empresa_obligatoria=True, reemplazo_por_empresa=True),
     "reposicion-item": dict(
         label="Hasta donde se repone, por item (1 TOG aj · 2 TOY aj · 3 TOY aj + mitad de la zona verde)", tabla="ddmrp.reposicion_item",
         llave=["empresa", "producto_id"], editable={"regla": "int"}, bodega=None, producto="producto_id", global_=True, reemplazo_por_empresa=True),
     "laboratorio-sin-envio": dict(
         label="Laboratorios que NO se envian (no se sugieren, no compiten por el CEDI ni salen en el plano)", tabla="ddmrp.laboratorio_sin_envio",
-        llave=["laboratorio"], editable={"motivo": "txt"}, bodega=None, producto=None, global_=True),
+        llave=["empresa", "laboratorio"], editable={"motivo": "txt"}, bodega=None, producto=None, global_=True, empresa_obligatoria=True, reemplazo_por_empresa=True),
     "demanda-calificada": dict(
         label="Demanda calificada (pedidos abiertos / picos)", tabla="ddmrp.demanda_calificada",
         llave=["empresa", "bodega_id", "producto_id"], editable={"cantidad": "num"},
@@ -239,7 +239,7 @@ def _join_mi(d: dict) -> str:
 
 def _crit_plan(patron: str) -> str:
     """Nombre del criterio del item (de Siesa) en el plan cuyo nombre empieza por `patron` (LIKE, sin mayusculas)."""
-    return ("(SELECT cr.nombre FROM ddmrp.item_criterio ic JOIN ddmrp.criterio_plan cp ON cp.plan_id = ic.plan_id "
+    return ("(SELECT cr.nombre FROM ddmrp.item_criterio ic JOIN ddmrp.criterio_plan cp ON cp.empresa = ic.empresa AND cp.plan_id = ic.plan_id "
             "LEFT JOIN ddmrp.criterio cr ON cr.plan_id = ic.plan_id AND cr.criterio_id = ic.criterio_id "
             f"WHERE ic.empresa = t.empresa AND ic.producto_id = t.producto_id AND cp.nombre ILIKE '{patron}' LIMIT 1)")
 
@@ -359,17 +359,16 @@ def _filtros_maestro(nombre: str, d: dict, bodega_id: str | None, q: str | None,
             w += " AND t.categoria = ANY(:lab)"
         elif nombre in ("reposicion-laboratorio", "laboratorio-sin-envio"):
             w += " AND t.laboratorio = ANY(:lab)"
-    if nombre == "items":   # items de una sola empresa (las dos bases tienen catalogos distintos)
-        if empresa not in ("05", "21"):
-            raise HTTPException(400, "Elige la empresa (05 o 21) para ver los items")
-        w += " AND t.empresa = :emp"; p["emp"] = empresa
+    if nombre == "items":   # items de una empresa (05 / 21) o de las dos si no se indica (cada base tiene su catalogo: la fila trae su empresa)
+        if empresa in ("05", "21"):
+            w += " AND t.empresa = :emp"; p["emp"] = empresa
         est = (estado or "activo").lower()   # estado en Siesa (ETL): por defecto solo los activos; sin dato de estado = activo
         if est not in ("activo", "inactivo", "bloqueado", "todos"):
             raise HTTPException(400, "estado debe ser activo, inactivo, bloqueado o todos")
         if est == "activo":
-            w += " AND NOT EXISTS (SELECT 1 FROM ddmrp.item_estado ix WHERE ix.empresa = :emp AND ix.producto_id = t.producto_id AND ix.estado <> 1)"
+            w += " AND NOT EXISTS (SELECT 1 FROM ddmrp.item_estado ix WHERE ix.empresa = t.empresa AND ix.producto_id = t.producto_id AND ix.estado <> 1)"
         elif est != "todos":
-            w += " AND EXISTS (SELECT 1 FROM ddmrp.item_estado ix WHERE ix.empresa = :emp AND ix.producto_id = t.producto_id AND ix.estado = :est)"
+            w += " AND EXISTS (SELECT 1 FROM ddmrp.item_estado ix WHERE ix.empresa = t.empresa AND ix.producto_id = t.producto_id AND ix.estado = :est)"
             p["est"] = 0 if est == "inactivo" else 2
     if nombre == "ventas-mensual" and mes and mes.strip():   # filtro de mes en el servidor (no solo sobre las filas ya cargadas)
         p["mes"] = mes.strip().replace("-", "")[:6]
@@ -438,7 +437,7 @@ def leer(nombre: str, response: Response, bodega_id: str | None = None, producto
     w, p = w + wf, {**p, **pf}
     if nombre == "items":   # costo promedio por instalacion (lo trae el ETL) y estado en Siesa: solo lectura
         join += " LEFT JOIN ddmrp.costo_item ci ON ci.empresa = t.empresa AND ci.producto_id = t.producto_id"
-        sel += ", ci.costo::float8 AS costo, " + "(SELECT CASE ix2.estado WHEN 1 THEN \'Activo\' WHEN 0 THEN \'Inactivo\' WHEN 2 THEN \'Bloqueado\' END FROM ddmrp.item_estado ix2 WHERE ix2.empresa = :emp AND ix2.producto_id = t.producto_id) AS estado"
+        sel += ", ci.costo::float8 AS costo, " + "(SELECT CASE ix2.estado WHEN 1 THEN \'Activo\' WHEN 0 THEN \'Inactivo\' WHEN 2 THEN \'Bloqueado\' END FROM ddmrp.item_estado ix2 WHERE ix2.empresa = t.empresa AND ix2.producto_id = t.producto_id) AS estado"
     # orden en el servidor (la pantalla solo trae un pedazo cuando el maestro es grande): solo por columnas de la tabla
     propias = set(d["llave"]) | set(d["editable"])
     primero = f"t.{orden} {'DESC' if desc else 'ASC'}, " if orden in propias else ""
@@ -450,15 +449,16 @@ def leer(nombre: str, response: Response, bodega_id: str | None = None, producto
         response.headers["X-Total-Rows"] = str(total)
         if nombre == "items" and filas:
             # una columna por plan de criterios (CATEGORIA, LINEA, ...) con el nombre del criterio como valor
-            planes = c.execute(text("SELECT ic.plan_id, coalesce(pl.nombre, ic.plan_id) FROM (SELECT DISTINCT plan_id FROM ddmrp.item_criterio WHERE empresa = :emp) ic "
-                                    "LEFT JOIN ddmrp.criterio_plan pl ON pl.plan_id = ic.plan_id ORDER BY ic.plan_id"), {"emp": empresa}).all()
+            emps = [empresa] if empresa in ("05", "21") else ["05", "21"]
+            planes = c.execute(text("SELECT ic.plan_id, coalesce(pl.nombre, ic.plan_id) FROM (SELECT DISTINCT plan_id FROM ddmrp.item_criterio WHERE empresa = ANY(:emps)) ic "
+                                    "LEFT JOIN (SELECT plan_id, min(nombre) AS nombre FROM ddmrp.criterio_plan GROUP BY plan_id) pl ON pl.plan_id = ic.plan_id ORDER BY ic.plan_id"), {"emps": emps}).all()
             nom = {pid: n.strip().upper() for pid, n in planes}
             vals = {}
-            for pr, pid, cid, cn in c.execute(text("SELECT ic.producto_id, ic.plan_id, ic.criterio_id, cr.nombre FROM ddmrp.item_criterio ic "
-                                                    "LEFT JOIN ddmrp.criterio cr ON cr.plan_id = ic.plan_id AND cr.criterio_id = ic.criterio_id WHERE ic.empresa = :emp"), {"emp": empresa}):
-                vals.setdefault(pr, {})[pid] = (cn or cid).strip()
+            for em, pr, pid, cid, cn in c.execute(text("SELECT ic.empresa, ic.producto_id, ic.plan_id, ic.criterio_id, cr.nombre FROM ddmrp.item_criterio ic "
+                                                    "LEFT JOIN ddmrp.criterio cr ON cr.plan_id = ic.plan_id AND cr.criterio_id = ic.criterio_id WHERE ic.empresa = ANY(:emps)"), {"emps": emps}):
+                vals.setdefault((em, pr), {})[pid] = (cn or cid).strip()
             for f in filas:
-                v = vals.get(f["producto_id"], {})
+                v = vals.get((f["empresa"], f["producto_id"]), {})
                 for pid, n in nom.items():
                     f[n] = v.get(pid)
         return filas
@@ -892,7 +892,7 @@ def bajar_excel(nombre: str, bodega_id: str | None = None, q: str | None = None,
         fw, fp = _filtro_lectura(categoria, abastecimiento); wf += fw; pf.update(fp)
     if nombre == "items":   # costo promedio: columna informativa (la carga la ignora)
         join += " LEFT JOIN ddmrp.costo_item ci ON ci.empresa = t.empresa AND ci.producto_id = t.producto_id"
-        sel += ", ci.costo::float8 AS costo, " + "(SELECT CASE ix2.estado WHEN 1 THEN \'Activo\' WHEN 0 THEN \'Inactivo\' WHEN 2 THEN \'Bloqueado\' END FROM ddmrp.item_estado ix2 WHERE ix2.empresa = :emp AND ix2.producto_id = t.producto_id) AS estado"; cab = cab + ["costo", "estado"]
+        sel += ", ci.costo::float8 AS costo, " + "(SELECT CASE ix2.estado WHEN 1 THEN \'Activo\' WHEN 0 THEN \'Inactivo\' WHEN 2 THEN \'Bloqueado\' END FROM ddmrp.item_estado ix2 WHERE ix2.empresa = t.empresa AND ix2.producto_id = t.producto_id) AS estado"; cab = cab + ["costo", "estado"]
     with pg.connect() as c:
         w, p = w + wf, {**p, **pf}
         filas = c.execute(text(f"SELECT {sel} FROM {d['tabla']} t {join} WHERE {w} ORDER BY "

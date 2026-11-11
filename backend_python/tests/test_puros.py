@@ -264,3 +264,41 @@ def test_filtros_reporte_criterios_de_items():
     assert f.crit == {"007": ["A", "B"], "009": ["Z"]}                       # mismo plan = O (lista), planes distintos = Y (un EXISTS por plan)
     assert w.count("EXISTS") == 2 and p["cp0"] == "007" and p["cc0"] == ["A", "B"] and p["cp1"] == "009" and p["cc1"] == ["Z"]
     assert "x.producto_id" in w and "perm" not in p
+
+
+def _item_gmroi(pid, cant, valor, costo, inv_prom, lab="L1"):
+    return {"producto_id": pid, "empresa": "05", "laboratorio": lab, "cant": cant, "valor": valor, "costo": costo, "inventario": inv_prom, "inv_prom": inv_prom}
+
+
+def test_gmroi_bandas_y_capital():
+    from app import clasificacion as cl, gmroi as gm
+    items = [_item_gmroi("A", 100, 1000, 5, 50), _item_gmroi("B", 10, 60, 5, 20), _item_gmroi("C", 0, 0, 5, 10), _item_gmroi("D", 5, 50, None, 3),
+             _item_gmroi("E", 10, 100, 4, 0), _item_gmroi("F", 100, 1000, 5, 10, "L2")]
+    cl.calcular(items, 365)
+    gm.enriquecer(items, 365, 1.0, 3.2)
+    por = {i["producto_id"]: i for i in items}
+    assert {k: v["banda"] for k, v in por.items()} == {"A": "medio", "B": "bajo", "C": "sin_venta", "D": "sin_costo", "E": "sin_inv", "F": "alto"}
+    assert por["A"]["gmroi"] == 2.0 and por["A"]["rot"] == 4.0 and abs(por["A"]["meses_inv"] - 6.0) < 1e-9
+    assert abs(por["A"]["capital_exceso"] - (250 - 500 / 3.2)) < 1e-9 and abs(por["C"]["capital_exceso"] - 50) < 1e-9 and por["D"]["capital_exceso"] == 0.0
+    t = gm.agregar([por["A"], por["B"], por["C"], por["F"]])
+    assert t["n"] == 4 and t["inv_prom_costo"] == 450 and abs(t["gmroi"] - 1010 / 450) < 1e-9 and t["n_bajo"] == 1 and t["n_sin_venta"] == 1      # GMROI sobre sumas, no promedio de items
+    b = {x["banda"]: x for x in gm.por_banda(items)}
+    assert list(b) == ["bajo", "medio", "alto", "sin_venta", "sin_inv", "sin_costo"] and abs(sum(x["pct_capital"] for x in b.values()) - 100) < 1e-9
+    g = gm.por_grupo(items, lambda it: it["laboratorio"], lambda k: k.lower())
+    assert [x["id"] for x in g] == ["L1", "L2"] and g[0]["nombre"] == "l1" and g[1]["gmroi"] == 10
+    p = gm.puntos(items)
+    assert {x["id"] for x in p} == {"A", "B", "F"} and p[0]["id"] == "A"       # solo los que se pueden ubicar, el de mas capital primero
+
+
+def test_gmroi_serie_mensual():
+    from app import gmroi as gm
+    ps = ["202610", "202611", "202612"]
+    ven = {"202610": {"venta": 1000.0, "margen": 400.0, "costo_venta": 600.0}, "202611": {"venta": 0.0, "margen": 0.0, "costo_venta": 0.0}}
+    inv = {"202610": {"inv_costo": 1000.0, "roja": 30.0, "dz": 300.0}, "202611": {"inv_costo": 0.0, "roja": None, "dz": None}}
+    ot = {"202610": {"infull": 0.9, "ontime": 0.5, "otif": 0.45, "lineas": 12}}
+    s = {x["periodo"]: x for x in gm.unir_series(ps, {"202610": 31, "202611": 30, "202612": 31}, ven, inv, ot)}
+    a = s["202610"]
+    assert abs(a["gmroi"] - 400.0 * (365 / 31) / 1000.0) < 1e-9 and abs(a["abast"] - 0.9) < 1e-9 and a["margen_pct"] == 40.0 and a["infull"] == 0.9 and a["otif"] == 0.45 and a["lineas_otif"] == 12
+    assert abs(a["meses_inv"] - 1000.0 / (600.0 * (365 / 31) / 12.0)) < 1e-9
+    assert s["202611"]["gmroi"] is None and s["202611"]["abast"] is None and s["202611"]["margen_pct"] is None       # sin inventario o sin dato: vacio, no cero
+    assert s["202612"]["gmroi"] is None and s["202612"]["infull"] is None and s["202612"]["lineas_otif"] == 0

@@ -89,7 +89,7 @@ def motor_hoy(empresa: str | None = None, user=Depends(requiere("correr_motor"))
         if hoy[1]:
             est = dict(c.execute(text("SELECT estado::text, count(*) FROM ddmrp.sugerencias_envio WHERE ejecucion_id = :e GROUP BY 1"), {"e": hoy[1]}).all())
         from ..reparto import dias_alcance
-        dias_reparto = dias_alcance(c)
+        dias_reparto = dias_alcance(c, emp)
     return {"empresa": emp, "dias_reparto": dias_reparto, "corrio_hoy": hoy[0] > 0, "corridas": hoy[0], "ultima": hoy[2], "aprobadas": est.get("APROBADA", 0), "enviadas": est.get("ENVIADA", 0)}
 
 

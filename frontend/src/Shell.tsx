@@ -32,6 +32,7 @@ export const VISTAS = [
   { grupo: 'Control DDMRP', to: '/control/mapa', label: 'Mapa de calor', ayuda: 'Item × tienda × fecha con el color de la zona, como el Excel', req: ['ver_control'] },
   { grupo: 'Compras', to: '/compras/tablero', label: 'Control compras', ayuda: 'Qué pedir, OC en vuelo, lo no recibido, riesgo y exceso del CEDI', req: ['ver_control_compras'] },
   { grupo: 'Compras', to: '/compras/reportes/ventas', label: 'Ventas por producto', ayuda: 'Unidades, venta neta, costo y % rentabilidad por producto', req: ['ver_control_compras'] },
+  { grupo: 'Compras', to: '/compras/reportes/indicadores', label: 'Indicadores de compras', ayuda: 'Por mes: GMROI, OTIF del proveedor y % de abastecimiento; dónde está el capital y qué productos no lo pagan', req: ['ver_control_compras'] },
   { grupo: 'Compras', to: '/compras/reportes/proveedor', label: 'Proveedor / PT', ayuda: 'Compras vs ventas, rentabilidad y cumplimiento (OTIF) por mes', req: ['ver_control_compras'] },
   { grupo: 'Análisis', to: '/dashboard', label: 'Alertas', ayuda: 'Zona roja y lo que hay que atender', req: ['ver_alertas'] },
   { grupo: 'Análisis', to: '/salud-inventario', label: 'Salud del inventario', ayuda: 'Zona de hoy × importancia del item: qué atender primero', req: ['ver_control'] },
@@ -78,7 +79,7 @@ export default function Shell() {
   // las entradas «del CEDI» de Compras activan «Ver solo CEDI» (y recargan si hacía falta); las demás respetan el modo actual
   const irA = (v: { to: string; cedi?: boolean }) => { setAnclaV(null); if (v.cedi && !soloCediOn()) { setSoloCedi(true); location.href = v.to } else nav(v.to) }
   return (
-    <Box sx={{ height: '100dvh', width: '100%', maxWidth: '100vw', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+    <Box sx={{ position: 'relative', height: '100dvh', width: '100%', maxWidth: '100vw', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
       <AppBar position="static" color="primary">
         <Toolbar variant="dense" sx={{ gap: { xs: .5, md: 1 }, minWidth: 0, px: { xs: 1, md: 2 } }}>
           {movil && <IconButton color="inherit" edge="start" onClick={() => setAbierto(true)}><MenuIcon /></IconButton>}

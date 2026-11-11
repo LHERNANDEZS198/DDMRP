@@ -104,7 +104,7 @@ def detalle(oc_id: int):
         creado = c.execute(text("SELECT ((creado AT TIME ZONE 'UTC') - interval '5 hours')::date::text FROM ddmrp.orden_compra WHERE id = :i"), {"i": oc_id}).scalar()
     # Desviada = lo que compras dejo al montar la OC se aparta de lo calculado (mismas reglas de _motivos_revision, con los umbrales de Configuracion de compras):
     # esas lineas son las que obligaron a pasar por revision. Se evalua sobre lo ORIGINAL de compras, no sobre lo que edite el aprobador despues.
-    cfg = _cfg_revision()
+    cfg = _cfg_revision(r["empresa"])
     for l in lineas:
         mot = []
         calc, cant = l.get("cantidad_sugerida"), l.get("cantidad_comprador")

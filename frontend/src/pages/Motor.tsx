@@ -51,14 +51,18 @@ export default function Motor() {
         <DialogTitle>{aviso?.d.corrio_hoy ? 'El motor ya corrió hoy' : (aviso?.que === 'pipeline' ? 'Correr ETL + motor' : 'Recalcular con el motor')}</DialogTitle>
         <DialogContent sx={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 1.5 }}>
           <Alert severity="info" sx={{ '& .MuiAlert-message': { width: '100%' } }}>
-            <RepartoDias editar={editar} compacto onCambio={m => { if (m.startsWith('Error')) setMsg(m) }}
-              onElegidos={e => setAviso(p => p ? { ...p, d: { ...p.d, dias_reparto: e } } : p)} />
-            <Typography variant="body2" sx={{ mt: 1 }}>
+            {(emp ? [emp] : ['05', '21']).map(e => (
+              <Box key={e} sx={{ mb: 1 }}>
+                {!emp && <Typography variant="caption" sx={{ fontWeight: 700 }}>{NOMBRE_EMPRESA[e] ?? e}</Typography>}
+                <RepartoDias empresa={e} editar={editar} compacto onCambio={m => { if (m.startsWith('Error')) setMsg(m) }}
+                  onElegidos={x => { if (emp) setAviso(p => p ? { ...p, d: { ...p.d, dias_reparto: x } } : p) }} />
+              </Box>))}
+            {emp && <Typography variant="body2" sx={{ mt: 1 }}>
               {aviso?.d.dias_reparto?.length
                 ? <>Solo compiten por la escasez las tiendas de los <b>DIAs {aviso.d.dias_reparto.join(' + ')}</b>; las demás quedan con lo que pide su buffer.</>
                 : <>Si el CEDI no alcanza, se reparte entre <b>todas las tiendas</b>.</>}
               {!editar && ' (No tienes permiso para cambiarlo.)'}
-            </Typography>
+            </Typography>}
           </Alert>
           {aviso?.d.corrio_hoy && <Typography>
             Ya hay {aviso?.d.corridas} corrida(s) de hoy (la última a las {aviso?.d.ultima ? new Date(aviso.d.ultima).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }) : ''}).

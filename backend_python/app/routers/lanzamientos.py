@@ -70,11 +70,11 @@ def filtros(user=Depends(usuario_actual)):
                LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = e.empresa AND mi.producto_id = e.producto_id LEFT JOIN ddmrp.laboratorio lb ON lb.empresa = mi.empresa AND lb.codigo = mi.categoria
                GROUP BY 1 ORDER BY 1""")).mappings()]
         base = c.execute(text("SELECT empresa, fecha FROM ddmrp.cedi_base ORDER BY empresa")).all()
-        crit_rows = c.execute(text("""SELECT ic.plan_id, COALESCE(p.nombre, ic.plan_id), ic.criterio_id, COALESCE(cr.nombre, ic.criterio_id)
-                                      FROM (SELECT DISTINCT ic.plan_id, ic.criterio_id FROM ddmrp.item_criterio ic
+        crit_rows = c.execute(text("""SELECT ic.plan_id, min(COALESCE(p.nombre, ic.plan_id)), ic.criterio_id, min(COALESCE(cr.nombre, ic.criterio_id))
+                                      FROM (SELECT DISTINCT ic.empresa, ic.plan_id, ic.criterio_id FROM ddmrp.item_criterio ic
                                             JOIN ddmrp.cedi_evento e ON e.empresa = ic.empresa AND e.producto_id = ic.producto_id) ic
-                                      LEFT JOIN ddmrp.criterio_plan p ON p.plan_id = ic.plan_id
-                                      LEFT JOIN ddmrp.criterio cr ON cr.plan_id = ic.plan_id AND cr.criterio_id = ic.criterio_id WHERE COALESCE(p.en_filtros, 1) = 1 ORDER BY 1, 3""")).all()
+                                      LEFT JOIN ddmrp.criterio_plan p ON p.empresa = ic.empresa AND p.plan_id = ic.plan_id
+                                      LEFT JOIN ddmrp.criterio cr ON cr.plan_id = ic.plan_id AND cr.criterio_id = ic.criterio_id WHERE COALESCE(p.en_filtros, 1) = 1 GROUP BY 1, 3 ORDER BY 1, 3""")).all()
     for l in labs:
         if not l["codigo"]:
             l["codigo"] = "(sin laboratorio)"

@@ -111,3 +111,20 @@ Estados: ✅ listo · 🟡 hecho, sin validar en producción · ⬜ pendiente ·
 - [ ] Corrida automática de los reportes (aparte del ETL del motor), en Reglas de compras > Reportes de compras: Sí/No, hora, minuto y cada cuántos días (cuenta desde la última actualización, también la manual).
 - [ ] La misma corrida automática puede recalcular antes las necesidades de compra (regla «Corrida automática: también recalcular las necesidades de compra», por defecto Sí): inventario y OC abiertas del CEDI + buffer del CEDI. No refresca ventas ni tiendas (eso es del ETL) y necesita una corrida previa del motor. Probar con el ETL apagado: Log > tipo «compras» con origen auto.
 - [ ] Las gráficas de los dos reportes tienen un selector de vista: Lineal, Años sobrepuestos (ene–dic, una línea por año, hasta 4) o Un panel por año (mismo eje vertical). Se recuerda por navegador. Revisar a ojo con 2 y 3 años de historia.
+
+### Indicadores de compras (Informes > Compras)
+- [ ] Pantalla nueva por mes en el periodo elegido: GMROI, % abastecimiento (el «disponible» de Control DDMRP · tendencia: todas las zonas menos la roja), OTIF (completo y a tiempo), margen e inventario a costo; más bandas de GMROI, dispersión margen % vs rotación, grupos (laboratorio o criterio) y productos. Alcance Tiendas / CEDI.
+- [ ] El GMROI usa el mismo cálculo de la Clasificación: comparar un laboratorio y un periodo contra esa pantalla (deben coincidir en tiendas).
+- [ ] Reglas de compras: «GMROI: mínimo aceptable» (1) y «GMROI: meta» (3,2).
+- [ ] % abastecimiento por mes: `inventario_mes` ahora guarda los días con zona y en roja. Se completa con lo que conserve la foto diaria (180 días) en la próxima corrida del motor/ETL; antes de eso, y para meses ya purgados, el mes sale vacío. GMROI y abastecimiento solo existen donde hay inventario mensual (13 meses); el OTIF cubre todo el periodo.
+
+### Indicadores de compras · rendimiento (fix del «tardó demasiado»)
+- Los productos del filtro (activos del maestro + laboratorio/criterios/búsqueda) se resuelven UNA vez y cada consulta mensual usa `producto_id = ANY(:ids)` (ya no hay `EXISTS` por fila).
+- Cada bloque (inventario, ventas, OTIF, nombres, productos/clasificación) corre en su propia conexión con el tiempo que queda de 50 s; si uno no alcanza, el informe muestra el resto y un aviso amarillo dice cuál falló (`meta.avisos`). Solo falla completo si no alcanza a resolver los productos.
+- Los tiempos de cada bloque quedan en el log del backend («indicadores · <bloque>: N s») para ubicar el cuello de botella real.
+
+### Indicadores de compras · cálculo aparte y guardado en la base
+- El informe ya NO recorre la historia al abrirse: lee `ddmrp.rep_indicadores_mes` (alcance tiendas/cedi × mes × empresa × item: venta, inventario promedio, días en cero / zonas) y `ddmrp.rep_indicadores_item` (inventario de hoy). Solo suma (consultas indexadas, 36 meses de venta; inventario desde que hay foto mensual).
+- Se calcula en `etl/reportes_compras.calcular_indicadores`, independiente del motor y del ETL, dentro de la misma corrida automática de reportes (hora / minuto / cada N días, junto con «recalcular necesidades de compra»). Regla nueva en Reglas de compras: «Corrida automática: también calcular los indicadores» (Sí/No). También: botón «Recalcular» del informe (`POST /compras/reportes/indicadores/recalcular`) y el botón «Actualizar datos» (descarga de Siesa y después recalcula). Corre aunque la descarga de Siesa falle.
+- Primera vez: abrir el informe y pulsar «Calcular ahora» / «Recalcular» (o esperar la corrida diaria). Sin cálculo previo el informe avisa y queda vacío.
+- Aproximación frente a la Clasificación: el inventario promedio del periodo es el promedio de los meses ponderado por días (no por tienda), y los filtros de bodega del perfil no se aplican (solo los de laboratorio), igual que los otros informes de compras.

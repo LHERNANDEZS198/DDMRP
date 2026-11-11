@@ -78,7 +78,7 @@ export default function Despacho() {
   const [porTienda, setPorTienda] = useState(false)
   const [bajandoAud, setBajandoAud] = useState(false)
   const [ediciones, setEdiciones] = useState(0)   // al cambiar "A enviar" a mano se recalculan los totales
-  useEffect(() => { api('/despacho/cedi').then(setCedi).catch(() => {}) }, [])
+  useEffect(() => { api('/despacho/cedi?empresa=' + empresa).then(setCedi).catch(() => {}) }, [empresa])
   const [ver, setVer] = useState<'pendiente' | 'aprobada' | 'enviada'>('pendiente')
   // Corrida del dia: DIA de abastecimiento + tiendas elegidas (se pueden poner o quitar antes de generar)
   const [dias, setDias] = useState<{ dia: number; bodegas: string[] }[]>([])

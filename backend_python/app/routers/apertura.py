@@ -58,9 +58,9 @@ def _exigir_global(user):
         raise HTTPException(403, "Requiere permiso de edicion sobre todas las bodegas")
 
 
-def _cfg(c) -> dict:
-    v = dict(c.execute(text("SELECT clave, valor::float8 FROM ddmrp.parametro WHERE clave IN "
-                            "('apertura_meses_defecto', 'apertura_factor_defecto', 'apertura_base_meses', 'meses_historia')")).all())
+def _cfg(c, empresa=None) -> dict:
+    v = dict(c.execute(text("SELECT p.clave, COALESCE(e.valor, p.valor)::float8 FROM ddmrp.parametro p LEFT JOIN ddmrp.parametro_empresa e ON e.clave = p.clave AND e.empresa = :e "
+                            "WHERE p.clave IN ('apertura_meses_defecto', 'apertura_factor_defecto', 'apertura_base_meses', 'meses_historia')"), {"e": empresa or ""}).all())
     # los meses de venta se cuentan dentro de la ventana de historia del motor y el historial debe alcanzar a tomar el mando el mes siguiente: maximo meses_historia - 1
     mx = max(1, min(11, int(v.get("meses_historia", 7)) - 1))
     return {"meses_defecto": max(1, min(mx, int(v.get("apertura_meses_defecto", 4)))), "factor_defecto": float(v.get("apertura_factor_defecto", 1.0)),
@@ -153,7 +153,7 @@ def opciones(user=Depends(requiere(*VER))):
 def vista_previa(p: Plan, user=Depends(requiere("cargar_maestros"))):
     _exigir_global(user)
     with pg.connect() as c:
-        info = _validar(c, p); cfg = _cfg(c)
+        info = _validar(c, p); cfg = _cfg(c, p.empresa.strip())
         filas, resumen = _armar(c, p)
         emp, dst = p.empresa.strip(), p.destino.strip()
         resumen["destino_en_bitacora"] = info["destino"] is not None
@@ -180,7 +180,7 @@ def aplicar(a: Aplicar, user=Depends(requiere("cargar_maestros"))):
     emp, esp, dst, usu = a.empresa.strip(), a.espejo.strip(), a.destino.strip(), usuario_de(user)
     with bitacora.registrar("carga", "manual", usu, f"Apertura de tienda {dst} (espejo {esp})") as reg:
         with pg.begin() as c:
-            cfg = _cfg(c)
+            cfg = _cfg(c, a.empresa.strip())
             if a.meses_espejo > cfg["max_meses"]:
                 raise HTTPException(400, f"El espejo no puede durar mas de {cfg['max_meses']} meses: son los meses de historia que mira el motor (regla 'Meses de historia de ventas')")
             info = _validar(c, a)
@@ -294,8 +294,8 @@ def cambiar(empresa: str, bodega: str, b: Cambio, user=Depends(requiere("cargar_
             a = c.execute(text("SELECT meses_espejo, activa FROM ddmrp.apertura_tienda WHERE empresa = :e AND bodega_id = :b"), {"e": empresa, "b": bodega}).first()
             if not a:
                 raise HTTPException(404, "Apertura no encontrada")
-            if b.meses_espejo is not None and b.meses_espejo > _cfg(c)["max_meses"]:
-                raise HTTPException(400, f"El espejo no puede durar mas de {_cfg(c)['max_meses']} meses (meses de historia del motor)")
+            if b.meses_espejo is not None and b.meses_espejo > _cfg(c, empresa)["max_meses"]:
+                raise HTTPException(400, f"El espejo no puede durar mas de {_cfg(c, empresa)['max_meses']} meses (meses de historia del motor)")
             c.execute(text("UPDATE ddmrp.apertura_tienda SET meses_espejo = COALESCE(:m, meses_espejo), activa = COALESCE(:a, activa), actualizado = now(), actualizado_por = :u "
                            "WHERE empresa = :e AND bodega_id = :b"), {"m": b.meses_espejo, "a": b.activa, "u": (user or {}).get("nombre"), "e": empresa, "b": bodega})
             c.execute(text("INSERT INTO ddmrp.config_audit (tabla, llave, campo, valor_anterior, valor_nuevo, usuario) VALUES ('apertura', :l, 'meses_espejo/activa', :a, :n, :u)"),

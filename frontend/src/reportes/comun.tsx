@@ -45,7 +45,7 @@ export function Panel({ titulo, ayuda, children }: { titulo: string; ayuda?: str
 
 // ---------- grafico de lineas por periodo (un solo eje; con 2 o mas series lleva leyenda) ----------
 export type Serie = { nombre: string; color: string; valores: (number | null)[]; dash?: string }
-function useAncho(): [(el: HTMLDivElement | null) => void, number] {
+export function useAncho(): [(el: HTMLDivElement | null) => void, number] {
   const [el, setEl] = useState<HTMLDivElement | null>(null); const [w, setW] = useState(800)
   useEffect(() => {
     if (!el) return
@@ -56,7 +56,7 @@ function useAncho(): [(el: HTMLDivElement | null) => void, number] {
 }
 /** Escala del eje: parte del rango real de los datos (con un poco de aire), lo cierra en pasos redondos y escoge el paso que menos sobra por encima del dato.
  *  piso / techo fijan un extremo (p. ej. 0 y 100 % en el cumplimiento); spanMin evita que una serie casi plana se magnifique (se muestra al menos ese rango). */
-function escala(vals: number[], o: { piso?: number; techo?: number; spanMin?: number }): { lo: number; hi: number; ticks: number[] } {
+export function escala(vals: number[], o: { piso?: number; techo?: number; spanMin?: number }): { lo: number; hi: number; ticks: number[] } {
   let lo = vals.length ? Math.min(...vals) : 0, hi = vals.length ? Math.max(...vals) : 1
   const todoPositivo = lo >= 0
   if (o.spanMin && hi - lo < o.spanMin) { const m = (hi + lo) / 2; lo = m - o.spanMin / 2; hi = m + o.spanMin / 2 }
@@ -170,7 +170,7 @@ export type CritSel = { plan: string; vals: string[] }
 export type Filtro = { desde: string; hasta: string; labs: string[]; cats: string[]; accs: string[]; un: string[]; q: string; crit: CritSel[] }
 type Op = { id: string; nombre: string; se_compra?: boolean }
 export type Criterio = { plan_id: string; nombre: string; valores: { id: string; nombre: string; items: number }[] }
-export type Opciones = { labs: Op[]; categorias: Op[]; acciones: Op[]; unidades: string[]; periodo_min: string | null; periodo_max: string | null; actualizacion: any[]; criterios: Criterio[]; empresas_con_datos: string[] }
+export type Opciones = { plan_categoria?: string; plan_accion?: string; labs: Op[]; categorias: Op[]; acciones: Op[]; unidades: string[]; periodo_min: string | null; periodo_max: string | null; actualizacion: any[]; criterios: Criterio[]; empresas_con_datos: string[] }
 
 const restar = (p: string, m: number) => { const t = Number(p.slice(0, 4)) * 12 + Number(p.slice(4)) - 1 - m; return `${Math.floor(t / 12)}${String((t % 12) + 1).padStart(2, '0')}` }
 const rango = (a: string, b: string) => { const r: string[] = []; for (let p = a; p <= b && r.length < 400; p = restar(p, -1)) r.push(p); return r }
@@ -224,7 +224,7 @@ function Multi({ etiqueta, opciones, valor, onChange, ancho = 220 }: { etiqueta:
       renderInput={p => <TextField {...p} label={etiqueta} />} />)
 }
 
-export function BarraFiltros({ op, f, setF, conUn, extra }: { op: Opciones; f: Filtro; setF: (f: Filtro) => void; conUn?: boolean; extra?: ReactNode }) {
+export function BarraFiltros({ op, f, setF, conUn, extra, sinPeriodo }: { op: Opciones; f: Filtro; setF: (f: Filtro) => void; conUn?: boolean; extra?: ReactNode; sinPeriodo?: boolean }) {
   const periodos = op.periodo_min && op.periodo_max ? rango(op.periodo_min, op.periodo_max) : []
   const set = (k: Partial<Filtro>) => setF({ ...f, ...k })
   const [q, setQ] = useState(f.q)
@@ -235,10 +235,12 @@ export function BarraFiltros({ op, f, setF, conUn, extra }: { op: Opciones; f: F
   useEffect(() => { const t = setTimeout(() => { if (q !== f.q) set({ q }) }, 450); return () => clearTimeout(t) }, [q])
   return (
     <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2, display: 'flex', gap: 1.25, flexWrap: 'wrap', alignItems: 'center', bgcolor: '#fff' }}>
-      <TextField select size="small" label="Desde" value={f.desde} onChange={e => set({ desde: e.target.value })} sx={{ width: 110 }}>
-        {periodos.map(p => <MenuItem key={p} value={p}>{mesLargo(p)}</MenuItem>)}</TextField>
-      <TextField select size="small" label="Hasta" value={f.hasta} onChange={e => set({ hasta: e.target.value })} sx={{ width: 110 }}>
-        {periodos.map(p => <MenuItem key={p} value={p}>{mesLargo(p)}</MenuItem>)}</TextField>
+      {!sinPeriodo && <>
+        <TextField select size="small" label="Desde" value={f.desde} onChange={e => set({ desde: e.target.value })} sx={{ width: 110 }}>
+          {periodos.map(p => <MenuItem key={p} value={p}>{mesLargo(p)}</MenuItem>)}</TextField>
+        <TextField select size="small" label="Hasta" value={f.hasta} onChange={e => set({ hasta: e.target.value })} sx={{ width: 110 }}>
+          {periodos.map(p => <MenuItem key={p} value={p}>{mesLargo(p)}</MenuItem>)}</TextField>
+      </>}
       <Multi etiqueta="Laboratorio" opciones={op.labs} valor={f.labs} onChange={labs => set({ labs })} ancho={240} />
       <Multi etiqueta="Categoría" opciones={op.categorias} valor={f.cats} onChange={cats => set({ cats })} />
       <Multi etiqueta="Acción" opciones={op.acciones} valor={f.accs} onChange={accs => set({ accs })} ancho={190} />

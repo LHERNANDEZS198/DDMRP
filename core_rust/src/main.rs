@@ -34,27 +34,31 @@ v AS (
     COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 11), 0)::float8 AS m11
   FROM ddmrp.ventas_mensual a JOIN meses m ON m.mes = a.mes
   LEFT JOIN rec r ON r.empresa = a.empresa AND r.rec_id = a.producto_id
+  WHERE ($2::text = '' OR a.empresa = $2::text)   -- --empresa se filtra AQUI, en la lectura (no al final): una constante arriba le da al planificador estimaciones de 3 filas y elige bucles anidados eternos
   GROUP BY a.empresa, a.bodega_id, COALESCE(r.original_id, a.producto_id)
 ),
 inv AS (
   SELECT ia.empresa, ia.bodega_id, COALESCE(r.original_id, ia.producto_id) AS producto_id, SUM(ia.disponible) AS disponible
   FROM ddmrp.inventario_actual ia
   LEFT JOIN rec r ON r.empresa = ia.empresa AND r.rec_id = ia.producto_id
+  WHERE ($2::text = '' OR ia.empresa = $2::text)
   GROUP BY 1, 2, 3
 ),
 tr AS (
   SELECT tt.empresa, tt.bodega_id, COALESCE(r.original_id, tt.producto_id) AS producto_id, SUM(tt.cantidad) AS cant
   FROM ddmrp.transitos tt
   LEFT JOIN rec r ON r.empresa = tt.empresa AND r.rec_id = tt.producto_id
+  WHERE ($2::text = '' OR tt.empresa = $2::text)
   GROUP BY 1, 2, 3
 ),
 llaves AS (
   SELECT empresa, bodega_id, producto_id FROM v
-  UNION SELECT empresa, bodega_id, producto_id FROM ddmrp.abast_vectorizacion WHERE vectorizacion <> 0
-  UNION SELECT empresa, bodega_id, producto_id FROM ddmrp.pronostico WHERE pronostico <> 0
+  UNION SELECT empresa, bodega_id, producto_id FROM ddmrp.abast_vectorizacion WHERE vectorizacion <> 0 AND ($2::text = '' OR empresa = $2::text)
+  UNION SELECT empresa, bodega_id, producto_id FROM ddmrp.pronostico WHERE pronostico <> 0 AND ($2::text = '' OR empresa = $2::text)
   UNION SELECT empresa, bodega_id, producto_id FROM inv WHERE disponible <> 0
-  UNION SELECT empresa, bodega_id, producto_id FROM ddmrp.abast_control_referencias
-)
+  UNION SELECT empresa, bodega_id, producto_id FROM ddmrp.abast_control_referencias WHERE ($2::text = '' OR empresa = $2::text)
+),
+emp_maestro AS (SELECT DISTINCT empresa FROM ddmrp.maestro_item)   -- empresas que ya tienen maestro de items (una sola lectura, no un barrido por fila)
 SELECT b.empresa, k.bodega_id, k.producto_id,
   COALESCE(v.m0, 0) AS m0, COALESCE(v.m1, 0) AS m1, COALESCE(v.m2, 0) AS m2, COALESCE(v.m3, 0) AS m3, COALESCE(v.m4, 0) AS m4, COALESCE(v.m5, 0) AS m5, COALESCE(v.m6, 0) AS m6, COALESCE(v.m7, 0) AS m7, COALESCE(v.m8, 0) AS m8, COALESCE(v.m9, 0) AS m9, COALESCE(v.m10, 0) AS m10, COALESCE(v.m11, 0) AS m11,
   COALESCE(p.pronostico, 0)::float8        AS pronostico,
@@ -88,11 +92,10 @@ LEFT JOIN tr t ON t.empresa = k.empresa AND t.bodega_id = k.bodega_id AND t.prod
 LEFT JOIN ddmrp.demanda_calificada d ON d.empresa = k.empresa AND d.bodega_id = k.bodega_id AND d.producto_id = k.producto_id
 LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = b.empresa AND mi.producto_id = k.producto_id
 LEFT JOIN ddmrp.reposicion_item oi ON oi.empresa = b.empresa AND oi.producto_id = k.producto_id
-LEFT JOIN ddmrp.reposicion_laboratorio ol ON ol.laboratorio = mi.categoria
+LEFT JOIN ddmrp.reposicion_laboratorio ol ON ol.empresa = b.empresa AND ol.laboratorio = mi.categoria
 LEFT JOIN ddmrp.apertura_tienda ap ON ap.empresa = b.empresa AND ap.bodega_id = k.bodega_id AND ap.activa
 WHERE NOT EXISTS (SELECT 1 FROM rec r2 WHERE r2.empresa = b.empresa AND r2.rec_id = k.producto_id)
-  AND (mi.producto_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM ddmrp.maestro_item mx WHERE mx.empresa = b.empresa))   -- el item debe existir en el maestro de SU empresa (Funat no se calcula en Stores ni al reves)
-  AND ($2::text = '' OR b.empresa = $2::text)   -- --empresa: la corrida es de una sola empresa ('' = todas)
+  AND (mi.producto_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM emp_maestro mx WHERE mx.empresa = b.empresa))   -- el item debe existir en el maestro de SU empresa (Funat no se calcula en Stores ni al reves)
   AND (b.leadtime IS NOT NULL OR b.frecuencia IS NOT NULL)   -- bodega en la bitacora sin lead time ni frecuencia = no configurada: no se calcula
   AND ((SELECT COALESCE(max(valor), 1) FROM ddmrp.parametro WHERE clave = 'solo_items_activos') = 0
        OR NOT EXISTS (SELECT 1 FROM ddmrp.item_estado ie WHERE ie.empresa = b.empresa AND ie.producto_id = k.producto_id AND ie.estado <> 1))
@@ -110,6 +113,11 @@ WITH meses AS (
 ),
 rec AS (SELECT empresa, rec_id, original_id FROM ddmrp.v_item_rec),
 cedis AS (SELECT empresa, min(bodega_id) AS bodega_id FROM ddmrp.maestro_cedi GROUP BY empresa),
+cfg AS (   -- reglas de compras de cada empresa (la propia o, si no tiene, la general): una lectura por empresa
+  SELECT empresa, max(valor) FILTER (WHERE clave = 'transito_ignorar_dias') AS ignorar, max(valor) FILTER (WHERE clave = 'frecuencia_defecto') AS freq,
+         max(valor) FILTER (WHERE clave = 'pedir_en_verde') AS pverde
+  FROM ddmrp.v_compras_config WHERE ($2::text = '' OR empresa = $2::text) GROUP BY empresa
+),
 v AS (
   SELECT o.empresa, o.cedi AS bodega_id, COALESCE(r.original_id, a.producto_id) AS producto_id,
     COALESCE(SUM(a.cantidad) FILTER (WHERE m.n = 0), 0)::float8 AS m0,
@@ -127,6 +135,7 @@ v AS (
   FROM ddmrp.ventas_mensual a JOIN meses m ON m.mes = a.mes
   JOIN ddmrp.v_origen_cedi o ON o.empresa = a.empresa AND o.origen = a.bodega_id
   LEFT JOIN rec r ON r.empresa = a.empresa AND r.rec_id = a.producto_id
+  WHERE ($2::text = '' OR a.empresa = $2::text)
   GROUP BY o.empresa, o.cedi, COALESCE(r.original_id, a.producto_id)
 ),
 inv AS (
@@ -134,6 +143,7 @@ inv AS (
   FROM ddmrp.inventario_cedi ic
   JOIN cedis ce ON ce.empresa = ic.empresa
   LEFT JOIN rec r ON r.empresa = ic.empresa AND r.rec_id = ic.producto_id
+  WHERE ($2::text = '' OR ic.empresa = $2::text)
   GROUP BY 1, 2, 3
 ),
 tr AS (   -- OC abiertas (saldo por recibir) con destino el CEDI, que el ETL deja en transitos con documento 'OC-...'
@@ -141,17 +151,19 @@ tr AS (   -- OC abiertas (saldo por recibir) con destino el CEDI, que el ETL dej
   FROM ddmrp.transitos t
   JOIN cedis ce ON ce.empresa = t.empresa AND ce.bodega_id = t.bodega_id
   LEFT JOIN rec r ON r.empresa = t.empresa AND r.rec_id = t.producto_id
-  WHERE t.documento LIKE 'OC-%'
+  LEFT JOIN cfg cf ON cf.empresa = t.empresa
+  WHERE t.documento LIKE 'OC-%' AND ($2::text = '' OR t.empresa = $2::text)
     -- OC con mas de N dias de atraso (compras_config.transito_ignorar_dias; 0 = no ignorar nada) ya no cuentan como transito: casi siempre son saldos que no van a llegar
-    AND (COALESCE((SELECT cc.valor FROM ddmrp.compras_config cc WHERE cc.clave = 'transito_ignorar_dias'), 30) <= 0
+    AND (COALESCE(cf.ignorar, 30) <= 0
          OR COALESCE(t.fecha_esperada, t.fecha_oc) IS NULL
-         OR COALESCE(t.fecha_esperada, t.fecha_oc) >= $1::text::date - COALESCE((SELECT cc.valor FROM ddmrp.compras_config cc WHERE cc.clave = 'transito_ignorar_dias'), 30)::int)
+         OR COALESCE(t.fecha_esperada, t.fecha_oc) >= $1::text::date - COALESCE(cf.ignorar, 30)::int)
   GROUP BY 1, 2, 3
 ),
 pron AS (
   SELECT o.empresa, o.cedi AS bodega_id, p.producto_id, SUM(p.pronostico)::float8 AS pronostico
   FROM ddmrp.pronostico p
   JOIN ddmrp.v_origen_cedi o ON o.empresa = p.empresa AND o.origen = p.bodega_id
+  WHERE ($2::text = '' OR p.empresa = $2::text)
   GROUP BY 1, 2, 3
 ),
 llaves AS (
@@ -163,7 +175,7 @@ SELECT k.empresa, k.bodega_id, k.producto_id,
   COALESCE(v.m0, 0) AS m0, COALESCE(v.m1, 0) AS m1, COALESCE(v.m2, 0) AS m2, COALESCE(v.m3, 0) AS m3, COALESCE(v.m4, 0) AS m4, COALESCE(v.m5, 0) AS m5, COALESCE(v.m6, 0) AS m6, COALESCE(v.m7, 0) AS m7, COALESCE(v.m8, 0) AS m8, COALESCE(v.m9, 0) AS m9, COALESCE(v.m10, 0) AS m10, COALESCE(v.m11, 0) AS m11,
   COALESCE(p.pronostico, 0)::float8                       AS pronostico,
   COALESCE(li.leadtime, pv.leadtime, lg.leadtime, 8)::float8 AS lead_time,
-  COALESCE(pv.frecuencia, (SELECT cc.valor FROM ddmrp.compras_config cc WHERE cc.clave = 'frecuencia_defecto'), 15)::float8 AS frecuencia,
+  COALESCE(pv.frecuencia, cfk.freq, 15)::float8 AS frecuencia,
   1::float8                                               AS unidad_despacho,
   0::float8                                               AS cota_max,
   0::float8                                               AS cota_min,
@@ -177,7 +189,7 @@ SELECT k.empresa, k.bodega_id, k.producto_id,
   0::float8                                               AS demanda_calificada,
   COALESCE(oi.regla, ol.regla, 0)::int2                   AS regla_objetivo,
   -- pedir tambien en zona verde (regla de disparo 3): el proveedor manda; si no tiene dato, la regla general de compras (pedir_en_verde); 0 = la regla global del motor
-  (CASE WHEN COALESCE(pv.pedir_verde::int, (SELECT cc.valor::int FROM ddmrp.compras_config cc WHERE cc.clave = 'pedir_en_verde'), 0) >= 1 THEN 3 ELSE 0 END)::int2 AS regla_disparo,
+  (CASE WHEN COALESCE(pv.pedir_verde::int, cfk.pverde::int, 0) >= 1 THEN 3 ELSE 0 END)::int2 AS regla_disparo,
   -- colchon del proveedor: multiplica la zona roja (1 = sin cambio)
   GREATEST(COALESCE(pv.factor_tor, 1), 1)::float8         AS factor_tor,
   (-1)::float8                                            AS meses_espejo
@@ -190,11 +202,11 @@ LEFT JOIN ddmrp.abast_leadtime_cedi li ON li.empresa = k.empresa AND li.producto
 LEFT JOIN ddmrp.abast_leadtime_cedi lg ON lg.empresa = k.empresa AND lg.producto_id = '*'
 LEFT JOIN ddmrp.item_compra icp ON icp.empresa = k.empresa AND icp.producto_id = k.producto_id
 LEFT JOIN ddmrp.proveedor pv ON pv.empresa = icp.empresa AND pv.proveedor_id = icp.proveedor_id AND pv.sucursal = icp.sucursal
+LEFT JOIN cfg cfk ON cfk.empresa = k.empresa
 LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = k.empresa AND mi.producto_id = k.producto_id
 LEFT JOIN ddmrp.reposicion_item oi ON oi.empresa = k.empresa AND oi.producto_id = k.producto_id
-LEFT JOIN ddmrp.reposicion_laboratorio ol ON ol.laboratorio = mi.categoria
+LEFT JOIN ddmrp.reposicion_laboratorio ol ON ol.empresa = k.empresa AND ol.laboratorio = mi.categoria
 WHERE NOT EXISTS (SELECT 1 FROM rec r2 WHERE r2.empresa = k.empresa AND r2.rec_id = k.producto_id)
-  AND ($2::text = '' OR k.empresa = $2::text)
   AND (mi.producto_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM ddmrp.maestro_item mx WHERE mx.empresa = k.empresa))
   AND ((SELECT COALESCE(max(valor), 1) FROM ddmrp.parametro WHERE clave = 'solo_items_activos') = 0
        OR NOT EXISTS (SELECT 1 FROM ddmrp.item_estado ie WHERE ie.empresa = k.empresa AND ie.producto_id = k.producto_id AND ie.estado <> 1))
@@ -209,12 +221,14 @@ fn f(r: &Row, col: &str) -> f64 {
     r.get::<_, f64>(col)
 }
 
-fn leer_factores(client: &mut Client) -> Result<Factores> {
+/// Factores por tramo de la empresa de la corrida (cada empresa tiene los suyos); sin --empresa (compatibilidad) usa los de Funat.
+fn leer_factores(client: &mut Client, empresa: &str) -> Result<Factores> {
     let mut lt = vec![];
     let mut var = vec![];
+    let emp = if empresa.is_empty() { "05" } else { empresa };
     for r in client.query(
-        "SELECT tipo, factor::float8, desde::float8, hasta::float8 FROM ddmrp.factor_tramo",
-        &[],
+        "SELECT tipo, factor::float8, desde::float8, hasta::float8 FROM ddmrp.factor_tramo WHERE empresa = $1",
+        &[&emp],
     )? {
         let t = Tramo { factor: r.get(1), desde: r.get(2), hasta: r.get(3) };
         match r.get::<_, String>(0).as_str() {
@@ -223,14 +237,19 @@ fn leer_factores(client: &mut Client) -> Result<Factores> {
         }
     }
     if lt.is_empty() || var.is_empty() {
-        bail!("ddmrp.factor_tramo sin tramos LT/VAR");
+        bail!("ddmrp.factor_tramo sin tramos LT/VAR para la empresa {}", emp);
     }
     Ok(Factores { lt, var })
 }
 
-fn leer_parametros(client: &mut Client) -> Result<Parametros> {
+/// Reglas de la empresa de la corrida: la regla general (ddmrp.parametro) con lo que la empresa tenga propio (ddmrp.parametro_empresa) por encima.
+fn leer_parametros(client: &mut Client, empresa: &str) -> Result<Parametros> {
     let mut p = Parametros::default();
-    for r in client.query("SELECT clave, valor::float8 FROM ddmrp.parametro", &[])? {
+    let filas = client.query(
+        "SELECT p.clave, COALESCE(e.valor, p.valor)::float8 FROM ddmrp.parametro p LEFT JOIN ddmrp.parametro_empresa e ON e.clave = p.clave AND e.empresa = $1",
+        &[&empresa],
+    )?;
+    for r in filas {
         let v: f64 = r.get(1);
         match r.get::<_, String>(0).as_str() {
             "mult_cota_max_promo" => p.mult_cota_max_promo = v,
@@ -274,8 +293,8 @@ fn main() -> Result<()> {
         None => client.query_one("SELECT CURRENT_DATE::text", &[])?.get(0),
     };
 
-    let factores = leer_factores(&mut client)?;
-    let params = leer_parametros(&mut client)?;
+    let factores = leer_factores(&mut client, &empresa_arg)?;
+    let params = leer_parametros(&mut client, &empresa_arg)?;
 
     let rows = client.query(if modo_cedi { SQL_ENTRADA_CEDI } else { SQL_ENTRADA }, &[&fecha, &empresa_arg])?;
     let items: Vec<Entrada> = rows

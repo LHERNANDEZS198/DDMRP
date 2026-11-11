@@ -106,7 +106,7 @@ export default function Necesidades() {
   const [ocDestino, setOcDestino] = useState('directo')
   const [ocExigir, setOcExigir] = useState(true)      // «Entiendo que se envía…»: se puede quitar en Configuración de compras (oc_exigir_entiendo = 0)
   const [histDias, setHistDias] = useState(30)
-  useEffect(() => { api('/compras/oc/config').then(x => { setOcDestino(x.destino); setOcExigir(x.exigir_entiendo !== false); if (x.listado_dias > 0) { setHistDias(x.listado_dias); setHistF(f => ({ ...f, desde: haceDias(x.listado_dias) })) } }).catch(() => {}) }, [])
+  useEffect(() => { api('/compras/oc/config?empresa=' + (empresa[0] ?? '')).then(x => { setOcDestino(x.destino); setOcExigir(x.exigir_entiendo !== false); if (x.listado_dias > 0) { setHistDias(x.listado_dias); setHistF(f => ({ ...f, desde: haceDias(x.listado_dias) })) } }).catch(() => {}) }, [empresa.join()])
   const [ocEnviando, setOcEnviando] = useState(false); const [ocEntiendo, setOcEntiendo] = useState(false)
   // justificación opcional para el aprobador, por proveedor (clave empresa|proveedor|sucursal) + el proveedor que se está editando en este momento
   const [justif, setJustif] = useState<Record<string, string>>({}); const [justEd, setJustEd] = useState<{ k: string; nombre: string; txt: string } | null>(null)

@@ -70,7 +70,7 @@ def filtros(user=Depends(usuario_actual)):
         empresas = [r[0] for r in c.execute(text(f"SELECT DISTINCT s.empresa {base} ORDER BY 1"), p)]
         dias = [r[0] for r in c.execute(text("SELECT DISTINCT dia FROM ddmrp.bodega_dia ORDER BY 1"))]
         crit_rows = c.execute(text("""SELECT ic.plan_id, COALESCE(p.nombre, ic.plan_id) AS plan_nombre, ic.criterio_id, COALESCE(cr.nombre, ic.criterio_id) AS nombre, count(*) AS n
-                                      FROM ddmrp.item_criterio ic LEFT JOIN ddmrp.criterio_plan p ON p.plan_id = ic.plan_id
+                                      FROM ddmrp.item_criterio ic LEFT JOIN ddmrp.criterio_plan p ON p.empresa = ic.empresa AND p.plan_id = ic.plan_id
                                       LEFT JOIN ddmrp.criterio cr ON cr.plan_id = ic.plan_id AND cr.criterio_id = ic.criterio_id
                                       WHERE COALESCE(p.en_filtros, 1) = 1
                                       GROUP BY 1, 2, 3, 4 ORDER BY 1, 3""")).all()

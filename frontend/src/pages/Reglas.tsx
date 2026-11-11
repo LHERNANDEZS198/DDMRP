@@ -4,13 +4,15 @@ import { Link as RouterLink } from 'react-router-dom'
 import { api } from '../api'
 import Aviso from '../Aviso'
 import { useYo } from '../Yo'
+import { BarraEmpresaReglas, useEmpresaReglas } from '../SelectorEmpresaReglas'
+import { NOMBRE_EMPRESA } from '../Empresa'
 
-type Regla = { clave: string; titulo: string; ayuda: string; opciones: { valor: number; label: string }[] | null; valor: number | null }
+type Regla = { clave: string; titulo: string; ayuda: string; opciones: { valor: number; label: string }[] | null; valor: number | null; propio?: boolean; global?: boolean }
 
 const grupos: [string, string[]][] = [
   ['Decisión de pedido', ['regla_disparo', 'regla_objetivo', 'regla_redondeo', 'cantidad_minima']],
   ['Qué entra al flujo neto y a lo sugerido', ['incluir_transito', 'restar_demanda_calificada', 'sumar_vectorizacion', 'vectorizacion_en_adu', 'vectorizacion_un_solo_uso']],
-  ['Inventario del CEDI (cuando no alcanza)', ['cedi_regla_reparto']],
+  ['Inventario del CEDI (cuando no alcanza)', ['cedi_solo_ubicaciones_validas', 'cedi_regla_reparto']],
   ['Clase de tienda (ABC por venta)', ['clase_tienda_meses', 'clase_tienda_corte_a', 'clase_tienda_corte_b']],
   ['Envío a las tiendas (Matriz de despacho)', ['valor_minimo_envio']],
   ['Qué items entran al modelo', ['solo_items_activos', 'rec_suma_original']],
@@ -23,12 +25,12 @@ const grupos: [string, string[]][] = [
 ]
 
 /** A que tiendas se reparte el inventario del CEDI cuando no alcanza: todas, o solo las de los DIAs elegidos. */
-export function RepartoDias({ editar, onCambio, compacto, onElegidos }: { editar: boolean; onCambio: (m: string) => void; compacto?: boolean; onElegidos?: (e: number[]) => void }) {
+export function RepartoDias({ empresa, editar, onCambio, compacto, onElegidos }: { empresa: string; editar: boolean; onCambio: (m: string) => void; compacto?: boolean; onElegidos?: (e: number[]) => void }) {
   const [d, setD] = useState<{ elegidos: number[]; dias: { dia: number; tiendas: number }[] } | null>(null)
-  const cargar = () => api('/reglas/reparto-dias').then(x => { setD(x); onElegidos?.(x.elegidos) }).catch(() => {})
-  useEffect(() => { cargar() }, [])
+  const cargar = () => api('/reglas/reparto-dias?empresa=' + empresa).then(x => { setD(x); onElegidos?.(x.elegidos) }).catch(() => {})
+  useEffect(() => { setD(null); cargar() }, [empresa])
   const guardar = async (dias: number[]) => {
-    try { const x = await api('/reglas/reparto-dias', { method: 'PUT', body: JSON.stringify({ dias }) }); onCambio(`Reparto del CEDI: guardado. ${x.aviso}`); cargar() }
+    try { const x = await api('/reglas/reparto-dias', { method: 'PUT', body: JSON.stringify({ dias, empresa }) }); onCambio(`Reparto del CEDI (${NOMBRE_EMPRESA[empresa] ?? empresa}): guardado. ${x.aviso}`); cargar() }
     catch (e: any) { onCambio('Error: ' + e.message) }
   }
   if (!d) return null
@@ -115,10 +117,15 @@ export default function Reglas() {
   const { puede } = useYo(); const editar = puede('editar_reglas'); const motor = puede('correr_motor')
   const [reglas, setReglas] = useState<Regla[]>([])
   const [msg, setMsg] = useState('')
-  const cargar = () => api('/reglas').then(setReglas).catch(e => setMsg('Error: ' + e.message))
-  useEffect(() => { cargar() }, [])
+  const er = useEmpresaReglas(); const emp = er.emp
+  const cargar = () => api('/reglas?empresa=' + emp).then(setReglas).catch(e => setMsg('Error: ' + e.message))
+  useEffect(() => { setReglas([]); cargar() }, [emp])
+  const restablecer = async (r: Regla) => {
+    try { const x = await api('/reglas/' + r.clave + '?empresa=' + emp, { method: 'DELETE' }); setMsg(`${r.titulo}: ${x.aviso}`); cargar() }
+    catch (e: any) { setMsg('Error: ' + e.message) }
+  }
   const guardar = async (r: Regla, valor: number) => {
-    try { const x = await api('/reglas/' + r.clave, { method: 'PUT', body: JSON.stringify({ valor }) }); setMsg(`${r.titulo}: guardado. ${x.aviso}`); cargar() }
+    try { const x = await api('/reglas/' + r.clave, { method: 'PUT', body: JSON.stringify({ valor, empresa: emp }) }); setMsg(`${r.titulo}: guardado. ${x.aviso}`); cargar() }
     catch (e: any) { setMsg('Error: ' + e.message) }
   }
   return (
@@ -127,7 +134,9 @@ export default function Reglas() {
         <Typography variant="h6" sx={{ flex: 1, fontWeight: 700 }}>Reglas de pedido</Typography>
         {motor && <Button variant="outlined" component={RouterLink} to="/motor">Ir a Motor DDMRP (recalcular / ETL)</Button>}
       </Stack>
+      <BarraEmpresaReglas {...er} />
       <Typography variant="body2" color="text.secondary">
+        Cada empresa tiene sus reglas: un cambio aquí no toca a la otra. Las marcadas «Todas las empresas» son del sistema y valen para ambas.
         Los cambios se aplican en la siguiente corrida del motor (cada noche, o cuando recalcules en Motor DDMRP). Flujo neto = inventario + tránsito − demanda calificada.
       </Typography>
       {grupos.map(([titulo, claves]) => (
@@ -136,14 +145,14 @@ export default function Reglas() {
           <CardContent sx={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 2 }}>
             {claves.map(k => reglas.find(r => r.clave === k)).filter((r): r is Regla => !!r).map(r => (
               <Box key={r.clave} sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 280px' }, gap: 1, alignItems: 'center' }}>
-                <Box><Typography sx={{ fontWeight: 600 }}>{r.titulo}</Typography><Typography variant="caption" color="text.secondary">{r.ayuda}</Typography></Box>
+                <Box><Typography sx={{ fontWeight: 600 }}>{r.titulo}{r.global && <Chip size="small" label="Todas las empresas" sx={{ ml: 1 }} />}{r.propio && <Chip size="small" color="warning" label={`Propia de ${NOMBRE_EMPRESA[emp] ?? emp}`} sx={{ ml: 1 }} onDelete={editar ? () => restablecer(r) : undefined} />}</Typography><Typography variant="caption" color="text.secondary">{r.ayuda}{r.propio && ' (Quita la marca para volver a la regla general.)'}</Typography></Box>
                 {r.opciones
                   ? <TextField select size="small" disabled={!editar} value={r.valor ?? ''} onChange={e => guardar(r, Number(e.target.value))}>
                       {r.opciones.map(o => <MenuItem key={o.valor} value={o.valor}>{o.label}</MenuItem>)}</TextField>
                   : <TextField type="number" size="small" disabled={!editar} defaultValue={r.valor ?? 0} key={r.valor} slotProps={{ htmlInput: { step: 'any', min: 0 } }}
                       onBlur={e => { const v = Number(e.target.value); if (v !== r.valor) guardar(r, v) }} />}
               </Box>))}
-            {titulo.startsWith('Inventario del CEDI') && <RepartoDias editar={editar} onCambio={setMsg} />}
+            {titulo.startsWith('Inventario del CEDI') && <RepartoDias empresa={emp} editar={editar} onCambio={setMsg} />}
           </CardContent>
         </Card>))}
       {(puede('sincronizar_siesa') || motor) && (

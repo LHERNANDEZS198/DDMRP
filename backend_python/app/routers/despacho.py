@@ -9,11 +9,12 @@ from .. import reparto, bitacora
 from ..plano_siesa import co_derivado, generar_xlsx, notas_por_defecto
 from ..activos import solo_activos
 from ..security import usuario_actual, filtro_sql_permisos, exigir, requiere, empresas_permitidas
+from ..reglas_empresa import param
 
 router = APIRouter(prefix="/despacho", tags=["despacho"])
 ULTIMA = "ANY (SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok' GROUP BY empresa)"   # la ultima corrida buena de CADA empresa (sus filas solo existen bajo su propia corrida)
 # lo que NO se sugiere ni se envia: laboratorios sin envio (maestro) e items sin stock en el CEDI de su empresa
-SIN_ENVIO = "NOT EXISTS (SELECT 1 FROM ddmrp.maestro_item mi_x JOIN ddmrp.laboratorio_sin_envio ls_x ON ls_x.laboratorio = mi_x.categoria WHERE mi_x.empresa = s.empresa AND mi_x.producto_id = s.producto_id)"
+SIN_ENVIO = "NOT EXISTS (SELECT 1 FROM ddmrp.maestro_item mi_x JOIN ddmrp.laboratorio_sin_envio ls_x ON ls_x.empresa = mi_x.empresa AND ls_x.laboratorio = mi_x.categoria WHERE mi_x.empresa = s.empresa AND mi_x.producto_id = s.producto_id)"
 CON_CEDI = "(s.stock_cedi IS NULL OR s.stock_cedi > 0)"
 ACTIVO = solo_activos("s")   # items inactivos o bloqueados en Siesa no se sugieren ni se envian (regla solo_items_activos)
 
@@ -66,7 +67,7 @@ def matriz(empresa: str, bodega_id: str | None = None, bodegas: str | None = Non
     # reciben envio (sin laboratorios sin envio ni items inactivos: los mismos filtros de reparto.aplicar_a_ejecucion). Las tiendas de otros DIAs no compiten (quedan con
     # lo que pide su buffer, sin limite): restarlas dejaba el CEDI en negativo (stock 47, asignado a otros DIAs 137 -> -90) aunque el reparto de la corrida si cuadraba.
     with pg.connect() as c:
-        dias = reparto.dias_alcance(c)
+        dias = reparto.dias_alcance(c, empresa)
         sql_tot = (f"SELECT s.producto_id, SUM(s.cantidad_sugerida)::float8 FROM ddmrp.sugerencias_envio s WHERE s.ejecucion_id = {ULTIMA} AND s.empresa = :emp "
                    f"AND NOT s.condenado AND {SIN_ENVIO} AND {ACTIVO}"
                    + (" AND (s.empresa, s.bodega_id) IN (SELECT empresa, bodega_id FROM ddmrp.bodega_dia WHERE dia = ANY(CAST(:dias AS int[])))" if dias else "")
@@ -88,18 +89,19 @@ def matriz(empresa: str, bodega_id: str | None = None, bodegas: str | None = Non
 
 
 @router.get("/cedi")
-def cedi(user=Depends(requiere("ver_despacho"))):
-    """Estado del inventario del CEDI y la regla de reparto, para mostrarlo en la matriz."""
+def cedi(empresa: str | None = None, user=Depends(requiere("ver_despacho"))):
+    """Estado del inventario del CEDI y la regla de reparto (de la empresa indicada; sin ella, la de Funat), para mostrarlo en la matriz."""
+    empresa = empresa if empresa in ("05", "21") else "05"
     from ..config import settings
     with pg.connect() as c:
         n, con, corte = c.execute(text("SELECT count(*), count(*) FILTER (WHERE disponible > 0), max(fecha_corte) FROM ddmrp.inventario_cedi")).first()
         por_empresa = [dict(r) for r in c.execute(text("SELECT empresa, count(*) AS productos, count(*) FILTER (WHERE disponible > 0) AS con_stock, max(fecha_corte) AS corte FROM ddmrp.inventario_cedi GROUP BY empresa ORDER BY empresa")).mappings()]
-        regla = reparto.regla_actual(c)
-        ult = c.execute(text(f"SELECT count(*) FILTER (WHERE cantidad_necesaria > cantidad_sugerida) FROM ddmrp.sugerencias_envio WHERE ejecucion_id = {ULTIMA}")).scalar()
-        res = c.execute(text("SELECT count(*) FROM ddmrp.reserva_cedi WHERE porcentaje > 0")).scalar()
-        minimo = float(c.execute(text("SELECT valor FROM ddmrp.parametro WHERE clave = 'valor_minimo_envio'")).scalar() or 0)
+        regla = reparto.regla_actual(c, empresa)
+        ult = c.execute(text(f"SELECT count(*) FILTER (WHERE cantidad_necesaria > cantidad_sugerida) FROM ddmrp.sugerencias_envio WHERE ejecucion_id = {ULTIMA} AND empresa = :e"), {"e": empresa}).scalar()
+        res = c.execute(text("SELECT count(*) FROM ddmrp.reserva_cedi WHERE porcentaje > 0 AND empresa = :e"), {"e": empresa}).scalar()
+        minimo = float(param(c, "valor_minimo_envio", empresa, 0) or 0)
         con_costos = c.execute(text("SELECT count(*) FROM ddmrp.costo_item")).scalar()
-        dias_reparto = reparto.dias_alcance(c)
+        dias_reparto = reparto.dias_alcance(c, empresa)
     return {"minimo_envio": minimo, "con_costos": con_costos, "dias_reparto": dias_reparto, "bodega": settings.siesa_cedi_bodega, "por_empresa": por_empresa, "productos": n, "con_stock": con, "corte": corte, "regla": regla,
             "regla_nombre": reparto.REGLAS.get(regla, "?"), "items_con_reserva": res, "limitadas": ult, "activo": regla != 0 and n > 0}
 
@@ -236,7 +238,7 @@ def desaprobar(items: list[Clave], user=Depends(requiere("aprobar_despacho"))):
 def tiendas_bajo_minimo(c, eid: int, bodegas: list[str] | None = None, empresa: str | None = None) -> tuple[dict[str, float], float, bool]:
     """Tiendas cuyo despacho APROBADO vale menos que el minimo (regla valor_minimo_envio), a costo promedio.
     Devuelve ({tienda: valor}, minimo, hay_costos). Sin costos cargados o con minimo 0 la regla no se aplica."""
-    minimo = float(c.execute(text("SELECT valor FROM ddmrp.parametro WHERE clave = 'valor_minimo_envio'")).scalar() or 0)
+    minimo = float(param(c, "valor_minimo_envio", empresa, 0) or 0)   # el minimo es una regla de cada empresa
     hay = bool(c.execute(text("SELECT EXISTS (SELECT 1 FROM ddmrp.costo_item)")).scalar())
     if minimo <= 0 or not hay:
         return {}, minimo, hay
@@ -251,7 +253,7 @@ def tiendas_bajo_minimo(c, eid: int, bodegas: list[str] | None = None, empresa: 
 def consumir_vectorizacion(c, eid, empresa, bodegas):
     """Regla 'vectorizacion_un_solo_uso' = 1: la vectorización se pone en 0 en el maestro al marcar la fila como ENVIADA,
     para que no se vuelva a sumar en la siguiente corrida. Con 0 (por defecto) la vectorización se sigue sumando mientras exista en el maestro."""
-    if not (c.execute(text("SELECT valor FROM ddmrp.parametro WHERE clave='vectorizacion_un_solo_uso'")).scalar() or 0) >= 1 or not bodegas:
+    if not (param(c, "vectorizacion_un_solo_uso", empresa, 0) or 0) >= 1 or not bodegas:
         return 0
     return c.execute(text("""UPDATE ddmrp.abast_vectorizacion v SET vectorizacion = 0
                              FROM ddmrp.sugerencias_envio s

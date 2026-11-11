@@ -29,15 +29,15 @@ def _ventana(meses: int) -> tuple[str, date, int]:
     return f"{y:04d}{m:02d}", d0, (hoy - d0).days + 1
 
 
-def _cortes_iv(c) -> tuple[float, float]:
-    r = {d: (lo, hi) for d, lo, hi in c.execute(text("SELECT descripcion, desde::float8, hasta::float8 FROM ddmrp.factor_tramo WHERE tipo = 'VAR'")).all()}
+def _cortes_iv(c, empresa=None) -> tuple[float, float]:
+    r = {d: (lo, hi) for d, lo, hi in c.execute(text("SELECT descripcion, desde::float8, hasta::float8 FROM ddmrp.factor_tramo WHERE tipo = 'VAR' AND empresa = :e"), {"e": empresa or "05"}).all()}
     try:
         return float(r["Media"][0]), float(r["Media"][1])
     except (KeyError, TypeError):
         return 0.5, 0.8
 
 
-def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, labs=None, crit=None, q=None, hist: bool = True, planes=None, solo_con: bool = False) -> list[dict]:
+def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, labs=None, crit=None, q=None, hist: bool = True, planes=None, solo_con: bool = False, mes_hasta: str | None = None) -> list[dict]:
     """Una fila por tienda x item (REC ya sumado al original) con la venta de la ventana, el buffer de la ultima corrida y el costo."""
     w, p = filtro_sql_permisos(user, "k.bodega_id", "mi.categoria")
     cond = [w, solo_activos("k")]
@@ -92,18 +92,20 @@ def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, l
         p["f_ids"] = ids
         pre_h += " AND producto_id = ANY(:f_ids)"; pre_s += " AND producto_id = ANY(:f_ids)"; pre_v += " AND COALESCE(r.original_id, a.producto_id) = ANY(:f_ids)"
     p["mes_desde"] = mes_desde
+    if mes_hasta:
+        p["mes_hasta"] = mes_hasta
     # inventario promedio de la ventana: lo resume el orquestador por mes (inventario_mes) para no recorrer la historia diaria completa; sin el (clase global) no se usa
     sql = f"""
     WITH h AS (
       SELECT empresa, bodega_id, producto_id, SUM(inv_suma)::float8 AS inv_suma, SUM(dias)::int AS dias_hist, SUM(dias_cero)::int AS dias_cero
-      FROM ddmrp.inventario_mes WHERE mes >= :mes_desde AND {'true' if hist else 'false'}{pre_h} GROUP BY 1, 2, 3),
+      FROM ddmrp.inventario_mes WHERE mes >= :mes_desde{' AND mes <= :mes_hasta' if mes_hasta else ''} AND {'true' if hist else 'false'}{pre_h} GROUP BY 1, 2, 3),
     v AS (
       SELECT a.empresa, {v_bod} AS bodega_id, COALESCE(r.original_id, a.producto_id) AS producto_id,
              SUM(a.cantidad)::float8 AS cant, SUM(a.valor)::float8 AS valor,
              MIN(a.mes) FILTER (WHERE a.cantidad > 0) AS primer_mes
       {v_from}
       LEFT JOIN ddmrp.v_item_rec r ON r.empresa = a.empresa AND r.rec_id = a.producto_id
-      WHERE a.mes >= :mes_desde{pre_v}
+      WHERE a.mes >= :mes_desde{' AND a.mes <= :mes_hasta' if mes_hasta else ''}{pre_v}
         AND {v_sin_cedi}
       GROUP BY 1, 2, 3),
     s AS (
@@ -168,7 +170,7 @@ def _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, 
     nuevo = cl.mes_nuevo(date.today(), 3) if meses >= 6 else None     # con ventanas cortas todo seria 'nuevo'
     t_ini = time.perf_counter()
     with pg.connect() as c:
-        cortes = _cortes_iv(c)
+        cortes = _cortes_iv(c, empresa)
         c.execute(text("SET LOCAL statement_timeout = 50000"))
         meses_datos = [r[0] for r in c.execute(text("SELECT DISTINCT mes FROM ddmrp.ventas_mensual WHERE mes >= :m ORDER BY 1"), {"m": mes_desde})]     # menos que el timeout de nginx (60 s): falla con mensaje en vez de dejar consultas colgadas
         try:
@@ -211,7 +213,7 @@ def _por_grupo(items: list[dict], plan: str | None, dentro: bool = False, criter
     if not plan or not items:
         return None
     with pg.connect() as c:
-        pn = c.execute(text("SELECT nombre FROM ddmrp.criterio_plan WHERE plan_id = :p"), {"p": plan}).scalar()
+        pn = c.execute(text("SELECT min(nombre) FROM ddmrp.criterio_plan WHERE plan_id = :p"), {"p": plan}).scalar()
         val = {(e, pr): cr for e, pr, cr in c.execute(text("SELECT empresa, producto_id, criterio_id FROM ddmrp.item_criterio WHERE plan_id = :p"), {"p": plan}).all()}
         nom = dict(c.execute(text("SELECT criterio_id, nombre FROM ddmrp.criterio WHERE plan_id = :p"), {"p": plan}).all())
     grupos: dict[str, dict] = {}
@@ -300,7 +302,7 @@ def _nombres_para_excel(items: list[dict], planes_sel: str | None = None) -> lis
     sin cruzar codigos a mano. Devuelve las columnas extra que si se pudieron llenar (si no existe el plan, no sale la columna)."""
     with pg.connect() as c:
         lab = {(e, cod): nom for e, cod, nom in c.execute(text("SELECT empresa, codigo, nombre FROM ddmrp.laboratorio")).all()}
-        planes = {_norm(n): p for p, n in c.execute(text("SELECT plan_id, nombre FROM ddmrp.criterio_plan")).all()}
+        planes = {_norm(n): p for p, n in c.execute(text("SELECT plan_id, min(nombre) FROM ddmrp.criterio_plan GROUP BY plan_id")).all()}
         por_plan = {}
         for clave in ("CATEGORIA", "LINEA"):
             p = next((pid for n, pid in planes.items() if n == clave), None) or next((pid for n, pid in planes.items() if n.startswith(clave)), None)
@@ -315,7 +317,7 @@ def _nombres_para_excel(items: list[dict], planes_sel: str | None = None) -> lis
     extra_pl = []
     with pg.connect() as c:    # ademas, una columna por cada criterio elegido en la pantalla (filtro o agrupar), con el valor de cada item
         for pl in dict.fromkeys(_csv(planes_sel)):
-            nom = c.execute(text("SELECT nombre FROM ddmrp.criterio_plan WHERE plan_id = :p"), {"p": pl}).scalar()
+            nom = c.execute(text("SELECT min(nombre) FROM ddmrp.criterio_plan WHERE plan_id = :p"), {"p": pl}).scalar()
             if nom is None or _norm(nom) in ("CATEGORIA", "LINEA") and _norm(nom) in por_plan:
                 continue
             mapa = {(e, pr): nm for e, pr, nm in c.execute(text("SELECT ic.empresa, ic.producto_id, cr.nombre FROM ddmrp.item_criterio ic JOIN ddmrp.criterio cr "

@@ -21,7 +21,7 @@ log = logging.getLogger("etl.reportes")
 SQL_DIR = Path(__file__).parent / "sql"
 EMPRESAS = (("05", lambda: settings.siesa_db), ("21", lambda: settings.siesa_db_s))      # Stores (21) solo si hay base configurada (SIESA_DB_S); si no, se salta
 CFG_DEFECTO = {"rep_meses_historia": 48.0, "rep_meses_refresco": 3.0, "rep_auto": 1.0, "rep_hora": 4.0, "rep_otif_dias_tolerancia": 0.0,
-               "rep_minuto": 0.0, "rep_cada_dias": 1.0, "rep_recalcular_compras": 1.0, "rep_otif_pct_completo": 98.0, "rep_otif_excluir_regularizadas": 1.0}
+               "rep_minuto": 0.0, "rep_cada_dias": 1.0, "rep_recalcular_compras": 1.0, "rep_calcular_indicadores": 1.0, "rep_gmroi_minimo": 1.0, "rep_gmroi_meta": 3.2, "rep_otif_pct_completo": 98.0, "rep_otif_excluir_regularizadas": 1.0}
 COLS_COMPRAS = ("f_fecha", "f_valor_bruto_local", "f_cant_base", "f_proveedor", "f_proveedor_razon_soc", "f_referencia")
 
 
@@ -274,6 +274,57 @@ def _sincronizar(completo: bool) -> dict:
     return res
 
 
+def calcular_indicadores(origen: str = "manual", usuario: str | None = None) -> dict:
+    """Deja calculado (aparte del motor y del ETL) lo que usa el informe «Indicadores de compras», para que el informe solo sume y no recorra la historia:
+    ddmrp.rep_indicadores_mes (por alcance, mes, empresa e item: venta, inventario promedio, dias en cero/zonas) y ddmrp.rep_indicadores_item (inventario de hoy)."""
+    with progreso.tarea("Indicadores", "Indicadores de compras calculados"), bitacora.registrar("indicadores", origen, usuario) as r:
+        r.resumen = res = _calcular_indicadores()
+        return res
+
+
+def _calcular_indicadores() -> dict:
+    from ..activos import solo_activos
+    hoy, res = date.today(), {}
+    mes_min = _mes_hace(hoy, 35).strftime("%Y%m")        # 36 meses de venta; el inventario mensual solo guarda 13
+    for alc, cedi in (("tiendas", False), ("cedi", True)):
+        # mismas reglas que la Clasificacion: tiendas = solo tiendas (sin la venta directa del CEDI); CEDI = su venta directa + la de todas las tiendas que abastece
+        v_bod = "d.cedi" if cedi else "a.bodega_id"
+        v_from = "FROM ddmrp.ventas_mensual a JOIN ddmrp.v_origen_cedi d ON d.empresa = a.empresa AND d.origen = a.bodega_id" if cedi else "FROM ddmrp.ventas_mensual a"
+        v_sin = "true" if cedi else "NOT EXISTS (SELECT 1 FROM ddmrp.maestro_cedi mc WHERE mc.empresa = a.empresa AND mc.bodega_id = a.bodega_id)"
+        t_sug = "ddmrp.sugerencias_cedi" if cedi else "ddmrp.sugerencias_envio"
+        h_cedi = "IN" if cedi else "NOT IN"
+        ultima = "ANY (SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok' GROUP BY empresa)"
+        with pg.begin() as c:
+            c.execute(text("SET LOCAL statement_timeout = 0"))
+            c.execute(text("DELETE FROM ddmrp.rep_indicadores_mes WHERE alcance = :a"), {"a": alc})
+            n = c.execute(text(f"""
+                INSERT INTO ddmrp.rep_indicadores_mes (alcance, mes, empresa, producto_id, cant, valor, inv_prom, dias, dias_tot, dias_cero, dias_z, dias_roja)
+                WITH v AS (
+                  SELECT a.mes, a.empresa, COALESCE(r.original_id, a.producto_id) AS producto_id, SUM(a.cantidad)::float8 AS cant, SUM(a.valor)::float8 AS valor
+                  {v_from} LEFT JOIN ddmrp.v_item_rec r ON r.empresa = a.empresa AND r.rec_id = a.producto_id
+                  WHERE a.mes >= :mes_min AND {v_sin} GROUP BY 1, 2, 3),
+                h AS (
+                  SELECT mes, empresa, producto_id, SUM(CASE WHEN dias > 0 THEN inv_suma::float8 / dias ELSE 0 END) AS inv_prom, MAX(dias) AS dias, SUM(dias) AS dias_tot,
+                         SUM(dias_cero) AS dias_cero, SUM(dias_z) AS dias_z, SUM(dias_roja) AS dias_roja
+                  FROM ddmrp.inventario_mes
+                  WHERE mes >= :mes_min AND (empresa, bodega_id) {h_cedi} (SELECT empresa, bodega_id FROM ddmrp.maestro_cedi) GROUP BY 1, 2, 3),
+                k AS (
+                  SELECT COALESCE(v.mes, h.mes) AS mes, COALESCE(v.empresa, h.empresa) AS empresa, COALESCE(v.producto_id, h.producto_id) AS producto_id,
+                         v.cant, v.valor, h.inv_prom, h.dias, h.dias_tot, h.dias_cero, h.dias_z, h.dias_roja
+                  FROM v FULL JOIN h ON h.mes = v.mes AND h.empresa = v.empresa AND h.producto_id = v.producto_id)
+                SELECT CAST(:a AS TEXT), k.mes, k.empresa, k.producto_id, COALESCE(k.cant, 0), COALESCE(k.valor, 0), COALESCE(k.inv_prom, 0), COALESCE(k.dias, 0), COALESCE(k.dias_tot, 0),
+                       COALESCE(k.dias_cero, 0), COALESCE(k.dias_z, 0), COALESCE(k.dias_roja, 0)
+                FROM k WHERE {solo_activos('k')}"""), {"a": alc, "mes_min": mes_min}).rowcount
+            c.execute(text("DELETE FROM ddmrp.rep_indicadores_item WHERE alcance = :a"), {"a": alc})
+            c.execute(text(f"""
+                INSERT INTO ddmrp.rep_indicadores_item (alcance, empresa, producto_id, inventario)
+                SELECT CAST(:a AS TEXT), s.empresa, s.producto_id, SUM(GREATEST(s.inventario, 0))::float8
+                FROM {t_sug} s WHERE s.ejecucion_id = {ultima} AND {solo_activos('s')} GROUP BY s.empresa, s.producto_id"""), {"a": alc})
+        res[f"filas_{alc}"] = n
+        log.info("Indicadores de compras (%s): %s filas item-mes", alc, n)
+    return res
+
+
 def revisar_reportes() -> None:
     """Se llama cada 10 minutos: si rep_auto = 1, ya paso la hora:minuto de rep_hora / rep_minuto (Colombia) y la ultima actualizacion (automatica o con el boton) fue
     hace rep_cada_dias dias o mas, actualiza. Una actualizacion fallida tambien cuenta como intento (queda el error en el informe) para no martillar Siesa.
@@ -305,7 +356,16 @@ def revisar_reportes() -> None:
                     raise
                 except Exception:       # noqa: BLE001  (p. ej. el motor nunca ha corrido): queda en el Log y los reportes siguen
                     log.exception("Corrida automatica: no se pudieron recalcular las necesidades de compra")
-            sincronizar_reportes_compras("auto")
+            try:
+                sincronizar_reportes_compras("auto")
+            finally:       # el calculo de indicadores no depende de Siesa: corre igual aunque la descarga falle (usa lo ya guardado)
+                if cfg["rep_calcular_indicadores"] >= 1:
+                    try:
+                        calcular_indicadores("auto")
+                    except Ocupado:
+                        raise
+                    except Exception:       # noqa: BLE001
+                        log.exception("Corrida automatica: no se pudieron calcular los indicadores de compras")
         except Ocupado:
             ocupado = True
             raise

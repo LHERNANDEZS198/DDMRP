@@ -9,10 +9,19 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text
 from .. import progreso
+import logging
+import re
+import time
+from datetime import date, timedelta
+from .. import gmroi as gm
 from ..bitacora import usuario_de
 from ..db import pg
 from ..etl.reportes_compras import config as cfg_rep, sincronizar_reportes_compras
+from ..modo import fijar_modo, solo_cedi
 from ..security import asignaciones, requiere
+
+log = logging.getLogger(__name__)
+PRESUPUESTO_S = 50      # segundos para todo el informe de indicadores (el nginx corta a los 60)
 
 router = APIRouter(prefix="/compras/reportes", tags=["compras"], dependencies=[Depends(requiere("ver_control_compras"))])
 ULTIMA = "ANY (SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok' GROUP BY empresa)"   # la ultima corrida buena de CADA empresa (sus filas solo existen bajo su propia corrida)
@@ -126,11 +135,12 @@ def opciones(empresa: str | None = None, user=Depends(requiere("ver_control_comp
         fe = "AND empresa = ANY(:emp)" if f.emp else ""
         unidades = [r[0] for r in c.execute(text(f"SELECT DISTINCT unidad_negocio FROM ddmrp.rep_venta_mes WHERE unidad_negocio <> '' {fe} ORDER BY 1"), pe).all()]
         rango = c.execute(text(f"""SELECT min(periodo), max(periodo) FROM (SELECT periodo FROM ddmrp.rep_venta_mes WHERE TRUE {fe} UNION ALL
-                                   SELECT periodo FROM ddmrp.rep_compra_mes WHERE TRUE {fe}) t"""), pe).one()
+                                   SELECT periodo FROM ddmrp.rep_compra_mes WHERE TRUE {fe} UNION ALL
+                                   SELECT mes FROM ddmrp.ventas_mensual WHERE TRUE {fe}) t"""), pe).one()
         act = _actualizacion(c)
         # criterios de items (mismos planes que los filtros de Clasificacion); categoria y accion ya tienen su propio filtro
         crit_rows = c.execute(text("""SELECT ic.plan_id, COALESCE(p.nombre, ic.plan_id), ic.criterio_id, COALESCE(cr.nombre, ic.criterio_id), count(*)
-                                      FROM ddmrp.item_criterio ic LEFT JOIN ddmrp.criterio_plan p ON p.plan_id = ic.plan_id
+                                      FROM ddmrp.item_criterio ic LEFT JOIN ddmrp.criterio_plan p ON p.empresa = ic.empresa AND p.plan_id = ic.plan_id
                                       LEFT JOIN ddmrp.criterio cr ON cr.plan_id = ic.plan_id AND cr.criterio_id = ic.criterio_id
                                       WHERE COALESCE(p.en_filtros, 1) = 1 AND ic.plan_id <> ALL(:excl) AND ic.empresa = ANY(:emp_c) GROUP BY 1, 2, 3, 4 ORDER BY 1, 3"""),
                               {"excl": [f.p["plan_cat"], f.p["plan_acc"]], "emp_c": f.emp or ["05", "21"]}).all()
@@ -140,7 +150,7 @@ def opciones(empresa: str | None = None, user=Depends(requiere("ver_control_comp
     # empresas con datos traidos: la pantalla avisa si la elegida en la barra aun no tiene
     con_datos = sorted({a["empresa"] for a in act if a.get("fecha") and not a.get("mensaje")})
     return {"labs": labs, "categorias": cats, "acciones": accs, "unidades": unidades, "periodo_min": rango[0], "periodo_max": rango[1], "actualizacion": act,
-            "criterios": list(por_plan.values()), "empresas_con_datos": con_datos}
+            "criterios": list(por_plan.values()), "empresas_con_datos": con_datos, "plan_categoria": f.p["plan_cat"], "plan_accion": f.p["plan_acc"]}
 
 
 @router.get("/ventas-producto")
@@ -199,7 +209,7 @@ def proveedor(empresa: str | None = None, desde: str | None = None, hasta: str |
     with pg.connect() as c:
         ventas = _filas(c, f"SELECT x.periodo, SUM(x.valor_bruto - x.descuento)::float8 AS ventas, SUM(x.costo)::float8 AS costo, SUM(x.cantidad)::float8 AS cant_v {jv} WHERE {wv} GROUP BY 1", pv)
         compras = _filas(c, f"SELECT x.periodo, SUM(x.valor)::float8 AS compras, SUM(x.cantidad)::float8 AS cant_c {jc} WHERE {wc} GROUP BY 1", pc)
-        otif = _filas(c, f"""SELECT x.periodo, AVG(x.completa)::float8 AS infull, AVG(x.a_tiempo)::float8 AS ontime, count(*)::int AS lineas {jo}
+        otif = _filas(c, f"""SELECT x.periodo, AVG(x.completa)::float8 AS infull, AVG(x.a_tiempo)::float8 AS ontime, AVG((x.completa * x.a_tiempo)::int)::float8 AS otif, count(*)::int AS lineas {jo}
                              WHERE {wo} AND x.periodo IS NOT NULL GROUP BY 1""", po)
         productos = _filas(c, f"""WITH ve AS (SELECT x.empresa, x.producto_id, SUM(x.cantidad) AS cant_v, SUM(x.valor_bruto - x.descuento) AS ventas, SUM(x.costo) AS costo {jv} WHERE {wv} GROUP BY 1, 2),
                                        co AS (SELECT x.empresa, x.producto_id, SUM(x.cantidad) AS cant_c, SUM(x.valor) AS compras {jc} WHERE {wc} GROUP BY 1, 2)
@@ -215,7 +225,7 @@ def proveedor(empresa: str | None = None, desde: str | None = None, hasta: str |
                               SELECT co.proveedor_id, co.nombre, co.compras::float8 AS compras, co.items::int AS items, ot.infull::float8 AS infull, ot.ontime::float8 AS ontime,
                                      COALESCE(ot.lineas, 0)::int AS lineas
                               FROM co LEFT JOIN ot ON ot.proveedor_id = co.proveedor_id ORDER BY co.compras DESC NULLS LAST LIMIT 15""", pc | po)
-        kot = _filas(c, f"SELECT AVG(x.completa)::float8 AS infull, AVG(x.a_tiempo)::float8 AS ontime, count(*)::int AS lineas {jo} WHERE {wo}", po)[0]
+        kot = _filas(c, f"SELECT AVG(x.completa)::float8 AS infull, AVG(x.a_tiempo)::float8 AS ontime, AVG((x.completa * x.a_tiempo)::int)::float8 AS otif, count(*)::int AS lineas {jo} WHERE {wo}", po)[0]
         act = _actualizacion(c)
     por = {}
     for fila in ventas:
@@ -238,6 +248,182 @@ def proveedor(empresa: str | None = None, desde: str | None = None, hasta: str |
             "kpis": {"compras": tc, "ventas": tv, "rent": _pct(tv - tcosto, tv), "compras_sobre_ventas": _pct(tc, tv), "infull": kot["infull"], "ontime": kot["ontime"], "lineas_otif": kot["lineas"]}}
 
 
+def _meses_atras(p: str, n: int) -> str:
+    t = int(p[:4]) * 12 + int(p[4:]) - 1 - n
+    return f"{t // 12}{t % 12 + 1:02d}"
+
+
+def _meses(desde: str, hasta: str) -> list[str]:
+    """Periodos AAAAMM de desde a hasta (maximo 60)."""
+    out, y, m = [], int(desde[:4]), int(desde[4:])
+    while f"{y:04d}{m:02d}" <= hasta and len(out) < 60:
+        out.append(f"{y:04d}{m:02d}")
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return out
+
+
+def _dias_mes(p: str, hoy: date) -> int:
+    """Dias del mes; el mes en curso cuenta solo hasta hoy (la venta y el inventario llegan hasta hoy)."""
+    y, m = int(p[:4]), int(p[4:])
+    fin = date(y + (m == 12), 1 if m == 12 else m + 1, 1) - timedelta(days=1)
+    return ((min(fin, hoy) - date(y, m, 1)).days + 1) if date(y, m, 1) <= hoy else 0
+
+
+@router.get("/indicadores", dependencies=[Depends(fijar_modo)])
+def indicadores(empresa: str | None = None, desde: str | None = None, hasta: str | None = None, labs: str | None = None, categorias: str | None = None,
+                acciones: str | None = None, crit: str | None = None, q: str | None = None, agrupar: str = "laboratorio", limite: int = 3000,
+                user=Depends(requiere("ver_control_compras"))):
+    """Indicadores de compras por mes en el periodo elegido: GMROI, OTIF (completo y a tiempo) y % de abastecimiento (el «disponible» de la tendencia del Control: todas las
+    zonas menos la roja), mas margen e inventario a costo. El GMROI usa el MISMO calculo de la Clasificacion (venta de las tiendas, costo promedio actual e inventario promedio
+    de la foto mensual), asi las cifras coinciden; con ?solo_cedi=true mide el CEDI. Del periodo completo salen las bandas segun el minimo y la meta de Reglas de compras, el
+    capital en cada banda, el inventario que sobra para llegar a la meta, los grupos por laboratorio o criterio y los productos. El GMROI y el abastecimiento solo existen
+    donde hay inventario mensual guardado (13 meses): antes de eso el mes queda sin dato."""
+    from sqlalchemy.exc import DBAPIError
+    from .. import clasificacion as cl
+    if agrupar != "laboratorio" and not re.fullmatch(r"\w{1,10}", agrupar):
+        raise HTTPException(400, "agrupar debe ser laboratorio o el codigo de un plan de criterios")
+    f = Filtros(user, empresa, desde, hasta, labs, categorias, acciones, None, q, None, crit=crit)
+    hoy = date.today()
+    h_p = f.hasta or f"{hoy:%Y%m}"
+    d_p = f.desde or _meses_atras(h_p, 11)
+    if d_p > h_p:
+        d_p, h_p = h_p, d_p
+    periodos = _meses(d_p, h_p)
+    cr = [f"{f.p['plan_cat']}:{x}" for x in f.cats] + [f"{f.p['plan_acc']}:{x}" for x in f.accs] + [f"{pl}:{v}" for pl, vs in f.crit.items() for v in vs]
+    crit_s = ",".join(cr)
+    cfg = cfg_rep()
+    minimo, objetivo = float(cfg.get("rep_gmroi_minimo", 1.0)), float(cfg.get("rep_gmroi_meta", 3.2))
+    cedi = solo_cedi()
+    alc = "cedi" if cedi else "tiendas"
+    f.desde, f.hasta = d_p, h_p       # el OTIF se limita al mismo periodo
+    jo, wo, po = f.base("ddmrp.rep_otif")
+    t0 = time.monotonic()
+    avisos: list[str] = []
+    w_emp = " AND m.empresa = ANY(:emp)" if f.emp else ""
+    base_p = {"alc": alc, "per_d": d_p, "per_h": h_p, **({"emp": f.emp} if f.emp else {})}
+
+    def paso(nombre, fn, defecto, critico=False):
+        """Cada bloque con su propia conexion y con el tiempo que queda del presupuesto (menos que el limite de 60 s del nginx). Si un bloque no alcanza, el resto igual se
+        muestra y el aviso dice cual fallo; solo el primero (los productos del filtro) es indispensable."""
+        resto = max(3, int(PRESUPUESTO_S - (time.monotonic() - t0)))
+        t1 = time.monotonic()
+        try:
+            with pg.connect() as c:
+                c.execute(text(f"SET LOCAL statement_timeout = {resto * 1000}"))
+                r = fn(c)
+            log.info("indicadores · %s: %.1f s", nombre, time.monotonic() - t1)
+            return r
+        except DBAPIError as e:
+            if "statement timeout" not in str(e):
+                raise
+            log.warning("indicadores · %s: sin tiempo tras %.1f s", nombre, time.monotonic() - t1)
+            if critico:
+                raise HTTPException(503, "El informe tardo demasiado. Acorta el periodo o acota con un laboratorio.")
+            avisos.append(nombre)
+            return defecto
+
+    def _ids(c):
+        # los filtros de item (y los laboratorios que el perfil permite) se resuelven UNA vez a la lista de productos; el calculo diario ya dejo solo items activos del maestro
+        wi, pi = ["true"], {}
+        if f.emp:
+            wi.append("mi2.empresa = ANY(:i_emp)"); pi["i_emp"] = f.emp
+        if f.perm is not None:
+            wi.append("mi2.categoria = ANY(:i_perm)"); pi["i_perm"] = f.perm
+        if f.labs:
+            wi.append("COALESCE(mi2.categoria, '') = ANY(:i_lab)"); pi["i_lab"] = [("" if x == "(sin laboratorio)" else x) for x in f.labs]
+        if f.q:
+            wi.append("(mi2.producto_id ILIKE :i_q OR mi2.descripcion ILIKE :i_q)"); pi["i_q"] = f"%{f.q}%"
+        por_plan: dict[str, list[str]] = {}
+        for x in cr:
+            pl, v = x.split(":", 1); por_plan.setdefault(pl, []).append(v)
+        for i, (pl, vs) in enumerate(por_plan.items()):
+            wi.append(f"EXISTS (SELECT 1 FROM ddmrp.item_criterio xc{i} WHERE xc{i}.empresa = mi2.empresa AND xc{i}.producto_id = mi2.producto_id AND xc{i}.plan_id = :xp{i} AND xc{i}.criterio_id = ANY(:xv{i}))")
+            pi[f"xp{i}"] = pl; pi[f"xv{i}"] = vs
+        ids_ = list({r[0] for r in c.execute(text("SELECT mi2.producto_id FROM ddmrp.maestro_item mi2 WHERE " + " AND ".join(wi)), pi)})
+        pr, ca = c.execute(text("SELECT min(mes) FILTER (WHERE dias > 0), max(calculado) FROM ddmrp.rep_indicadores_mes WHERE alcance = :a"), {"a": alc}).one()
+        return ids_, pr, ca
+
+    ids, primer, calculado = paso("productos del filtro", _ids, ([], None, None), critico=True)
+    base_p["ids"] = ids
+    d_g = max(d_p, primer) if primer else d_p          # el inventario promedio solo existe desde que hay foto mensual: antes se usaria el de hoy y distorsiona
+    dias_g = max((min(date(int(h_p[:4]) + (h_p[4:] == "12"), 1 if h_p[4:] == "12" else int(h_p[4:]) + 1, 1) - timedelta(days=1), hoy) - date(int(d_g[:4]), int(d_g[4:]), 1)).days + 1, 1)
+
+    # todo sale de ddmrp.rep_indicadores_mes / rep_indicadores_item, que se calculan aparte (corrida diaria de reportes o boton «Recalcular»): aqui solo se suma
+    mensual = paso("serie por mes", lambda c: {r["mes"]: dict(r) for r in c.execute(text(f"""
+        SELECT m.mes, SUM(m.valor)::float8 AS venta, SUM(CASE WHEN ci.costo IS NOT NULL THEN m.valor - m.cant * ci.costo END)::float8 AS margen,
+               SUM(CASE WHEN ci.costo IS NOT NULL THEN m.cant * ci.costo END)::float8 AS costo_venta,
+               SUM(CASE WHEN m.dias > 0 AND ci.costo IS NOT NULL THEN m.inv_prom * ci.costo END)::float8 AS inv_costo,
+               SUM(m.dias_roja)::float8 AS roja, SUM(m.dias_z)::float8 AS dz
+        FROM ddmrp.rep_indicadores_mes m LEFT JOIN ddmrp.costo_item ci ON ci.empresa = m.empresa AND ci.producto_id = m.producto_id
+        WHERE m.alcance = :alc AND m.mes BETWEEN :per_d AND :per_h AND m.producto_id = ANY(:ids){w_emp} GROUP BY m.mes"""), base_p).mappings()}, {})
+    inv = ven = mensual
+    ot = paso("OTIF por mes", lambda c: {r["mes"]: dict(r) for r in c.execute(text(f"""
+        SELECT x.periodo AS mes, AVG(x.completa)::float8 AS infull, AVG(x.a_tiempo)::float8 AS ontime, AVG((x.completa * x.a_tiempo)::int)::float8 AS otif, count(*)::int AS lineas
+        {jo} WHERE {wo} AND x.periodo IS NOT NULL GROUP BY 1"""), po).mappings()}, {})
+    kot = paso("OTIF del periodo", lambda c: dict(c.execute(text(f"SELECT AVG(x.completa)::float8 AS infull, AVG(x.a_tiempo)::float8 AS ontime, AVG((x.completa * x.a_tiempo)::int)::float8 AS otif, count(*)::int AS lineas {jo} WHERE {wo} AND x.periodo IS NOT NULL"), po).mappings().one()),
+               {"infull": None, "ontime": None, "otif": None, "lineas": 0})
+
+    def _nombres(c):
+        nl = dict(c.execute(text("SELECT codigo, nombre FROM ddmrp.laboratorio")).all())
+        if agrupar == "laboratorio":
+            return nl, None, {}, "Laboratorio"
+        gn = c.execute(text("SELECT min(nombre) FROM ddmrp.criterio_plan WHERE plan_id = :p"), {"p": agrupar}).scalar() or agrupar
+        v = {(e, p): cr_id for e, p, cr_id in c.execute(text("SELECT empresa, producto_id, criterio_id FROM ddmrp.item_criterio WHERE plan_id = :p"), {"p": agrupar}).all()}
+        return nl, v, dict(c.execute(text("SELECT criterio_id, nombre FROM ddmrp.criterio WHERE plan_id = :p"), {"p": agrupar}).all()), gn
+    nom_lab, val, nom, grupo_nombre = paso("nombres", _nombres, ({}, None, {}, "Laboratorio" if agrupar == "laboratorio" else agrupar))
+
+    def _items(c):
+        w_s = " AND empresa = ANY(:emp)" if f.emp else ""
+        return [dict(r) for r in c.execute(text(f"""
+            WITH a AS (
+              SELECT m.empresa, m.producto_id, SUM(m.cant)::float8 AS cant, SUM(m.valor)::float8 AS valor, SUM(m.dias)::int AS dias, SUM(m.inv_prom * m.dias)::float8 AS inv_pd,
+                     SUM(m.dias_tot)::int AS dt, SUM(m.dias_cero)::int AS dc, MIN(m.mes) FILTER (WHERE m.cant > 0) AS primer_mes
+              FROM ddmrp.rep_indicadores_mes m
+              WHERE m.alcance = :alc AND m.mes BETWEEN :d_g AND :per_h AND m.producto_id = ANY(:ids){w_emp} GROUP BY 1, 2),
+            s AS (SELECT empresa, producto_id, inventario FROM ddmrp.rep_indicadores_item WHERE alcance = :alc AND producto_id = ANY(:ids){w_s}),
+            k AS (SELECT COALESCE(a.empresa, s.empresa) AS empresa, COALESCE(a.producto_id, s.producto_id) AS producto_id, a.cant, a.valor, a.dias, a.inv_pd, a.dt, a.dc, a.primer_mes, s.inventario
+                  FROM a FULL JOIN s ON s.empresa = a.empresa AND s.producto_id = a.producto_id)
+            SELECT k.*, mi.descripcion, COALESCE(mi.categoria, '(sin laboratorio)') AS laboratorio, ci.costo::float8 AS costo
+            FROM k LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = k.empresa AND mi.producto_id = k.producto_id
+                   LEFT JOIN ddmrp.costo_item ci ON ci.empresa = k.empresa AND ci.producto_id = k.producto_id
+            WHERE COALESCE(k.cant, 0) > 0 OR COALESCE(k.valor, 0) > 0 OR COALESCE(k.inventario, 0) > 0"""), {**base_p, "d_g": d_g}).mappings()]
+    filas = paso("productos", _items, [])
+    items = []
+    for r in filas:
+        dias, inv_hoy = int(r["dias"] or 0), max(float(r["inventario"] or 0.0), 0.0)
+        items.append({"producto_id": r["producto_id"], "empresa": r["empresa"], "bodega_id": None, "descripcion": r["descripcion"], "laboratorio": r["laboratorio"], "costo": r["costo"],
+                      "cant": float(r["cant"] or 0.0), "valor": float(r["valor"] or 0.0), "inventario": inv_hoy, "dias_hist": dias, "primer_mes": r["primer_mes"], "adu": 0.0, "iv": None,
+                      "inv_prom": (float(r["inv_pd"] or 0.0) / dias) if dias > 0 else inv_hoy,      # sin foto mensual en el periodo (item nuevo) se usa el inventario de hoy
+                      "pct_sin_stock": None if not r["dt"] else 100.0 * (r["dc"] or 0) / r["dt"]})
+    if items:
+        cl.calcular(items, dias_g)
+        cl.clasificar(items, "margen", 80, 95, None, (0.5, 0.8), "pareto", 93.0)
+        gm.enriquecer(items, dias_g, minimo, objetivo)
+    serie = gm.unir_series(periodos, {p: _dias_mes(p, hoy) for p in periodos}, ven, inv, ot)
+    etq_lab = lambda k: k if k.startswith("(") or not (nom_lab.get(k) or "").strip() else f"{k} - {nom_lab[k].strip()}"      # noqa: E731
+    if val is None:
+        grupos = gm.por_grupo(items, lambda it: it.get("laboratorio") or "(sin laboratorio)", etq_lab)
+    else:
+        grupos = gm.por_grupo(items, lambda it: val.get((it["empresa"], it["producto_id"])) or "", lambda k: ((nom.get(k) or k).strip() if k else "(sin valor)"))
+    kp = gm.agregar(items)
+    bandas = gm.por_banda(items)
+    kp["capital_bajo"] = sum(b["inv_prom_costo"] for b in bandas if b["banda"] == "bajo")
+    kp["capital_sin_venta"] = sum(b["inv_prom_costo"] for b in bandas if b["banda"] == "sin_venta")
+    kp["pct_capital_bajo"] = None if kp["inv_prom_costo"] <= 0 else 100.0 * kp["capital_bajo"] / kp["inv_prom_costo"]
+    dz = sum(i.get("dz") or 0 for i in inv.values())
+    kp["abast"] = None if dz <= 0 else 1.0 - sum(i.get("roja") or 0 for i in inv.values()) / dz
+    kp.update(infull=kot["infull"], ontime=kot["ontime"], otif=kot["otif"], lineas_otif=kot["lineas"])
+    lim = min(max(int(limite), 10), TOPE_FILAS)
+    orden = sorted(items, key=lambda it: (-(it.get("inv_prom_costo") or 0.0), it["producto_id"]))
+    campos = ("producto_id", "descripcion", "abc", "cant", "valor", "margen", "margen_pct", "inv_costo", "inv_prom_costo", "gmroi", "rot", "meses_inv", "pct_sin_stock", "dias_hist", "banda", "capital_exceso")
+    filas_out = [{**{k: it.get(k) for k in campos}, "laboratorio": etq_lab(it.get("laboratorio") or "(sin laboratorio)")} for it in orden[:lim]]
+    sin_hist = sum(1 for it in items if (it.get("inv_prom_costo") or 0) > 0 and not it.get("dias_hist"))
+    return {"meta": {"desde": d_p, "hasta": h_p, "desde_gmroi": d_g, "dias": dias_g, "minimo": minimo, "objetivo": objetivo, "alcance": "cedi" if cedi else "tiendas",
+                     "items_sin_historia": sin_hist, "primer_mes_inventario": primer, "avisos": avisos, "calculado": calculado.isoformat() if calculado else None},
+            "serie": serie, "kpis": kp, "bandas": bandas, "grupo_nombre": grupo_nombre, "grupos": grupos, "puntos": gm.puntos(items), "filas": filas_out,
+            "total_filas": len(items), "recortado": len(items) > len(filas_out)}
+
+
 class Actualizar(BaseModel):
     completo: bool = False
 
@@ -246,5 +432,23 @@ class Actualizar(BaseModel):
 def actualizar(b: Actualizar, bg: BackgroundTasks, user=Depends(requiere("gestionar_compras", "correr_motor"))):
     """Trae de Siesa el historico de ventas, compras y OTIF, en segundo plano (la pantalla sigue el progreso). completo = relee toda la historia, no solo los ultimos meses."""
     progreso.exigir_libre()
-    bg.add_task(sincronizar_reportes_compras, "manual", usuario_de(user), b.completo)
+    bg.add_task(_actualizar_y_calcular, usuario_de(user), b.completo)
+    return {"estado": "lanzado"}
+
+
+def _actualizar_y_calcular(usuario, completo: bool) -> None:
+    """El boton «Actualizar datos»: trae de Siesa y, al terminar (aunque la descarga falle), recalcula los indicadores con lo guardado."""
+    from ..etl.reportes_compras import calcular_indicadores
+    try:
+        sincronizar_reportes_compras("manual", usuario, completo)
+    finally:
+        calcular_indicadores("manual", usuario)
+
+
+@router.post("/indicadores/recalcular")
+def recalcular_indicadores(bg: BackgroundTasks, user=Depends(requiere("gestionar_compras", "correr_motor"))):
+    """Recalcula en segundo plano los indicadores de compras (sin ir a Siesa): lo mismo que hace la corrida diaria. La pantalla sigue el progreso."""
+    from ..etl.reportes_compras import calcular_indicadores
+    progreso.exigir_libre()
+    bg.add_task(calcular_indicadores, "manual", usuario_de(user))
     return {"estado": "lanzado"}

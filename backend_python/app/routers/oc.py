@@ -14,6 +14,7 @@ from ..bitacora import evento, usuario_de
 from ..config import settings
 from ..db import pg
 from ..security import requiere
+from ..reglas_empresa import compras, todas_compras
 from .compras import _necesidades
 
 router = APIRouter(prefix="/compras/oc", tags=["ordenes de compra"], dependencies=[Depends(requiere("ver_compras"))])
@@ -69,7 +70,8 @@ def _grupos(user, items: list[Sel], cambios: dict[str, ProvDestino] | None = Non
     avisos = [f"{e}/{p}: ya no aparece en las necesidades (¿proveedor bloqueado por pedido mínimo o sin permiso?)" for (e, p) in sorted(pedido) if (e, p) not in filas]
     hoy = siesa_oc.hoy()
     dec = settings.oc_decimales_precio
-    cfg = _cfg_revision()
+    cfgs: dict = {}
+    cfg_de = lambda e: cfgs.setdefault(e, _cfg_revision(e))     # las reglas de revision son de cada empresa
     destinos = _destinos(cambios or {})
     por: dict[tuple, dict] = {}
     for k in sorted(pedido):
@@ -89,7 +91,7 @@ def _grupos(user, items: list[Sel], cambios: dict[str, ProvDestino] | None = Non
             "proveedor_nombre": dst["nombre"] if dst else f["proveedor_nombre"], "cond_pago": ((dst["cond_pago"] if dst else f["cond_pago"]) or "").strip(),
             "activo": bool(dst["activo"]) if dst else bool(f["prov_activo"]), "pedido_minimo": dst["pedido_minimo"] if dst else f["pedido_minimo"],
             "email_para": ((dst["email_para"] if dst else f.get("prov_email_para")) or "").strip(),
-            "exigir_email": cfg["oc_exigir_email"] >= 1, "lineas": [], "origenes": set(), "cambio_de": {}})
+            "exigir_email": cfg_de(f["empresa"])["oc_exigir_email"] >= 1, "lineas": [], "origenes": set(), "cambio_de": {}})
         g["origenes"].add(orig)
         if dst:
             g["cambio_de"][orig] = f"{f['proveedor_nombre']} ({f['proveedor_id']})"
@@ -104,7 +106,7 @@ def _grupos(user, items: list[Sel], cambios: dict[str, ProvDestino] | None = Non
         g["valor"] = sum(l["cantidad"] * l["costo"] for l in g["lineas"])
         g["iva"] = sum(l["cantidad"] * l["costo"] * (l["iva_tasa"] or 0) / 100 for l in g["lineas"])
         g["unidades"] = sum(l["cantidad"] for l in g["lineas"])
-        g["motivos"] = _motivos_revision(g, cfg)
+        g["motivos"] = _motivos_revision(g, cfg_de(g["empresa"]))
         if g["cambio_de"]:      # el aprobador debe ver que no es el proveedor que calculo DDMRP
             g["motivos"].insert(0, "Proveedor cambiado por compras: " + ", ".join(sorted(set(g["cambio_de"].values()))) + f" → {g['proveedor_nombre']} ({g['proveedor_id']})")
     return list(por.values()), avisos
@@ -118,22 +120,22 @@ def _validar(g: dict) -> str | None:
     c = g["cond_pago"]
     if not c or len(c) > 3:
         return "Falta la condición de pago del proveedor (código de Siesa de máximo 3 caracteres, ej. C30)"
-    if g["pedido_minimo"] and g["pedido_minimo"] > 0 and g["valor"] < g["pedido_minimo"] and _bloquea_minimo():
+    if g["pedido_minimo"] and g["pedido_minimo"] > 0 and g["valor"] < g["pedido_minimo"] and _bloquea_minimo(g.get("empresa")):
         return "Está por debajo del pedido mínimo del proveedor"
     return None
 
 
-def _bloquea_minimo() -> bool:
+def _bloquea_minimo(empresa: str | None = None) -> bool:
     with pg.connect() as c:
-        v = c.execute(text("SELECT valor FROM ddmrp.compras_config WHERE clave = 'pedido_minimo_bloquea'")).scalar()
+        v = compras(c, "pedido_minimo_bloquea", empresa)
     return bool(v and float(v) >= 1)
 
 
-def _destino() -> str:
-    """A donde se envian las OC: se elige en Reglas de compras (compras_config.oc_destino: 0 pausado, 1 directo a Siesa, 2 BPM). Si esa fila no existe o esta vacia, el .env (OC_DESTINO)."""
+def _destino(empresa: str | None = None) -> str:
+    """A donde se envian las OC de la empresa: se elige en Reglas de compras (oc_destino: 0 pausado, 1 directo a Siesa, 2 BPM). Si esa fila no existe o esta vacia, el .env (OC_DESTINO)."""
     try:
         with pg.connect() as c:
-            v = c.execute(text("SELECT valor FROM ddmrp.compras_config WHERE clave = 'oc_destino'")).scalar()
+            v = compras(c, "oc_destino", empresa)
         if v is not None:
             return {0: "pausado", 1: "directo", 2: "bpm"}.get(int(v), settings.oc_destino)
     except Exception:    # noqa: BLE001
@@ -141,17 +143,17 @@ def _destino() -> str:
     return settings.oc_destino
 
 
-def _exigir_envio_activo() -> None:
-    if _destino() == "pausado":
+def _exigir_envio_activo(empresa: str | None = None) -> None:
+    if _destino(empresa) == "pausado":
         raise HTTPException(409, "El envío de órdenes de compra está pausado (Reglas de compras). Puedes armar la vista previa, pero no enviar.")
 
 
-def _cfg_revision() -> dict:
-    """Reglas de revision desde Configuracion de compras (tabla compras_config), no del .env. Los defectos aplican si la fila no existe o esta vacia."""
+def _cfg_revision(empresa: str | None = None) -> dict:
+    """Reglas de revision de la empresa desde Configuracion de compras (compras_config, con lo propio de la empresa encima), no del .env. Los defectos aplican si la fila no existe o esta vacia."""
     cfg = {"oc_umbral_total": 0.0, "oc_desvio_cant_pct": 30.0, "oc_desvio_cant_min": 15.0, "oc_desvio_costo_pct": 30.0, "oc_exigir_entiendo": 1.0, "oc_listado_dias": 30.0, "oc_exigir_email": 0.0, "oc_email_proveedor": 0.0}
     try:
         with pg.connect() as c:
-            for k, v in c.execute(text("SELECT clave, valor::float8 FROM ddmrp.compras_config WHERE clave LIKE 'oc\\_%' AND valor IS NOT NULL")).all():
+            for k, v in todas_compras(c, empresa).items():
                 if k in cfg:
                     cfg[k] = v
     except Exception:    # noqa: BLE001
@@ -287,7 +289,7 @@ def _enviar_bpm(oc_id: int, usuario: str | None) -> dict:
         em = c.execute(text("SELECT email_para, email_cc FROM ddmrp.proveedor WHERE empresa = :e AND proveedor_id = :p AND sucursal = :s"),
                        {"e": r["empresa"], "p": r["proveedor_id"], "s": r["sucursal"]}).first()
     # encendido en Reglas de compras (oc_email_proveedor): apagado, el BPM no recibe correos y no le llega nada a un proveedor real
-    emails_proveedor = "" if _cfg_revision()["oc_email_proveedor"] < 1 else ";".join(x for x in ((em[0] or "") if em else "", (em[1] or "") if em else "") if x.strip())
+    emails_proveedor = "" if _cfg_revision(r["empresa"])["oc_email_proveedor"] < 1 else ";".join(x for x in ((em[0] or "") if em else "", (em[1] or "") if em else "") if x.strip())
     carga = {"id_externo": oc_id, "empresa": r["empresa"], "referencia": r["referencia"], "plano": plano, "proveedor_id": r["proveedor_id"], "sucursal": r["sucursal"],
              "proveedor_nombre": r["proveedor_nombre"], "cond_pago": r["cond_pago"], "comprador": r["comprador"], "creado_por": r["creado_por"], "valor": float(r["valor"] or 0),
              "iva": float(r["iva"] or 0), "total": float(r["total"] or 0), "items": r["items"], "requiere_revision": revision, "motivo_revision": "\n".join(x for x in (*("• " + t for t in (r["motivo_revision"] or "").split("; ") if t.strip()), ("\nJustificación de compras: " + r["justificacion"]) if r.get("justificacion") else "") if x) or None, "justificacion": r.get("justificacion"), "emails_proveedor": emails_proveedor, "email_comprador": r.get("creado_por_email") or "",
@@ -311,14 +313,17 @@ def _enviar_bpm(oc_id: int, usuario: str | None) -> dict:
 
 
 def _despachar(oc_id: int, usuario: str | None) -> dict:
-    _exigir_envio_activo()
-    return _enviar_bpm(oc_id, usuario) if _destino() == "bpm" else _enviar(oc_id, usuario)
+    with pg.connect() as c:
+        emp = c.execute(text("SELECT empresa FROM ddmrp.orden_compra WHERE id = :i"), {"i": oc_id}).scalar()
+    _exigir_envio_activo(emp)
+    return _enviar_bpm(oc_id, usuario) if _destino(emp) == "bpm" else _enviar(oc_id, usuario)
 
 
 @router.get("/config")
-def config_oc():
-    cfg = _cfg_revision()
-    return {"destino": _destino(), "revision": cfg, "exigir_entiendo": cfg["oc_exigir_entiendo"] >= 1, "listado_dias": int(cfg["oc_listado_dias"])}
+def config_oc(empresa: str | None = None):
+    empresa = empresa if empresa in ("05", "21") else None
+    cfg = _cfg_revision(empresa)
+    return {"destino": _destino(empresa), "revision": cfg, "exigir_entiendo": cfg["oc_exigir_entiendo"] >= 1, "listado_dias": int(cfg["oc_listado_dias"])}
 
 
 @router.get("/proveedores")
@@ -337,7 +342,8 @@ def buscar_proveedores(empresa: str, q: str = "", limite: int = 25):
 def enviar(b: EnviarIn, user=Depends(requiere("gestionar_compras"))):
     """Crea en Siesa una OC por proveedor y empresa con los items elegidos (cantidad y costo salen del servidor). `solo_plano`: devuelve el plano sin enviar."""
     if not b.solo_plano:
-        _exigir_envio_activo()      # antes de crear nada en la base
+        for e in sorted({i.empresa for i in b.items}):
+            _exigir_envio_activo(e)      # antes de crear nada en la base
     comprador = _comprador(user)
     if not b.items:
         raise HTTPException(400, "No elegiste ningún ítem")

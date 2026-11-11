@@ -11,7 +11,7 @@ _padre: contextvars.ContextVar[int | None] = contextvars.ContextVar("bitacora_pa
 
 TIPOS = {
     "pipeline": "Pipeline completo (ETL + motor)", "etl": "ETL de Siesa", "motor": "Motor DDMRP",
-    "items": "Traer items de Siesa", "bodegas": "Traer tiendas de Siesa", "ventas": "Traer ventas por mes", "reportes": "Reportes de compras (histórico)",
+    "items": "Traer items de Siesa", "bodegas": "Traer tiendas de Siesa", "ventas": "Traer ventas por mes", "reportes": "Reportes de compras (histórico)", "indicadores": "Indicadores de compras (cálculo)",
     "carga": "Carga de maestro", "plano": "Plano de despacho", "aprobacion": "Aprobación de despacho", "auditoria": "Excel de auditoría", "analyze": "Actualizar estadísticas (ANALYZE)",
 }
 

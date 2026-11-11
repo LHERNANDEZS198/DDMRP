@@ -12,6 +12,7 @@ from ..activos import solo_activos
 from ..auditoria_xlsx import construir, PARAMS
 from ..bitacora import evento, usuario_de
 from ..db import pg
+from ..reglas_empresa import todas_compras, todas_param
 from ..orchestrator import recalcular_compras
 from ..security import usuario_actual, filtro_sql_permisos, requiere
 
@@ -33,11 +34,11 @@ def _csv(v: str | None) -> list[str]:
     return [x.strip() for x in (v or "").split(",") if x.strip()]
 
 
-def _config(c) -> dict:
+def _config(c, empresa: str | None = None) -> dict:
+    """Reglas de compras de la empresa (las suyas o, si no las cambio, las generales)."""
     cfg = dict(CONFIG_DEFECTO)
     try:
-        for k, v in c.execute(text("SELECT clave, valor::float8 FROM ddmrp.compras_config WHERE valor IS NOT NULL")).all():
-            cfg[k] = v
+        cfg.update(todas_compras(c, empresa))
     except Exception:
         pass
     return cfg
@@ -112,7 +113,8 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
     p["mes12"] = _mes_hace(11)
     prov_cond = _csv(proveedores)
     with pg.connect() as c:
-        cfg = _config(c)
+        cfgs = {e: _config(c, e) for e in (_csv(empresa) or ["05", "21"])}     # cada empresa con sus reglas de compras
+        cfg = cfgs[(_csv(empresa) or ["05"])[0]]                                    # la que se muestra en pantalla: la de la empresa elegida (con varias, la primera)
         ej = c.execute(text(f"SELECT id, fecha_calculo FROM ddmrp.ejecucion_motor WHERE id = {ULTIMA} ORDER BY id LIMIT 1")).mappings().first()
         con_prov = " AND ".join(cond + ["ic.proveedor_id IS NOT NULL"] + (["ic.proveedor_id = ANY(:f_prov)"] if prov_cond else []))
         if prov_cond:
@@ -125,7 +127,7 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
                                f"LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = s.empresa AND mi.producto_id = s.producto_id WHERE {sin_cond}"), {k: v for k, v in p.items() if k != "mes12"}).scalar()
     truncado = len(filas) > limite
     filas = filas[:limite]
-    poca = cfg.get("poca_historia_meses", 3.0)
+    poca_de = lambda e: cfgs.get(e, cfg).get("poca_historia_meses", 3.0)
     grupos: dict[tuple, dict] = {}
     for f in filas:
         base = _redondear(f["qty_buffer"], f["unidad_pedido"], f["redondeo"])
@@ -163,13 +165,13 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
         k = (f["empresa"], f["proveedor_id"], f["sucursal"])
         g = grupos.setdefault(k, {"empresa": f["empresa"], "proveedor_id": f["proveedor_id"], "sucursal": f["sucursal"], "proveedor_nombre": f["proveedor_nombre"],
                                   "activo": bool(f["prov_activo"]), "redondeo": f["redondeo"], "pedido_minimo": f["pedido_minimo"],
-                                  "cond_pago": f["cond_pago"], "leadtime": f["leadtime_proveedor"], "frecuencia": f["frecuencia_proveedor"] if f["frecuencia_proveedor"] is not None else cfg.get("frecuencia_defecto", 15.0), "items": 0, "unidades": 0.0, "valor": 0.0, "iva": 0.0, "total": 0.0, "sin_costo": 0, "poca_historia": 0, "editadas": 0})
+                                  "cond_pago": f["cond_pago"], "leadtime": f["leadtime_proveedor"], "frecuencia": f["frecuencia_proveedor"] if f["frecuencia_proveedor"] is not None else cfgs.get(f["empresa"], cfg).get("frecuencia_defecto", 15.0), "items": 0, "unidades": 0.0, "valor": 0.0, "iva": 0.0, "total": 0.0, "sin_costo": 0, "poca_historia": 0, "editadas": 0})
         g["items"] += 1; g["unidades"] += f["qty_pedir"]
         g["email_para"] = f["prov_email_para"]; g["email_cc"] = f["prov_email_cc"]
         if f["editada"]: g["editadas"] += 1
         if f["valor"] is None: g["sin_costo"] += 1 if f["qty_pedir"] > 0 else 0      # los ítems sin necesidad no cuentan como faltantes
         else: g["valor"] += f["valor"]; g["iva"] += f["iva"] or 0; g["total"] += f["total"]
-        if f["meses_venta"] < poca and f["qty_pedir"] > 0: g["poca_historia"] += 1
+        if f["meses_venta"] < poca_de(f["empresa"]) and f["qty_pedir"] > 0: g["poca_historia"] += 1
     provs = []
     for g in grupos.values():
         pm = g["pedido_minimo"]
@@ -182,8 +184,7 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
         g["estado"] = ("Bajo el pedido mínimo" if g["bajo_minimo"] else "Sin condición de pago" if g["sin_cond_pago"] else "Incompleto (ítems sin cotización)" if g["sin_costo"]
                        else "Proveedor inactivo" if not g["activo"] else "Sin correo del proveedor" if g["sin_email"] else "OK")
         provs.append(g)
-    bloquea = cfg.get("pedido_minimo_bloquea", 0) >= 1
-    bloqueados = [g for g in provs if g["bajo_minimo"]] if bloquea else []
+    bloqueados = [g for g in provs if g["bajo_minimo"] and cfgs.get(g["empresa"], cfg).get("pedido_minimo_bloquea", 0) >= 1]   # cada empresa decide si bloquea o solo avisa
     if bloqueados:   # «bloquear y no mostrar»: los proveedores bajo su pedido minimo salen de la lista (y de los totales)
         quitar = {(g["empresa"], g["proveedor_id"], g["sucursal"]) for g in bloqueados}
         filas = [f for f in filas if (f["empresa"], f["proveedor_id"], f["sucursal"]) not in quitar]
@@ -191,7 +192,7 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
     provs.sort(key=lambda g: -g["total"])
     tot = {"proveedores": len(provs), "items": sum(1 for f in filas if f["qty_pedir"] > 0), "unidades": sum(f["qty_pedir"] for f in filas), "valor": sum(g["valor"] for g in provs),
            "iva": sum(g["iva"] for g in provs), "total": sum(g["total"] for g in provs), "sin_costo": sum(1 for f in filas if f["costo"] is None and f["qty_pedir"] > 0),
-           "poca_historia": sum(1 for f in filas if f["meses_venta"] < poca and f["qty_pedir"] > 0), "editadas": sum(1 for f in filas if f["editada"]), "bajo_minimo": sum(1 for g in provs if g["bajo_minimo"]), "bloqueados": len(bloqueados)}
+           "poca_historia": sum(1 for f in filas if f["meses_venta"] < poca_de(f["empresa"]) and f["qty_pedir"] > 0), "editadas": sum(1 for f in filas if f["editada"]), "bajo_minimo": sum(1 for g in provs if g["bajo_minimo"]), "bloqueados": len(bloqueados)}
     aviso = None if ej else "Aún no hay una corrida del motor con el buffer del CEDI: corre el motor."
     return {"config": cfg, "ejecucion": dict(ej) if ej else None, "aviso": aviso, "filas": filas, "proveedores": provs, "bloqueados": bloqueados,
             "sin_proveedor": {"total": n_sin, "filas": sin}, "totales": tot, "truncado": truncado}
@@ -347,8 +348,9 @@ def _hoja_calculo(wb, r: dict, tope: int = 10000) -> None:
     filas = r["filas"][:tope]
     fc = r["ejecucion"]["fecha_calculo"]
     with pg.connect() as c:
-        prm = {k: float(v) for k, v in c.execute(text("SELECT clave, valor FROM ddmrp.parametro"))}
-        factores = [dict(x) for x in c.execute(text("SELECT tipo, descripcion, factor::float8 factor, desde::float8 desde, hasta::float8 hasta FROM ddmrp.factor_tramo ORDER BY tipo, desde")).mappings()]
+        emp_hoja = r["filas"][0]["empresa"] if r["filas"] else "05"     # la hoja se arma con las reglas y los factores de la empresa de las filas
+        prm = todas_param(c, emp_hoja)
+        factores = [dict(x) for x in c.execute(text("SELECT tipo, descripcion, factor::float8 factor, desde::float8 desde, hasta::float8 hasta FROM ddmrp.factor_tramo WHERE empresa = :e ORDER BY tipo, desde"), {"e": emp_hoja}).mappings()]
         n = int(min(max(prm.get("meses_historia", 7), 2), 12))
         meses, y, m = [], fc.year, fc.month
         for _ in range(n):

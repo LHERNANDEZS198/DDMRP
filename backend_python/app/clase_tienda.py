@@ -28,28 +28,40 @@ def clasificar(ventas: list[tuple], corte_a: float = 80.0, corte_b: float = 95.0
     return out
 
 
-def _param(c, clave: str, defecto: float) -> float:
-    v = c.execute(text("SELECT valor FROM ddmrp.parametro WHERE clave = :k"), {"k": clave}).scalar()
-    return float(v) if v is not None else defecto
+def _param(c, clave: str, defecto: float, empresa: str | None = None) -> float:
+    from .reglas_empresa import param
+    return float(param(c, clave, empresa, defecto))
 
 
-def recalcular(c) -> dict:
-    """Recalcula la clase de cada tienda de la Bitacora (activa, sin CEDI) con la venta de los ultimos N meses cerrados. Conserva la clase manual."""
-    meses = int(_param(c, "clase_tienda_meses", 6)); ca = _param(c, "clase_tienda_corte_a", 80); cb = _param(c, "clase_tienda_corte_b", 95)
+def recalcular(c, empresa: str | None = None) -> dict:
+    """Recalcula la clase de cada tienda de la Bitacora (activa, sin CEDI) con la venta de los ultimos N meses cerrados. Conserva la clase manual.
+    Los meses y los cortes A/B son reglas de cada empresa: con `empresa` solo recalcula esa; sin ella, cada una con las suyas."""
+    emps = [empresa] if empresa else ["05", "21"]
+    total = {"tiendas": 0, "A": 0, "B": 0, "C": 0, "meses": None}
+    for e in emps:
+        r = _recalcular_empresa(c, e)
+        for k in ("tiendas", "A", "B", "C"):
+            total[k] += r[k]
+        total["meses"] = total["meses"] or r["meses"]
+    return total
+
+
+def _recalcular_empresa(c, empresa: str) -> dict:
+    meses = int(_param(c, "clase_tienda_meses", 6, empresa)); ca = _param(c, "clase_tienda_corte_a", 80, empresa); cb = _param(c, "clase_tienda_corte_b", 95, empresa)
     filas = c.execute(text("""
         SELECT b.empresa, b.bodega_id, COALESCE(sum(v.valor), 0)::float8
         FROM ddmrp.abast_bitacora b
         LEFT JOIN ddmrp.ventas_mensual v ON v.empresa = b.empresa AND v.bodega_id = b.bodega_id
              AND v.mes >= to_char(date_trunc('month', current_date) - make_interval(months => :m), 'YYYYMM')
              AND v.mes <  to_char(date_trunc('month', current_date), 'YYYYMM')
-        WHERE COALESCE(b.activa, 1) = 1
+        WHERE COALESCE(b.activa, 1) = 1 AND b.empresa = :emp
           AND NOT EXISTS (SELECT 1 FROM ddmrp.maestro_cedi mc WHERE mc.bodega_id = b.bodega_id)
-        GROUP BY b.empresa, b.bodega_id"""), {"m": meses}).all()
+        GROUP BY b.empresa, b.bodega_id"""), {"m": meses, "emp": empresa}).all()
     res = {}
     for emp in {f[0] for f in filas}:             # el ABC es por empresa: cada una se mide contra sus propias tiendas
         res.update({(emp, k): v for k, v in clasificar([(f[1], f[2]) for f in filas if f[0] == emp], ca, cb).items()})
-    c.execute(text("DELETE FROM ddmrp.tienda_clase t WHERE t.clase_manual IS NULL AND NOT EXISTS "
-                   "(SELECT 1 FROM ddmrp.abast_bitacora b WHERE b.empresa = t.empresa AND b.bodega_id = t.bodega_id AND COALESCE(b.activa, 1) = 1)"))
+    c.execute(text("DELETE FROM ddmrp.tienda_clase t WHERE t.empresa = :emp AND t.clase_manual IS NULL AND NOT EXISTS "
+                   "(SELECT 1 FROM ddmrp.abast_bitacora b WHERE b.empresa = t.empresa AND b.bodega_id = t.bodega_id AND COALESCE(b.activa, 1) = 1)"), {"emp": empresa})
     if res:
         c.execute(text("""INSERT INTO ddmrp.tienda_clase (empresa, bodega_id, clase_calc, venta, pct_acum, meses, calculada)
                           VALUES (:e, :b, :c, :v, :p, :m, now())

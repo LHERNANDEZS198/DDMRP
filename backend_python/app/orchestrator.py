@@ -22,10 +22,16 @@ def resumir_inventario_mensual(c, fecha):
     desde = c.execute(text("SELECT date_trunc('month', min(fecha))::date FROM ddmrp.buffer_historia")).scalar() if primera else None
     desde = desde or fecha.replace(day=1)
     c.execute(text("DELETE FROM ddmrp.inventario_mes WHERE mes >= to_char(CAST(:d AS date), 'YYYYMM')"), {"d": desde})
-    c.execute(text("""INSERT INTO ddmrp.inventario_mes (mes, empresa, bodega_id, producto_id, inv_suma, dias, dias_cero)
+    c.execute(text("""INSERT INTO ddmrp.inventario_mes (mes, empresa, bodega_id, producto_id, inv_suma, dias, dias_cero, dias_z, dias_roja)
                       SELECT to_char(fecha, 'YYYYMM'), empresa, bodega_id, producto_id, SUM(GREATEST(inventario, 0)), COUNT(*),
-                             COUNT(*) FILTER (WHERE COALESCE(inventario, 0) <= 0)
+                             COUNT(*) FILTER (WHERE COALESCE(inventario, 0) <= 0), COUNT(*) FILTER (WHERE zona IS NOT NULL), COUNT(*) FILTER (WHERE zona = 'ROJA')
                       FROM ddmrp.buffer_historia WHERE fecha >= :d GROUP BY 1, 2, 3, 4"""), {"d": desde})
+    # meses resumidos antes de que existieran los dias en zona roja: se completan SOLO con lo que aun conserva la foto diaria (los meses ya purgados quedan sin dato)
+    if c.execute(text("""SELECT EXISTS (SELECT 1 FROM ddmrp.inventario_mes WHERE dias_z IS NULL AND mes >= (SELECT to_char(min(fecha), 'YYYYMM') FROM ddmrp.buffer_historia))""")).scalar():
+        c.execute(text("""UPDATE ddmrp.inventario_mes im SET dias_z = x.dz, dias_roja = x.dr
+                          FROM (SELECT to_char(fecha, 'YYYYMM') AS mes, empresa, bodega_id, producto_id, COUNT(*) FILTER (WHERE zona IS NOT NULL) AS dz, COUNT(*) FILTER (WHERE zona = 'ROJA') AS dr
+                                FROM ddmrp.buffer_historia GROUP BY 1, 2, 3, 4) x
+                          WHERE im.dias_z IS NULL AND im.mes = x.mes AND im.empresa = x.empresa AND im.bodega_id = x.bodega_id AND im.producto_id = x.producto_id"""))
     c.execute(text("DELETE FROM ddmrp.inventario_mes WHERE mes < to_char(current_date - interval '13 months', 'YYYYMM')"))
 
 

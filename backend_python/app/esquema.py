@@ -22,6 +22,7 @@ SENTENCIAS = [
     "ALTER TABLE ddmrp.sugerencias_envio ADD COLUMN IF NOT EXISTS cantidad_necesaria NUMERIC(14,3), ADD COLUMN IF NOT EXISTS stock_cedi NUMERIC(14,3)",
     "CREATE TABLE IF NOT EXISTS ddmrp.inventario_cedi (producto_id TEXT PRIMARY KEY, disponible NUMERIC(14,3) NOT NULL, fecha_corte DATE NOT NULL)",
     "CREATE TABLE IF NOT EXISTS ddmrp.reserva_cedi (producto_id TEXT PRIMARY KEY, porcentaje NUMERIC(8,4) NOT NULL CHECK (porcentaje >= 0 AND porcentaje <= 1))",
+    "INSERT INTO ddmrp.parametro VALUES ('cedi_solo_ubicaciones_validas', 1, 'Inventario del CEDI: 1 solo suma las ubicaciones ACTIVAS y COMPROMETIBLES de Siesa (sin averias, devoluciones, novedades...); 0 suma toda la existencia de la bodega') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('cedi_regla_reparto', 1, 'Si el inventario del CEDI no alcanza: 0 no limita, 1 proporcional a la rotacion (ADU), 4 proporcional a la necesidad, 2 parejo, 3 prioridad al mas critico, 5 por clase de tienda: A primero, luego B y C') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('etl_traer_ventas', 0, 'El ETL tambien trae las ventas por mes de Siesa (1 = si, 0 = solo con el boton)') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('meses_retencion_ventas', 36, 'Meses de ventas por mes que se conservan en la base (los anteriores se borran al traer ventas)') ON CONFLICT DO NOTHING",
@@ -333,6 +334,44 @@ def motor_por_empresa() -> None:
         log.exception("No se pudo separar la corrida del motor por empresa")
 
 
+def reglas_por_empresa() -> None:
+    """Migracion idempotente: las reglas pasan a ser de cada empresa (Funat 05 y Stores 21 no se pisan).
+    - Reglas del motor (ddmrp.parametro) y de compras (ddmrp.compras_config): la fila de siempre es la regla GENERAL y lo que una empresa cambie se guarda aparte
+      (parametro_empresa / compras_config_empresa); las vistas v_parametro y v_compras_config dan, por empresa, lo propio o, si no tiene, la general.
+      Asi ninguna empresa cambia de comportamiento al migrar: las dos arrancan con lo que habia.
+    - Tablas de reglas por filas (factores por tramo, reserva del CEDI, reposicion y sin envio por laboratorio, DIAs del reparto, filtros de criterios):
+      se les agrega la empresa a la llave y lo que habia se copia a las dos."""
+    try:
+        with pg.begin() as c:
+            for t in ("parametro", "compras_config"):
+                c.execute(text(f"CREATE TABLE IF NOT EXISTS ddmrp.{t}_empresa (empresa TEXT NOT NULL, clave TEXT NOT NULL, valor NUMERIC, PRIMARY KEY (empresa, clave))"))
+            c.execute(text("""CREATE OR REPLACE VIEW ddmrp.v_parametro AS
+                SELECT e.empresa, p.clave, COALESCE(pe.valor, p.valor) AS valor, (pe.valor IS NOT NULL) AS propio, p.valor AS general
+                FROM (VALUES ('05'), ('21')) e(empresa) CROSS JOIN ddmrp.parametro p
+                LEFT JOIN ddmrp.parametro_empresa pe ON pe.empresa = e.empresa AND pe.clave = p.clave"""))
+            c.execute(text("""CREATE OR REPLACE VIEW ddmrp.v_compras_config AS
+                SELECT e.empresa, p.clave, COALESCE(pe.valor, p.valor) AS valor, (pe.valor IS NOT NULL) AS propio, p.valor AS general
+                FROM (VALUES ('05'), ('21')) e(empresa) CROSS JOIN ddmrp.compras_config p
+                LEFT JOIN ddmrp.compras_config_empresa pe ON pe.empresa = e.empresa AND pe.clave = p.clave"""))
+            # (tabla, columnas de la llave sin la empresa)
+            for t, llave in (("factor_tramo", "tipo, descripcion"), ("reserva_cedi", "producto_id"), ("reposicion_laboratorio", "laboratorio"),
+                             ("laboratorio_sin_envio", "laboratorio"), ("reparto_dia", "dia"), ("criterio_plan", "plan_id")):
+                if c.execute(text("SELECT 1 FROM information_schema.columns WHERE table_schema = 'ddmrp' AND table_name = :t AND column_name = 'empresa'"), {"t": t}).scalar():
+                    continue
+                cols = [r[0] for r in c.execute(text("SELECT column_name FROM information_schema.columns WHERE table_schema = 'ddmrp' AND table_name = :t "
+                                                     "ORDER BY ordinal_position"), {"t": t})]
+                lista = ", ".join(cols)
+                c.execute(text(f"ALTER TABLE ddmrp.{t} DROP CONSTRAINT IF EXISTS {t}_pkey"))
+                c.execute(text(f"ALTER TABLE ddmrp.{t} ADD COLUMN empresa TEXT"))
+                c.execute(text(f"UPDATE ddmrp.{t} SET empresa = '05'"))
+                c.execute(text(f"INSERT INTO ddmrp.{t} ({lista}, empresa) SELECT {lista}, '21' FROM ddmrp.{t} WHERE empresa = '05'"))
+                c.execute(text(f"ALTER TABLE ddmrp.{t} ALTER COLUMN empresa SET NOT NULL"))
+                c.execute(text(f"ALTER TABLE ddmrp.{t} ADD PRIMARY KEY (empresa, {llave})"))
+                log.warning("Reglas por empresa: %s ahora lleva la empresa en la llave (lo que habia se copio a Funat y Stores)", t)
+    except Exception:
+        log.exception("No se pudieron separar las reglas por empresa")
+
+
 COLS_SUG = ("ejecucion_id, fecha_calculo, empresa, bodega_id, producto_id, adu, iv, forecast, lead_time, frecuencia, unidad_despacho, zrb, zrs, za, zv, "
             "tor, toy, tog, toy_aj, tog_aj, inventario, en_transito, demanda_calificada, flujo_neto, pct_buffer, zona, vectorizacion, cantidad_sugerida, "
             "condenado, cantidad_necesaria, stock_cedi, regla_objetivo, estado, cantidad_aprobada")
@@ -621,6 +660,15 @@ SENTENCIAS_REPORTES = [
     # cuando y como quedo la ultima actualizacion de cada tarea (ventas / compras / otif) por empresa
     """CREATE TABLE IF NOT EXISTS ddmrp.rep_actualizacion (
          empresa TEXT NOT NULL, tarea TEXT NOT NULL, fecha TIMESTAMPTZ NOT NULL DEFAULT now(), filas INT, desde CHAR(6), mensaje TEXT, PRIMARY KEY (empresa, tarea))""",
+    # Indicadores de compras: se calcula aparte (corrida diaria de reportes) y el informe solo suma. Por alcance (tiendas / cedi), mes, empresa e item
+    """CREATE TABLE IF NOT EXISTS ddmrp.rep_indicadores_mes (
+         alcance TEXT NOT NULL, mes CHAR(6) NOT NULL, empresa TEXT NOT NULL, producto_id TEXT NOT NULL,
+         cant FLOAT8 NOT NULL DEFAULT 0, valor FLOAT8 NOT NULL DEFAULT 0, inv_prom FLOAT8 NOT NULL DEFAULT 0, dias INT NOT NULL DEFAULT 0, dias_tot INT NOT NULL DEFAULT 0,
+         dias_cero INT NOT NULL DEFAULT 0, dias_z INT NOT NULL DEFAULT 0, dias_roja INT NOT NULL DEFAULT 0, calculado TIMESTAMPTZ NOT NULL DEFAULT now(),
+         PRIMARY KEY (alcance, mes, empresa, producto_id))""",
+    "CREATE INDEX IF NOT EXISTS idx_rep_ind_item ON ddmrp.rep_indicadores_mes (alcance, empresa, producto_id)",
+    """CREATE TABLE IF NOT EXISTS ddmrp.rep_indicadores_item (
+         alcance TEXT NOT NULL, empresa TEXT NOT NULL, producto_id TEXT NOT NULL, inventario FLOAT8 NOT NULL DEFAULT 0, PRIMARY KEY (alcance, empresa, producto_id))""",
     # reglas (editables en Config > Reglas de compras): nada de esto va en el .env
     """INSERT INTO ddmrp.compras_config (clave, valor, detalle) VALUES
          ('rep_meses_historia', 48, 'Reportes de compras: cuantos meses de historia se traen de Siesa en la carga completa'),
@@ -630,6 +678,7 @@ SENTENCIAS_REPORTES = [
          ('rep_minuto', 0, 'Reportes de compras: minuto (0-59) de la hora en que corre la actualizacion automatica'),
          ('rep_cada_dias', 1, 'Reportes de compras: cada cuantos dias corre la actualizacion automatica (1 = todos los dias)'),
          ('rep_recalcular_compras', 1, 'Corrida automatica de reportes: 1 = antes tambien recalcula las necesidades de compra (inventario y OC abiertas del CEDI + buffer del CEDI), sin depender del ETL del motor; 0 = solo los reportes'),
+         ('rep_calcular_indicadores', 1, 'Corrida automatica de reportes: 1 = tambien calcula los indicadores de compras (GMROI, abastecimiento) que lee el informe; 0 = no (solo con el boton Recalcular)'),
          ('rep_otif_dias_tolerancia', 0, 'OTIF: dias de gracia sobre la fecha pactada para contar una entrega como a tiempo'),
          ('rep_otif_pct_completo', 98, 'OTIF: % de lo pedido que debe haber llegado para contar la linea como completa (98 = tolera un faltante del 2 %)'),
          ('rep_otif_excluir_regularizadas', 1, 'OTIF: 1 = no cuentan las OC montadas el mismo dia (o despues) de la entrada (regularizaciones: no miden al proveedor); 0 = cuentan'),
@@ -667,6 +716,7 @@ def asegurar_esquema():
     empresa_en_llaves()
     items_por_empresa()
     motor_por_empresa()
+    reglas_por_empresa()
     esquema_cedi()
     if nueva:
         cedi_y_co_iniciales()

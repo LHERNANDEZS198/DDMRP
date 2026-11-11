@@ -70,14 +70,14 @@ function ConfigTabla({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
     if (f.cat.length) p.set('categoria', f.cat.join(','))
     if (f.abas.length) p.set('abastecimiento', f.abas.join(','))
     if (def?.filtros.mes && f.mes) p.set('mes', f.mes)
-    if (def?.filtros.empresa) { p.set('empresa', empresa); p.set('estado', estado) } else if (def?.filtros.empresa_opc && empG) p.set('empresa', empG)
+    if (def?.filtros.empresa) { if (empG) p.set('empresa', empG); p.set('estado', estado) } else if (def?.filtros.empresa_opc && empG) p.set('empresa', empG)
     if (colActiva) { p.set('col', f.col); p.set('op', f.op); if (f.val.trim()) p.set('val', f.val.trim()) }
     return p
   }
   const consulta = () => { const p = filtros(); if (orden.col) { p.set('orden', orden.col); if (orden.desc) p.set('desc', 'true') }; const s = p.toString(); return s ? '?' + s : '' }
   const consultaExcel = () => { const s = filtros().toString(); return s ? '?' + s : '' }
   const [estado, setEstado] = useState('activo')   // items: estado en Siesa
-  const { una: empG } = useEmpresa(); const empresa = empG || '05'   // items: se trabaja una empresa a la vez
+  const { una: empG } = useEmpresa()   // items: la empresa elegida en la barra; con «ambas» salen las dos (cada fila trae su empresa)
   const [agregar, setAgregar] = useState(false)
   // «Aplicar configuración sugerida» (maestro de proveedores): análisis del cumplimiento del proveedor en Siesa y lo que se propone
   const [cump, setCump] = useState<null | { cargando: boolean; res: any[]; avisos: string[]; desde: string; marcas: Record<string, boolean> }>(null)
@@ -103,7 +103,7 @@ function ConfigTabla({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
       .catch(e => { if (n === peticion.current) setMsg('Error: ' + e.message) }).finally(() => { if (n === peticion.current) setCargando(false) })
   }
   useEffect(() => { setRows([]); setMsg(''); setModo('actualizar') }, [sel])
-  useEffect(() => { const t = setTimeout(cargar, f.texto || f.val ? 350 : 0); return () => clearTimeout(t) }, [sel, JSON.stringify(f), empresa, estado, defs.length, orden.col, orden.desc])
+  useEffect(() => { const t = setTimeout(cargar, f.texto || f.val ? 350 : 0); return () => clearTimeout(t) }, [sel, JSON.stringify(f), empG, estado, defs.length, orden.col, orden.desc])
 
   const columnasFiltro = useMemo(() => def ? [...new Set([...def.llave, ...def.editable])] : [], [def])
   const colTexto = (c: string) => !def || def.tipos[c] === 'txt' || (!(c in def.tipos) && c !== 'dia')   // columna de texto (las numéricas son editables num/int o la llave dia)
@@ -210,8 +210,8 @@ function ConfigTabla({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
   const traerItems = async () => {
     try {
       setMsg('Trayendo los items de Siesa con todos sus criterios… puede tardar un par de minutos')
-      const r = await conProgreso(setMsg, () => api('/admin/sincronizar-items?empresa=' + empresa, { method: 'POST' }))
-      const a = r[empresa] ?? r['05'] ?? r['21'] ?? {}
+      const r = await conProgreso(setMsg, () => api('/admin/sincronizar-items?empresa=' + empG, { method: 'POST' }))
+      const a = r[empG] ?? r['05'] ?? r['21'] ?? {}
       setMsg(`Items traídos de Siesa: ${a.items ?? 0} items` + (a.eliminados ? ` (${a.eliminados} viejos eliminados)` : '') + ` · `+ `${a.criterios ?? 0} asignaciones de criterio en ${a.planes ?? 0} criterios`)
       if (sel === 'items') cargar()
     } catch (x: any) { setMsg('Error: ' + x.message) }
@@ -220,7 +220,7 @@ function ConfigTabla({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
     if (!(await confirmar('Traer las ventas por mes de Siesa', 'Reemplaza la ventana de meses (los meses anteriores no se tocan). Puede tardar varios minutos.', { si: 'Traer ventas' }))) return
     try {
       setMsg('Trayendo las ventas por mes de Siesa… puede tardar varios minutos')
-      const r = await conProgreso(setMsg, () => api('/admin/sincronizar-ventas?empresa=' + empresa, { method: 'POST' }))
+      const r = await conProgreso(setMsg, () => api('/admin/sincronizar-ventas?empresa=' + empG, { method: 'POST' }))
       const n = (r.ventas_05 ?? 0) + (r.ventas_21 ?? 0)
       setMsg(`Ventas traídas de Siesa: ${n.toLocaleString()} filas desde ${r.meses_desde}`)
       if (sel === 'ventas-mensual') cargar()
