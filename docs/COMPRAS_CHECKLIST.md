@@ -128,3 +128,10 @@ Estados: ✅ listo · 🟡 hecho, sin validar en producción · ⬜ pendiente ·
 - Se calcula en `etl/reportes_compras.calcular_indicadores`, independiente del motor y del ETL, dentro de la misma corrida automática de reportes (hora / minuto / cada N días, junto con «recalcular necesidades de compra»). Regla nueva en Reglas de compras: «Corrida automática: también calcular los indicadores» (Sí/No). También: botón «Recalcular» del informe (`POST /compras/reportes/indicadores/recalcular`) y el botón «Actualizar datos» (descarga de Siesa y después recalcula). Corre aunque la descarga de Siesa falle.
 - Primera vez: abrir el informe y pulsar «Calcular ahora» / «Recalcular» (o esperar la corrida diaria). Sin cálculo previo el informe avisa y queda vacío.
 - Aproximación frente a la Clasificación: el inventario promedio del periodo es el promedio de los meses ponderado por días (no por tienda), y los filtros de bodega del perfil no se aplican (solo los de laboratorio), igual que los otros informes de compras.
+
+### Zona «No aplica» (sin buffer y sin stock)
+- Motor (`core_rust/src/lib.rs`, `decidir`): sin buffer (sin ADU) y sin stock ya no es VERDE sino `NO_APLICA`; sin buffer pero CON stock sigue en EXCESO (capital sin demanda, gestionable). El valor se agrega solo al enum `zona_buffer` al arrancar el backend (`esquema.asegurar_esquema`).
+- Historia: correr UNA vez `db/migraciones/002_zona_no_aplica.sql` con psql (reclasifica `buffer_historia` día por día y las últimas sugerencias). Después, **Recalcular** en Indicadores de compras.
+- Control: nueva tarjeta/columna «No aplica» (gris); el semáforo en el tiempo y la línea «Disponible» se miden sobre combinaciones CON buffer. Indicadores: los días con zona no cuentan NO_APLICA. Excel/mapa de calor: letra N, gris.
+- Pendiente de revisar a mano: Dashboard, Despacho, Necesidades, Auditoría (Excel con fórmula de zona propia) y Salud solo listan 4 zonas; NO_APLICA no llega a pedidos (cantidad 0).
+- Sin probar contra la base ni compilar el motor Rust (no hay cargo aquí): reconstruir la imagen del motor y verificar `cargo test`.

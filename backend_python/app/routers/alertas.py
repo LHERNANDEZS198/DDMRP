@@ -37,7 +37,7 @@ def resumen(bodegas: str | None = None, labs: str | None = None, q: str | None =
             {BASE_C} WHERE {w} GROUP BY 1"""), p).mappings()]
 
 
-ZONAS = ("ROJA", "AMARILLA", "VERDE", "EXCESO")
+ZONAS = ("ROJA", "AMARILLA", "VERDE", "EXCESO", "NO_APLICA")
 
 
 @router.get("/zona-roja")

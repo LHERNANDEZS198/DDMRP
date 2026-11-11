@@ -10,11 +10,12 @@ import { bodegasDeEmpresa, colsCobertura, tiendasDeEmpresa } from '../filtros'
 import { AYUDA, ayudar } from '../ayuda'
 import { useEmpresa } from '../Empresa'
 
-const COLOR: Record<string, string> = { ROJA: '#c62828', AMARILLA: '#f9a825', VERDE: '#2e7d32', EXCESO: '#1565c0' }
-const HEAT: Record<string, string> = { R: '#E8B9B7', A: '#FFC000', V: '#92D050', E: '#4792DC' }   // mismos colores del Excel de control
+const COLOR: Record<string, string> = { ROJA: '#c62828', AMARILLA: '#f9a825', VERDE: '#2e7d32', EXCESO: '#1565c0', NO_APLICA: '#9e9e9e' }
+const HEAT: Record<string, string> = { R: '#E8B9B7', A: '#FFC000', V: '#92D050', E: '#4792DC', N: '#D9D9D9' }   // mismos colores del Excel de control
 const METRICAS_MAPA = [{ k: 'inventario', label: 'Inventario (u.)' }, { k: 'flujo_neto', label: 'Flujo neto (u.)' }, { k: 'pct_buffer', label: '% de buffer' }]
-const ZONAS = ['ROJA', 'AMARILLA', 'VERDE', 'EXCESO']
-const KEY: Record<string, string> = { ROJA: 'roja', AMARILLA: 'amarilla', VERDE: 'verde', EXCESO: 'exceso' }
+const ZONAS = ['ROJA', 'AMARILLA', 'VERDE', 'EXCESO', 'NO_APLICA']
+const KEY: Record<string, string> = { ROJA: 'roja', AMARILLA: 'amarilla', VERDE: 'verde', EXCESO: 'exceso', NO_APLICA: 'no_aplica' }
+const ETQ: Record<string, string> = { ROJA: 'Rojo', AMARILLA: 'Amarillo', VERDE: 'Verde', EXCESO: 'Exceso', NO_APLICA: 'No aplica' }
 const NIVELES = [
   { k: 'empresa', label: 'Empresa' }, { k: 'bodega', label: 'Tienda' }, { k: 'clase', label: 'Clase de tienda' }, { k: 'laboratorio', label: 'Laboratorio' }, { k: 'criterio', label: 'Criterio de items' },
   { k: 'item', label: 'Item' }, { k: 'detalle', label: 'Tienda × item' },
@@ -190,6 +191,7 @@ export default function Control() {
     { field: 'amarilla', headerName: 'Amarillo', type: 'numericColumn', width: 95 },
     { field: 'verde', headerName: 'Verde', type: 'numericColumn', width: 85 },
     { field: 'exceso', headerName: 'Exceso', type: 'numericColumn', width: 90 },
+    { field: 'no_aplica', headerName: 'No aplica', type: 'numericColumn', width: 100, headerTooltip: AYUDA['No aplica'] },
     { field: 'pct_prom', headerName: '% buffer prom.', type: 'numericColumn', width: 130, valueFormatter: p => p.value == null ? '' : p.value + '%' },
     { field: 'a_pedir', headerName: 'A pedir', type: 'numericColumn', width: 100 },
     { field: 'unidades', headerName: 'Unidades sug.', type: 'numericColumn', width: 130, valueFormatter: p => Math.round(p.value).toLocaleString() },
@@ -202,6 +204,7 @@ export default function Control() {
     { headerName: 'Amarillo', width: 170, cellRenderer: (p: ICellRendererParams) => <Antes p={p} ini="amarilla_ini" fin="amarilla_fin" malo={null} /> },
     { headerName: 'Verde', width: 180, cellRenderer: (p: ICellRendererParams) => <Antes p={p} ini="verde_ini" fin="verde_fin" malo="baja" /> },
     { headerName: 'Exceso', width: 170, cellRenderer: (p: ICellRendererParams) => <Antes p={p} ini="exceso_ini" fin="exceso_fin" malo="sube" /> },
+    { headerName: 'No aplica', width: 170, cellRenderer: (p: ICellRendererParams) => <Antes p={p} ini="no_aplica_ini" fin="no_aplica_fin" malo={null} /> },
     { headerName: '% buffer prom.', width: 190, cellRenderer: (p: ICellRendererParams) => <Antes p={p} ini="pct_ini" fin="pct_fin" malo="baja" /> },
     { field: 'entraron_rojo', headerName: 'Entraron a rojo', type: 'numericColumn', width: 130, cellStyle: { color: COLOR.ROJA, fontWeight: 600 } },
     { field: 'salieron_rojo', headerName: 'Salieron de rojo', type: 'numericColumn', width: 135, cellStyle: { color: COLOR.VERDE, fontWeight: 600 } },
@@ -277,9 +280,9 @@ export default function Control() {
       </Box>
       <Plegable id="control" titulo="indicadores y filtros" resumen={<>
         {!tendModo && kpi && <Chip size="small" label={`${(cambiosModo ? kpi.n_fin : kpi.n)?.toLocaleString()} combinaciones`} />}
-        {!tendModo && kpi && ZONAS.map(z => <Chip key={z} size="small" label={`${z === 'ROJA' ? 'Rojo' : z === 'AMARILLA' ? 'Amarillo' : z === 'VERDE' ? 'Verde' : 'Exceso'} ${(kpi[KEY[z] + (cambiosModo ? '_fin' : '')] ?? 0).toLocaleString()}`} sx={{ bgcolor: COLOR[z], color: '#fff' }} />)}
+        {!tendModo && kpi && ZONAS.map(z => <Chip key={z} size="small" label={`${ETQ[z]} ${(kpi[KEY[z] + (cambiosModo ? '_fin' : '')] ?? 0).toLocaleString()}`} sx={{ bgcolor: COLOR[z], color: '#fff' }} />)}
         {hayFiltros && <Chip size="small" variant="outlined" label="con filtros" />}</>}>
-      {!tendModo && <Box sx={{ display: 'grid', flexShrink: 0, gridTemplateColumns: { xs: 'repeat(2, 1fr)', md: 'repeat(5, 1fr)' }, gap: 1.5 }}>
+      {!tendModo && <Box sx={{ display: 'grid', flexShrink: 0, gridTemplateColumns: { xs: 'repeat(2, 1fr)', md: 'repeat(6, 1fr)' }, gap: 1.5 }}>
         <Card variant="outlined" sx={{ borderLeft: '6px solid #6e8a37', flexShrink: 0 }}>
           <Box sx={{ p: 1.25 }}>
             <Typography variant="caption" color="text.secondary">Alcance actual</Typography>
@@ -291,12 +294,12 @@ export default function Control() {
           const n = kpi?.[KEY[z] + (cambiosModo ? '_fin' : '')] ?? 0, activo = f.zonas.includes(z)
           const n0 = kpi?.[KEY[z] + '_ini'] ?? 0
           return (
-            <Tooltip key={z} title={AYUDA[z === 'ROJA' ? 'Rojo' : z === 'AMARILLA' ? 'Amarillo' : z === 'VERDE' ? 'Verde' : 'Exceso']} placement="top"><Card variant="outlined" sx={{ borderLeft: `6px solid ${COLOR[z]}`, outline: activo ? `2px solid ${COLOR[z]}` : 'none' }}>
+            <Tooltip key={z} title={AYUDA[ETQ[z]]} placement="top"><Card variant="outlined" sx={{ borderLeft: `6px solid ${COLOR[z]}`, outline: activo ? `2px solid ${COLOR[z]}` : 'none' }}>
               <CardActionArea sx={{ p: 1.25 }} onClick={() => setF(x => ({ ...x, zonas: activo ? x.zonas.filter(y => y !== z) : [...x.zonas, z] }))}>
-                <Typography variant="caption" color="text.secondary">{z === 'ROJA' ? 'Rojo' : z === 'AMARILLA' ? 'Amarillo' : z === 'VERDE' ? 'Verde' : 'Exceso'}</Typography>
+                <Typography variant="caption" color="text.secondary">{ETQ[z]}</Typography>
                 <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2 }}>{n.toLocaleString()}</Typography>
                 <Typography variant="caption" color="text.secondary">{((n / total) * 100).toFixed(1)}% del alcance
-                  {cambiosModo && <> · {delta(n0, n, z === 'VERDE' ? 'baja' : z === 'AMARILLA' ? null : 'sube')}</>}</Typography>
+                  {cambiosModo && <> · {delta(n0, n, z === 'VERDE' ? 'baja' : z === 'AMARILLA' || z === 'NO_APLICA' ? null : 'sube')}</>}</Typography>
               </CardActionArea>
             </Card></Tooltip>)
         })}
@@ -380,8 +383,8 @@ export default function Control() {
         </Box>)}
       {tendModo && (
         <Paper variant="outlined" sx={{ p: 1.5, flexShrink: 0 }}>
-          <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>Semáforo en el tiempo (% de combinaciones por zona){serie.length ? ` · ${serie[serie.length - 1].n.toLocaleString()} combinación(es)` : ''}</Typography>
-          <Typography variant="caption" color="text.secondary">Cada día es la foto de la corrida del motor; la línea punteada es el % disponible (todas las zonas menos la roja). Necesitas al menos 2 días de historia para ver la curva.</Typography>
+          <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>Semáforo en el tiempo (% de combinaciones con buffer por zona){serie.length ? ` · ${(serie[serie.length - 1].n - (serie[serie.length - 1].no_aplica ?? 0)).toLocaleString()} con buffer de ${serie[serie.length - 1].n.toLocaleString()}` : ''}</Typography>
+          <Typography variant="caption" color="text.secondary">Cada día es la foto de la corrida del motor; la línea punteada es el % disponible (todas las zonas menos la roja) sobre las combinaciones con buffer: las «No aplica» (sin ventas y sin stock) no cuentan. Necesitas al menos 2 días de historia para ver la curva.</Typography>
           <ZonaShare serie={serie} />
           <Typography variant="subtitle2" sx={{ fontWeight: 700, mt: 2 }}>Buffer en el tiempo (unidades)</Typography>
           <Typography variant="caption" color="text.secondary">Para la curva de un solo item en una sola tienda, elige esa tienda y escribe el código del item. Si no, las unidades de todo lo filtrado se suman.</Typography>
@@ -407,7 +410,7 @@ export default function Control() {
       {err && <Typography color="error" variant="body2">{err}</Typography>}
       {mapaModo && <Typography variant="caption" color="text.secondary">
         {mapa.truncado ? `Mostrando ${mapa.filas.length.toLocaleString()} de ${mapa.total.toLocaleString()} combinaciones (según el orden); filtra para ver el resto o baja el Excel` : `${mapa.total.toLocaleString()} combinaciones`}
-        {' · '}celda vacía = ese día no hay foto del motor · colores: rojo, amarillo, verde y exceso (azul) según la zona de ese día · el filtro de zona aplica a la última fecha
+        {' · '}celda vacía = ese día no hay foto del motor · colores: rojo, amarillo, verde, exceso (azul) y no aplica (gris) según la zona de ese día · el filtro de zona aplica a la última fecha
       </Typography>}
       {!tendModo && !mapaModo && opc.ejecucion && <Typography variant="caption" color="text.secondary">
         Corte del motor: {String(opc.ejecucion.fecha_calculo).slice(0, 10)}

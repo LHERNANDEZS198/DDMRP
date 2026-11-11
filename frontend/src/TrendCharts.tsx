@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Box, Typography } from '@mui/material'
 
 export type Punto = { fecha: string; n: number; tor: number; toy_aj: number; tog_aj: number; inventario: number; flujo_neto: number
-  roja: number; amarilla: number; verde: number; exceso: number; con_stock?: number }
+  roja: number; amarilla: number; verde: number; exceso: number; no_aplica?: number; con_stock?: number }
 const C = { roja: '#e0584d', amarilla: '#f4d03f', verde: '#7bbf5a', exceso: '#1565c0', inv: '#111', nfp: '#d500f9' }
 const fmt = (v: number) => Math.abs(v) >= 1000 ? (v / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 }) + 'k' : String(Math.round(v))
 const dm = (s: string) => `${s.slice(8, 10)}/${s.slice(5, 7)}`
@@ -83,10 +83,11 @@ export function ZonaShare({ serie }: { serie: Punto[] }) {
   const n = serie.length, pw = W - M.l - M.r, ph = H - M.t - M.b
   const bw = pw / n, x = (i: number) => (n === 1 ? M.l + pw / 2 : M.l + (pw * i) / (n - 1)), ypc = (f: number) => H - M.b - f * ph
   const zonas = ['roja', 'amarilla', 'verde', 'exceso'] as const
+  const ap = (p: Punto) => Math.max(p.n - (p.no_aplica ?? 0), 1)      // combinaciones CON buffer: las «No aplica» (sin ADU y sin stock) no entran al semaforo ni al disponible
   const paso = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(pw / 70))))
   const h = hover != null ? serie[hover] : null
   // frontera acumulada de cada zona por dia (0..1)
-  const acum = serie.map(p => { let a = 0; return zonas.map(z => (a += p[z] / (p.n || 1))) })
+  const acum = serie.map(p => { let a = 0; return zonas.map(z => (a += p[z] / ap(p))) })
   const area = (k: number) => {
     const sup = serie.map((_, i) => `${x(i)},${ypc(acum[i][k])}`)
     const inf = serie.map((_, i) => `${x(i)},${ypc(k === 0 ? 0 : acum[i][k - 1])}`).reverse()
@@ -94,13 +95,13 @@ export function ZonaShare({ serie }: { serie: Punto[] }) {
   }
   const hayDisp = serie.length > 0   // Disponible = todas las zonas menos la roja
   // modo "cambio": puntos porcentuales de cada zona frente al primer dia, con el eje ajustado a lo que realmente se mueve
-  const pc = (p: Punto, z: typeof zonas[number] | 'disp') => ((z === 'disp' ? p.n - p.roja : p[z]) / (p.n || 1)) * 100
+  const pc = (p: Punto, z: typeof zonas[number] | 'disp') => ((z === 'disp' ? ap(p) - p.roja : p[z]) / ap(p)) * 100
   const ser = [...zonas, ...(hayDisp ? ['disp' as const] : [])]
   const delta = ser.map(z => serie.map(p => pc(p, z) - pc(serie[0], z)))
   const dmax = Math.max(0.5, ...delta.flat().map(Math.abs)), lim = Math.ceil(dmax * 1.15 * 2) / 2
   const yd = (v: number) => M.t + ph / 2 - (v / lim) * (ph / 2)
   const colS = (z: string) => (z === 'disp' ? '#000' : C[z as keyof typeof C])
-  const disp = serie.map((p, i) => `${x(i)},${ypc((p.n - p.roja) / (p.n || 1))}`).join(' ')
+  const disp = serie.map((p, i) => `${x(i)},${ypc((ap(p) - p.roja) / ap(p))}`).join(' ')
   return (
     <Box ref={ref} sx={{ width: '100%', position: 'relative' }}>
       <Box sx={{ display: 'flex', gap: 1, fontSize: 12, mb: .5, alignItems: 'center' }}>Vista:
@@ -119,14 +120,14 @@ export function ZonaShare({ serie }: { serie: Punto[] }) {
               return <rect key={z} x={M.l} width={pw} y={ypc(hi)} height={Math.max(ypc(lo) - ypc(hi), 0)} fill={C[z]} /> })
           : zonas.map((z, k) => <polygon key={z} points={area(k)} fill={C[z]} />))}
         {modo === 'apilado' && hayDisp && n > 1 && <polyline points={disp} fill="none" stroke="#000" strokeWidth="2" strokeDasharray="6 4" />}
-        {modo === 'apilado' && hayDisp && n === 1 && <line x1={M.l} x2={W - M.r} y1={ypc((serie[0].n - serie[0].roja) / (serie[0].n || 1))} y2={ypc((serie[0].n - serie[0].roja) / (serie[0].n || 1))} stroke="#000" strokeWidth="2" strokeDasharray="6 4" />}
+        {modo === 'apilado' && hayDisp && n === 1 && <line x1={M.l} x2={W - M.r} y1={ypc((ap(serie[0]) - serie[0].roja) / ap(serie[0]))} y2={ypc((ap(serie[0]) - serie[0].roja) / ap(serie[0]))} stroke="#000" strokeWidth="2" strokeDasharray="6 4" />}
         {serie.map((p, i) => i % paso === 0 && <text key={p.fecha} transform={`translate(${x(i)},${H - M.b + 12}) rotate(-45)`} fontSize="11" textAnchor="end" fill="#555">{dm(p.fecha)}</text>)}
         {hover != null && <line x1={x(hover)} x2={x(hover)} y1={M.t} y2={H - M.b} stroke="#000" strokeDasharray="3 3" />}
       </svg>
       {h && <Box sx={{ position: 'absolute', top: 4, left: Math.min(Math.max(x(hover!) + 10, 8), W - 210), bgcolor: 'rgba(255,255,255,.96)', border: '1px solid #bbb', borderRadius: 1, p: 1, fontSize: 12, pointerEvents: 'none', boxShadow: 2, minWidth: 190 }}>
-        <b>{h.fecha}</b> · {h.n.toLocaleString()} combinaciones
-        {(['exceso', 'verde', 'amarilla', 'roja'] as const).map(z => <div key={z} style={{ color: z === 'amarilla' ? '#b8860b' : C[z] }}>{z === 'exceso' ? 'AZUL (exceso)' : z.toUpperCase()}: {h[z].toLocaleString()} ({((h[z] / (h.n || 1)) * 100).toFixed(1)}%)</div>)}
-        <div><b>Disponible:</b> {(((h.n - h.roja) / (h.n || 1)) * 100).toFixed(1)}% (todo menos zona roja)</div>
+        <b>{h.fecha}</b> · {ap(h).toLocaleString()} combinaciones con buffer{(h.no_aplica ?? 0) > 0 && <span style={{ color: '#777' }}> (+{(h.no_aplica ?? 0).toLocaleString()} no aplica)</span>}
+        {(['exceso', 'verde', 'amarilla', 'roja'] as const).map(z => <div key={z} style={{ color: z === 'amarilla' ? '#b8860b' : C[z] }}>{z === 'exceso' ? 'AZUL (exceso)' : z.toUpperCase()}: {h[z].toLocaleString()} ({((h[z] / ap(h)) * 100).toFixed(1)}%)</div>)}
+        <div><b>Disponible:</b> {(((ap(h) - h.roja) / ap(h)) * 100).toFixed(1)}% (todo menos zona roja, sobre las que tienen buffer)</div>
       </Box>}
       <Box sx={{ display: 'flex', gap: 2, justifyContent: 'center', flexWrap: 'wrap', fontSize: 12, mt: .5 }}>
         {[['Rojo', C.roja], ['Amarillo', C.amarilla], ['Verde', C.verde], ['Azul (exceso)', C.exceso]].map(([l, c]) => <span key={l}><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, background: c, marginRight: 4 }} />{l}</span>)}

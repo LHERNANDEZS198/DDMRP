@@ -144,6 +144,8 @@ pub enum Zona {
     Amarilla,
     Verde,
     Exceso,
+    /// Sin buffer (sin ADU) y sin stock: no hay nada que gestionar, ni alerta ni semaforo
+    NoAplica,
 }
 
 impl Zona {
@@ -153,6 +155,7 @@ impl Zona {
             Zona::Amarilla => "AMARILLA",
             Zona::Verde => "VERDE",
             Zona::Exceso => "EXCESO",
+            Zona::NoAplica => "NO_APLICA",
         }
     }
 }
@@ -351,7 +354,7 @@ fn decidir(e: &Entrada, z: &Zonas, w: f64, y: f64, q: f64, toy_aj: f64, tog_aj: 
     let dem = if p.restar_demanda_calificada { e.demanda_calificada } else { 0.0 };
     let nfp = e.inventario + transito - dem;
     let zona = if tog_aj <= 0.0 {
-        if nfp > 0.0 { Zona::Exceso } else { Zona::Verde } // sin buffer definido: sin alerta
+        if nfp > 0.0 { Zona::Exceso } else { Zona::NoAplica } // sin buffer: con stock es sobrestock (capital sin demanda, gestionable); sin stock no aplica
     } else if nfp <= z.tor {
         Zona::Roja
     } else if nfp <= toy_aj {
@@ -620,7 +623,7 @@ mod tests {
         vacio.ventas = vec![0.0; 7];
         let r = calcular(&vacio, &factores(), &pdef());
         assert_eq!(r.zonas.tog, 0.0);
-        assert_eq!(r.zona, Zona::Verde); // sin buffer y sin stock: no es alerta
+        assert_eq!(r.zona, Zona::NoAplica); // sin buffer y sin stock: no aplica
         assert_eq!(r.cantidad_sugerida, 0.0);
     }
 

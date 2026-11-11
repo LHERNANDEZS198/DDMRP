@@ -10,8 +10,8 @@ from openpyxl.utils import get_column_letter
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 MAX_FILAS = 1_000_000          # Excel aguanta 1.048.576 filas por hoja (una es el encabezado)
 # colores del semaforo: los del Excel de trabajo de Lucas (rojo rosado, amarillo naranja, verde, exceso azul)
-ZONA_COLOR = {"ROJA": "E8B9B7", "AMARILLA": "FFC000", "VERDE": "92D050", "EXCESO": "4792DC"}
-ZONA_LETRA = {"R": "ROJA", "A": "AMARILLA", "V": "VERDE", "E": "EXCESO"}
+ZONA_COLOR = {"ROJA": "E8B9B7", "AMARILLA": "FFC000", "VERDE": "92D050", "EXCESO": "4792DC", "NO_APLICA": "D9D9D9"}
+ZONA_LETRA = {"R": "ROJA", "A": "AMARILLA", "V": "VERDE", "E": "EXCESO", "N": "NO_APLICA"}
 _FILL = {k: PatternFill("solid", start_color=c, end_color=c) for k, c in ZONA_COLOR.items()}
 _ENCABEZADO = PatternFill("solid", start_color="DCE6C8", end_color="DCE6C8")
 
@@ -120,7 +120,7 @@ def hoja_texto(wb: Workbook, titulo: str, lineas: list, ancho: tuple = (30, 90))
 
 
 def leyenda_zonas(ws_titulo: str = "Leyenda"):
-    return [("Rojo", "ROJA"), ("Amarillo", "AMARILLA"), ("Verde", "VERDE"), ("Exceso", "EXCESO")]
+    return [("Rojo", "ROJA"), ("Amarillo", "AMARILLA"), ("Verde", "VERDE"), ("Exceso", "EXCESO"), ("No aplica", "NO_APLICA")]
 
 
 def a_bytes(wb: Workbook) -> bytes:

@@ -237,6 +237,8 @@ REGLAS_COMPRAS = [
          ayuda="Hora de Colombia (0 a 23). Es independiente del ETL del motor: conviene una hora en que no corra el pipeline nocturno ni el motor; si hay otra tarea corriendo espera y lo intenta de nuevo a los pocos minutos.", opciones=None, min=0, max=23, entero=True),
     dict(grupo="Reportes de compras", clave="rep_minuto", titulo="Corrida automática: minuto",
          ayuda="Minuto de la hora de arriba (0 a 59). Se revisa cada 10 minutos, así que puede arrancar hasta 10 minutos después.", opciones=None, min=0, max=59, entero=True),
+    dict(grupo="Reportes de compras", clave="rep_abast_desde", titulo="% de abastecimiento: contar desde (AAAAMMDD)",
+         ayuda="Primer día de la foto diaria del buffer que cuenta para el % de abastecimiento de Indicadores de compras (ej. 20261026). Los días anteriores no se cuentan, por ejemplo fotos de pruebas. 0 = se cuentan todos los días con foto. Al cambiarlo, pulsa Recalcular en el informe.", opciones=None, min=0, max=99991231, entero=True),
     dict(grupo="Reportes de compras", clave="rep_cada_dias", titulo="Corrida automática: cada cuántos días",
          ayuda="1 = todos los días; 2 = día por medio; 7 = una vez a la semana. Cuenta desde la última actualización, sea automática o con el botón.", opciones=None, min=1, max=30, entero=True),
     dict(grupo="Reportes de compras", clave="rep_recalcular_compras", titulo="Corrida automática: también recalcular las necesidades de compra",

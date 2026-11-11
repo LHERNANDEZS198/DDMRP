@@ -3,7 +3,7 @@
 from datetime import date
 
 METRICAS = {"inventario": "Inventario (unidades)", "flujo_neto": "Flujo neto (unidades)", "pct_buffer": "% de buffer"}
-ZONA_LETRA = {"ROJA": "R", "AMARILLA": "A", "VERDE": "V", "EXCESO": "E"}
+ZONA_LETRA = {"ROJA": "R", "AMARILLA": "A", "VERDE": "V", "EXCESO": "E", "NO_APLICA": "N"}
 MAX_COLUMNAS = 120
 
 

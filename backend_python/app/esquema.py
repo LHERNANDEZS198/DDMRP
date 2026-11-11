@@ -678,6 +678,7 @@ SENTENCIAS_REPORTES = [
          ('rep_auto', 1, 'Reportes de compras: 1 = se actualizan solos una vez al dia; 0 = solo con el boton Actualizar datos'),
          ('rep_hora', 4, 'Reportes de compras: hora (0-23, Colombia) en que corre la actualizacion automatica'),
          ('rep_minuto', 0, 'Reportes de compras: minuto (0-59) de la hora en que corre la actualizacion automatica'),
+         ('rep_abast_desde', 0, 'Indicadores de compras: primer dia (AAAAMMDD) de la foto diaria que cuenta para el % de abastecimiento; 0 = todos los dias con foto'),
          ('rep_cada_dias', 1, 'Reportes de compras: cada cuantos dias corre la actualizacion automatica (1 = todos los dias)'),
          ('rep_recalcular_compras', 1, 'Corrida automatica de reportes: 1 = antes tambien recalcula las necesidades de compra (inventario y OC abiertas del CEDI + buffer del CEDI), sin depender del ETL del motor; 0 = solo los reportes'),
          ('rep_calcular_indicadores', 1, 'Corrida automatica de reportes: 1 = tambien calcula los indicadores de compras (GMROI, abastecimiento) que lee el informe; 0 = no (solo con el boton Recalcular)'),
@@ -700,6 +701,11 @@ def esquema_cedi() -> None:
 
 def asegurar_esquema():
     nueva = False
+    try:      # zona «No aplica» (sin buffer y sin stock): un valor nuevo de un enum no se puede usar en la misma transaccion en que se crea, por eso va aparte y confirmado
+        with pg.connect().execution_options(isolation_level="AUTOCOMMIT") as c:
+            c.execute(text("ALTER TYPE ddmrp.zona_buffer ADD VALUE IF NOT EXISTS 'NO_APLICA'"))
+    except Exception:
+        log.exception("No se pudo agregar la zona NO_APLICA")
     try:
         with pg.connect() as c:   # la bitacora aun no tiene la columna cedi: es la primera vez con este esquema
             nueva = bool(c.execute(text("SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns "

@@ -22,8 +22,8 @@ const NOMBRE_ABC: Record<string, string> = {
 }
 const COP = (v: any) => v == null ? '' : '$' + Math.round(v).toLocaleString('es-CO')
 const NUM = (v: any) => v == null ? '' : Math.round(v).toLocaleString('es-CO')
-const ZONA_ETQ: Record<string, string> = { ROJA: 'Rojo', AMARILLA: 'Amarillo', VERDE: 'Verde', EXCESO: 'Sobrestock' }
-const ZONA_COLOR: Record<string, string> = { ROJA: '#c62828', AMARILLA: '#f9a825', VERDE: '#2e7d32', EXCESO: '#1565c0' }
+const ZONA_ETQ: Record<string, string> = { ROJA: 'Rojo', AMARILLA: 'Amarillo', VERDE: 'Verde', EXCESO: 'Sobrestock', NO_APLICA: 'No aplica' }
+const ZONA_COLOR: Record<string, string> = { ROJA: '#c62828', AMARILLA: '#f9a825', VERDE: '#2e7d32', EXCESO: '#1565c0', NO_APLICA: '#9e9e9e' }
 const M = (v: number) => Math.abs(v) >= 1e6 ? (v / 1e6).toLocaleString('es-CO', { maximumFractionDigits: 1 }) + ' M' : NUM(v)
 const pill = (p: ICellRendererParams) => p.value == null ? '' :
   <Chip size="small" label={p.value} sx={{ height: 20, fontSize: 11, color: '#fff', bgcolor: COLOR_ABC[String(p.value)[0]] ?? '#999' }} />

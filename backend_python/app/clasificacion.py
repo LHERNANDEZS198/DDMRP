@@ -10,8 +10,8 @@ Margen = venta neta sin IVA - unidades x costo promedio actual (Siesa, por insta
 from datetime import date
 
 CRITERIOS = {"margen": "Margen bruto $", "venta": "Venta neta $ (sin IVA)", "costo": "Consumo a costo $"}
-ZONAS_ORDEN = ("ROJA", "AMARILLA", "VERDE", "EXCESO")
-ZONAS_ETQ = {"ROJA": "Rojo", "AMARILLA": "Amarillo", "VERDE": "Verde", "EXCESO": "Sobrestock"}
+ZONAS_ORDEN = ("ROJA", "AMARILLA", "VERDE", "EXCESO", "NO_APLICA")
+ZONAS_ETQ = {"ROJA": "Rojo", "AMARILLA": "Amarillo", "VERDE": "Verde", "EXCESO": "Sobrestock", "NO_APLICA": "No aplica"}
 NIVELES = {"item": "Item (suma de las tiendas filtradas)", "tienda_item": "Tienda × item"}
 APARTE = ("D", "N", "S")
 ORDEN_ABC = ("I", "A", "B", "C", "N", "D", "S")   # I = Infaltables (solo con el metodo por percentil)
