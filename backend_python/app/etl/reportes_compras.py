@@ -297,6 +297,10 @@ def _ejec(c, paso: str, sql: str, params: dict):
 def _calcular_indicadores() -> dict:
     from ..activos import solo_activos
     hoy, res = date.today(), {}
+    from ..orchestrator import completar_dias_zona      # aqui para no crear una importacion circular al arrancar
+    with pg.begin() as c:
+        c.execute(text("SET LOCAL statement_timeout = 0"))
+        completar_dias_zona(c)       # los meses viejos sin dias en zona se completan ya con la foto diaria que aun existe
     mes_min = _mes_hace(hoy, 35).strftime("%Y%m")        # 36 meses de venta; el inventario mensual solo guarda 13
     for alc, cedi in (("tiendas", False), ("cedi", True)):
         # mismas reglas que la Clasificacion: tiendas = solo tiendas (sin la venta directa del CEDI); CEDI = su venta directa + la de todas las tiendas que abastece

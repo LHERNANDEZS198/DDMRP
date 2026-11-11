@@ -146,6 +146,8 @@ SENTENCIAS = [
          inv_suma REAL NOT NULL, dias INT NOT NULL, dias_cero INT NOT NULL,
          PRIMARY KEY (empresa, bodega_id, producto_id, mes))""",
     "CREATE INDEX IF NOT EXISTS idx_invmes_mes ON ddmrp.inventario_mes (mes)",
+    # dias con zona y dias en zona roja de cada mes (base del % de abastecimiento mensual de Indicadores de compras); los meses viejos quedan NULL hasta completarse
+    "ALTER TABLE ddmrp.inventario_mes ADD COLUMN IF NOT EXISTS dias_z INT, ADD COLUMN IF NOT EXISTS dias_roja INT",
     """CREATE TABLE IF NOT EXISTS ddmrp.vista_guardada (
          usuario_id  TEXT NOT NULL,
          informe     TEXT NOT NULL,
