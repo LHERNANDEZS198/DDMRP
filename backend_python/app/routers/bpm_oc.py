@@ -96,8 +96,8 @@ def detalle(oc_id: int):
                    COALESCE(mi.categoria, '') AS lab_cod, COALESCE(lb.nombre, '') AS lab_nombre,
                    z.zona, z.inventario::float8 AS saldo_cedi, z.en_transito::float8 AS en_transito, z.adu::float8 AS rotacion_mensual
             FROM ddmrp.orden_compra_linea l
-            LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = l.producto_id
-            LEFT JOIN ddmrp.laboratorio lb ON lb.codigo = mi.categoria
+            LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = :e AND mi.producto_id = l.producto_id
+            LEFT JOIN ddmrp.laboratorio lb ON lb.empresa = mi.empresa AND lb.codigo = mi.categoria
             LEFT JOIN LATERAL (SELECT s.zona::text AS zona, s.inventario, s.en_transito, s.adu FROM ddmrp.sugerencias_cedi s
                                WHERE s.ejecucion_id = {ULTIMA} AND s.empresa = :e AND s.producto_id = l.producto_id LIMIT 1) z ON true
             WHERE l.oc_id = :i ORDER BY l.nro"""), {"i": oc_id, "e": r["empresa"]}).mappings()]

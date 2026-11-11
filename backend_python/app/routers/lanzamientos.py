@@ -12,18 +12,18 @@ from ..security import usuario_actual, requiere, empresas_permitidas
 from .control import _csv
 
 router = APIRouter(prefix="/lanzamientos", tags=["lanzamientos"], dependencies=[Depends(requiere("ver_control"))])
-ULTIMA = "(SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok')"
+ULTIMA = "ANY (SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok' GROUP BY empresa)"   # la ultima corrida buena de CADA empresa (sus filas solo existen bajo su propia corrida)
 
 
 def _sql(w: str) -> str:
     return f"""SELECT e.fecha, e.tipo, e.dias_sin_stock, e.empresa, e.producto_id, mi.descripcion,
                       COALESCE(mi.categoria, '(sin laboratorio)') AS laboratorio, lb.nombre AS laboratorio_nombre,
                       e.existencia::float8 AS existencia,
-                      (SELECT ci.costo::float8 FROM ddmrp.costo_item ci WHERE ci.producto_id = e.producto_id) AS costo,
+                      (SELECT ci.costo::float8 FROM ddmrp.costo_item ci WHERE ci.empresa = e.empresa AND ci.producto_id = e.producto_id) AS costo,
                       st.tiendas, st.con_stock, st.en_rojo, st.sugerido
                FROM ddmrp.cedi_evento e
-               LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = e.producto_id
-               LEFT JOIN ddmrp.laboratorio lb ON lb.codigo = mi.categoria
+               LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = e.empresa AND mi.producto_id = e.producto_id
+               LEFT JOIN ddmrp.laboratorio lb ON lb.empresa = mi.empresa AND lb.codigo = mi.categoria
                LEFT JOIN LATERAL (SELECT count(*) AS tiendas, count(*) FILTER (WHERE s.inventario > 0) AS con_stock,
                                          count(*) FILTER (WHERE s.zona = 'ROJA') AS en_rojo,
                                          COALESCE(sum(s.cantidad_sugerida), 0)::float8 AS sugerido
@@ -57,7 +57,7 @@ def _donde(desde, hasta, tipo, min_dias, empresa, labs, crit, q, e="e", user=Non
         if ":" in x:
             pl, cr = x.split(":", 1); por_plan.setdefault(pl, []).append(cr)
     for i, (pl, crs) in enumerate(por_plan.items()):
-        cond.append(f"EXISTS (SELECT 1 FROM ddmrp.item_criterio ic{i} WHERE ic{i}.producto_id = e.producto_id AND ic{i}.plan_id = :cp{i} AND ic{i}.criterio_id = ANY(:cc{i}))")
+        cond.append(f"EXISTS (SELECT 1 FROM ddmrp.item_criterio ic{i} WHERE ic{i}.empresa = e.empresa AND ic{i}.producto_id = e.producto_id AND ic{i}.plan_id = :cp{i} AND ic{i}.criterio_id = ANY(:cc{i}))")
         p[f"cp{i}"] = pl; p[f"cc{i}"] = crs
     return " AND ".join(cond), p, desde, hasta
 
@@ -66,12 +66,13 @@ def _donde(desde, hasta, tipo, min_dias, empresa, labs, crit, q, e="e", user=Non
 def filtros(user=Depends(usuario_actual)):
     with pg.connect() as c:
         labs = [dict(r) for r in c.execute(text(
-            """SELECT DISTINCT COALESCE(mi.categoria, '') AS codigo, lb.nombre FROM ddmrp.cedi_evento e
-               LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = e.producto_id LEFT JOIN ddmrp.laboratorio lb ON lb.codigo = mi.categoria ORDER BY 1""")).mappings()]
+            """SELECT COALESCE(mi.categoria, '') AS codigo, min(lb.nombre) AS nombre FROM ddmrp.cedi_evento e
+               LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = e.empresa AND mi.producto_id = e.producto_id LEFT JOIN ddmrp.laboratorio lb ON lb.empresa = mi.empresa AND lb.codigo = mi.categoria
+               GROUP BY 1 ORDER BY 1""")).mappings()]
         base = c.execute(text("SELECT empresa, fecha FROM ddmrp.cedi_base ORDER BY empresa")).all()
         crit_rows = c.execute(text("""SELECT ic.plan_id, COALESCE(p.nombre, ic.plan_id), ic.criterio_id, COALESCE(cr.nombre, ic.criterio_id)
                                       FROM (SELECT DISTINCT ic.plan_id, ic.criterio_id FROM ddmrp.item_criterio ic
-                                            JOIN ddmrp.cedi_evento e ON e.producto_id = ic.producto_id) ic
+                                            JOIN ddmrp.cedi_evento e ON e.empresa = ic.empresa AND e.producto_id = ic.producto_id) ic
                                       LEFT JOIN ddmrp.criterio_plan p ON p.plan_id = ic.plan_id
                                       LEFT JOIN ddmrp.criterio cr ON cr.plan_id = ic.plan_id AND cr.criterio_id = ic.criterio_id WHERE COALESCE(p.en_filtros, 1) = 1 ORDER BY 1, 3""")).all()
     for l in labs:
@@ -89,7 +90,7 @@ def listar(desde: date | None = None, hasta: date | None = None, tipo: str | Non
     w, p, d, h = _donde(desde, hasta, tipo, min_dias, empresa, labs, crit, q, user=user)
     with pg.connect() as c:
         filas = [dict(r) for r in c.execute(text(_sql(w) + " LIMIT :lim"), {**p, "lim": limit}).mappings()]
-        n = c.execute(text(f"SELECT count(*) FROM ddmrp.cedi_evento e LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = e.producto_id WHERE {w}"), p).scalar()
+        n = c.execute(text(f"SELECT count(*) FROM ddmrp.cedi_evento e LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = e.empresa AND mi.producto_id = e.producto_id WHERE {w}"), p).scalar()
         base = c.execute(text("SELECT min(fecha) FROM ddmrp.cedi_base")).scalar()
     return {"desde": d, "hasta": h, "filas": filas, "total": n, "truncado": n > len(filas), "historia_desde": base}
 

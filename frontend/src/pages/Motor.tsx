@@ -6,6 +6,7 @@ import { Link as RouterLink } from 'react-router-dom'
 import { api, conProgreso, seguirTarea } from '../api'
 import { useYo } from '../Yo'
 import { useSalud } from '../Salud'
+import { useEmpresa, NOMBRE_EMPRESA } from '../Empresa'
 import { RepartoDias } from './Reglas'
 
 const Lista = ({ children }: { children: ReactNode }) => <Box component="ul" sx={{ m: 0, pl: 3, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: .5, '& li': { fontSize: 14 } }}>{children}</Box>
@@ -19,27 +20,30 @@ const fechaHora = (s?: string) => s ? new Date(s).toLocaleString('es-CO', { day:
 export default function Motor() {
   const { puede } = useYo(); const operar = puede('correr_motor'); const editar = puede('editar_reglas')
   const { salud, enCurso, refrescar } = useSalud()
+  // el motor corre por empresa: la corrida de Funat no toca la de Stores. Con «ambas» en la barra hay que elegir una
+  const { una: emp } = useEmpresa(); const qe = emp ? `?empresa=${emp}` : ''; const nombreEmp = NOMBRE_EMPRESA[emp] ?? ''
   const [msg, setMsg] = useState('')
   // Antes de correr, si ya corrió hoy, avisa qué se pierde de vista y pide confirmar
   const [aviso, setAviso] = useState<{ que: 'motor' | 'pipeline'; d: any } | null>(null)
   const preguntar = async (que: 'motor' | 'pipeline') => {
-    try { const d = await api('/admin/motor-hoy'); setAviso({ que, d }); return } catch { /* si falla la consulta, no bloquea */ }
+    try { const d = await api('/admin/motor-hoy' + qe); setAviso({ que, d }); return } catch { /* si falla la consulta, no bloquea */ }
     que === 'motor' ? recalcular() : pipeline()
   }
   const recalcular = async () => {
     setMsg('Recalculando con el motor Rust…'); setTimeout(refrescar, 800)
-    try { const x = await conProgreso(setMsg, () => api('/admin/correr-motor', { method: 'POST' })); setMsg(`Listo: ${x.filas} combinaciones calculadas`) } catch (e: any) { setMsg('Error: ' + e.message) } finally { refrescar() }
+    try { const x = await conProgreso(setMsg, () => api('/admin/correr-motor' + qe, { method: 'POST' })); setMsg(`Listo: ${x.filas} combinaciones calculadas`) } catch (e: any) { setMsg('Error: ' + e.message) } finally { refrescar() }
   }
   const pipeline = async () => {
     setMsg('Lanzando ETL + motor…')
     try {
       const previo = (await api('/admin/progreso')).inicio ?? null
-      await api('/admin/correr-pipeline', { method: 'POST' }); setTimeout(refrescar, 800)
+      await api('/admin/correr-pipeline' + qe, { method: 'POST' }); setTimeout(refrescar, 800)
       const fin = await seguirTarea(setMsg, previo)
       setMsg(fin.estado === 'error' ? fin.mensaje : `Listo: ${fin.mensaje}. Revisa Informes y la Matriz de despacho.`)
     } catch (e: any) { setMsg('Error: ' + e.message) } finally { refrescar() }
   }
   const ult = salud?.ultimo_motor_ok
+  const sinEmpresa = !emp
 
   return (
     <Box sx={{ maxWidth: 980, mx: 'auto', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 2 }}>
@@ -79,12 +83,13 @@ export default function Motor() {
       </Dialog>
 
       <Box>
-        <Typography variant="h6" sx={{ fontWeight: 700 }}>Motor DDMRP</Typography>
+        <Typography variant="h6" sx={{ fontWeight: 700 }}>Motor DDMRP{nombreEmp ? ` · ${nombreEmp}` : ''}</Typography>
         <Typography variant="body2" color="text.secondary">
           Aquí se corre el cálculo que alimenta todo lo demás: Informes, Matriz de despacho y planos de Siesa. {ult
             ? <>Última corrida buena: <b>{fechaHora(ult.fin)}</b>.</> : <>Todavía no hay ninguna corrida buena.</>} El sistema también corre solo, cada noche, el flujo completo.
         </Typography>
       </Box>
+      {sinEmpresa && <Alert severity="warning">Cada empresa tiene su propia corrida del motor. Elige <b>Funat</b> o <b>Stores</b> en el selector de la barra de arriba para correr; así lo que haga una no daña el trabajo de la otra. (Solo la corrida automática de la noche corre las dos.)</Alert>}
       {msg && <Alert severity={msg.startsWith('Error') ? 'error' : msg.startsWith('Listo') ? 'success' : 'info'}>{msg}</Alert>}
 
       {/* Las dos acciones */}
@@ -102,7 +107,7 @@ export default function Motor() {
             <Typography variant="caption" color="text.secondary">Tarda unos minutos con todas las tiendas.</Typography>
           </CardContent>
           <Box sx={{ p: 2, pt: 0 }}>
-            <Button fullWidth variant="outlined" startIcon={<Calculate />} disabled={!operar || enCurso} onClick={() => preguntar('motor')}>Recalcular ahora</Button>
+            <Button fullWidth variant="outlined" startIcon={<Calculate />} disabled={!operar || enCurso || sinEmpresa} onClick={() => preguntar('motor')}>Recalcular ahora</Button>
           </Box>
         </Card>
         <Card variant="outlined" sx={{ display: 'flex', flexDirection: 'column' }}>
@@ -118,7 +123,7 @@ export default function Motor() {
             <Typography variant="caption" color="text.secondary">Tarda más que el motor solo; si la regla «El ETL trae las ventas por mes» está en Sí, lee también el historial de ventas (varios minutos más).</Typography>
           </CardContent>
           <Box sx={{ p: 2, pt: 0 }}>
-            <Button fullWidth variant="contained" startIcon={<PlayCircle />} disabled={!operar || enCurso} onClick={() => preguntar('pipeline')}>Correr ETL + motor</Button>
+            <Button fullWidth variant="contained" startIcon={<PlayCircle />} disabled={!operar || enCurso || sinEmpresa} onClick={() => preguntar('pipeline')}>Correr ETL + motor</Button>
           </Box>
         </Card>
       </Box>

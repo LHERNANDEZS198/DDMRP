@@ -86,14 +86,13 @@ LEFT JOIN ddmrp.abast_vectorizacion ve ON ve.empresa = b.empresa AND ve.bodega_i
 LEFT JOIN inv i ON i.empresa = k.empresa AND i.bodega_id = k.bodega_id AND i.producto_id = k.producto_id
 LEFT JOIN tr t ON t.empresa = k.empresa AND t.bodega_id = k.bodega_id AND t.producto_id = k.producto_id
 LEFT JOIN ddmrp.demanda_calificada d ON d.empresa = k.empresa AND d.bodega_id = k.bodega_id AND d.producto_id = k.producto_id
-LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = k.producto_id
-LEFT JOIN ddmrp.reposicion_item oi ON oi.producto_id = k.producto_id
+LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = b.empresa AND mi.producto_id = k.producto_id
+LEFT JOIN ddmrp.reposicion_item oi ON oi.empresa = b.empresa AND oi.producto_id = k.producto_id
 LEFT JOIN ddmrp.reposicion_laboratorio ol ON ol.laboratorio = mi.categoria
 LEFT JOIN ddmrp.apertura_tienda ap ON ap.empresa = b.empresa AND ap.bodega_id = k.bodega_id AND ap.activa
 WHERE NOT EXISTS (SELECT 1 FROM rec r2 WHERE r2.empresa = b.empresa AND r2.rec_id = k.producto_id)
-  AND (mi.producto_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM ddmrp.maestro_item))
-  AND (NOT EXISTS (SELECT 1 FROM ddmrp.item_empresa ie0 WHERE ie0.empresa = b.empresa)   -- el item debe existir en la base de SU empresa (Funat no se calcula en Stores ni al reves)
-       OR EXISTS (SELECT 1 FROM ddmrp.item_empresa ie WHERE ie.empresa = b.empresa AND ie.producto_id = k.producto_id))
+  AND (mi.producto_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM ddmrp.maestro_item mx WHERE mx.empresa = b.empresa))   -- el item debe existir en el maestro de SU empresa (Funat no se calcula en Stores ni al reves)
+  AND ($2::text = '' OR b.empresa = $2::text)   -- --empresa: la corrida es de una sola empresa ('' = todas)
   AND (b.leadtime IS NOT NULL OR b.frecuencia IS NOT NULL)   -- bodega en la bitacora sin lead time ni frecuencia = no configurada: no se calcula
   AND ((SELECT COALESCE(max(valor), 1) FROM ddmrp.parametro WHERE clave = 'solo_items_activos') = 0
        OR NOT EXISTS (SELECT 1 FROM ddmrp.item_estado ie WHERE ie.empresa = b.empresa AND ie.producto_id = k.producto_id AND ie.estado <> 1))
@@ -191,13 +190,12 @@ LEFT JOIN ddmrp.abast_leadtime_cedi li ON li.empresa = k.empresa AND li.producto
 LEFT JOIN ddmrp.abast_leadtime_cedi lg ON lg.empresa = k.empresa AND lg.producto_id = '*'
 LEFT JOIN ddmrp.item_compra icp ON icp.empresa = k.empresa AND icp.producto_id = k.producto_id
 LEFT JOIN ddmrp.proveedor pv ON pv.empresa = icp.empresa AND pv.proveedor_id = icp.proveedor_id AND pv.sucursal = icp.sucursal
-LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = k.producto_id
-LEFT JOIN ddmrp.reposicion_item oi ON oi.producto_id = k.producto_id
+LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = k.empresa AND mi.producto_id = k.producto_id
+LEFT JOIN ddmrp.reposicion_item oi ON oi.empresa = k.empresa AND oi.producto_id = k.producto_id
 LEFT JOIN ddmrp.reposicion_laboratorio ol ON ol.laboratorio = mi.categoria
 WHERE NOT EXISTS (SELECT 1 FROM rec r2 WHERE r2.empresa = k.empresa AND r2.rec_id = k.producto_id)
-  AND (mi.producto_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM ddmrp.maestro_item))
-  AND (NOT EXISTS (SELECT 1 FROM ddmrp.item_empresa ie0 WHERE ie0.empresa = k.empresa)
-       OR EXISTS (SELECT 1 FROM ddmrp.item_empresa ie WHERE ie.empresa = k.empresa AND ie.producto_id = k.producto_id))
+  AND ($2::text = '' OR k.empresa = $2::text)
+  AND (mi.producto_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM ddmrp.maestro_item mx WHERE mx.empresa = k.empresa))
   AND ((SELECT COALESCE(max(valor), 1) FROM ddmrp.parametro WHERE clave = 'solo_items_activos') = 0
        OR NOT EXISTS (SELECT 1 FROM ddmrp.item_estado ie WHERE ie.empresa = k.empresa AND ie.producto_id = k.producto_id AND ie.estado <> 1))
 "#;
@@ -266,6 +264,7 @@ fn main() -> Result<()> {
     let url = std::env::var("DATABASE_URL").context("falta DATABASE_URL")?;
     let ejecucion_id: i64 = arg("--ejecucion-id").context("falta --ejecucion-id")?.parse()?;
     let fecha_arg = arg("--fecha");
+    let empresa_arg = arg("--empresa").unwrap_or_default();   // una empresa por corrida; vacio = todas (compatibilidad)
     // --modo cedi: calcula el buffer del CEDI (SQL_ENTRADA_CEDI) y lo escribe en ddmrp.sugerencias_cedi; sin el, las tiendas en ddmrp.sugerencias_envio
     let modo_cedi = arg("--modo").as_deref() == Some("cedi");
 
@@ -278,7 +277,7 @@ fn main() -> Result<()> {
     let factores = leer_factores(&mut client)?;
     let params = leer_parametros(&mut client)?;
 
-    let rows = client.query(if modo_cedi { SQL_ENTRADA_CEDI } else { SQL_ENTRADA }, &[&fecha])?;
+    let rows = client.query(if modo_cedi { SQL_ENTRADA_CEDI } else { SQL_ENTRADA }, &[&fecha, &empresa_arg])?;
     let items: Vec<Entrada> = rows
         .iter()
         .map(|r| Entrada {

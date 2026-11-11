@@ -269,6 +269,11 @@ HAVING SUM(m.f441_cant_requerida_base - m.f441_cant_consumida_base) > 0"""
 ACTIVO_RE = re.compile(r"/\*ACTIVO:(\w+),(\w+)\*/")
 
 
+def _bases(solo: str | None = None) -> tuple:
+    """(empresa, base de Siesa) de cada empresa; con `solo` (05 o 21) deja unicamente esa: asi el ETL y el motor corren por empresa."""
+    return tuple((e, d) for e, d in (("05", settings.siesa_db), ("21", settings.siesa_db_s)) if not solo or e == solo)
+
+
 def _purgar_fuera_del_maestro(cur) -> int:
     """Quita de ventas, inventario, transitos, demanda y fotos lo que no esta en maestro_item (p.ej. materia prima MP...). Devuelve cuantas filas."""
     n = 0
@@ -390,8 +395,8 @@ def _volcar(cur, filas, destino: str, cols: list[str], reemplazar: bool = True) 
     return n
 
 
-def _costos(cur, eng, bodegas: list[str], pisar: bool, filtrar: bool = False) -> int | str:
-    """Costo promedio por referencia de esas bodegas -> ddmrp.costo_item. `pisar`=True (CEDI) manda sobre lo que haya;
+def _costos(cur, eng, bodegas: list[str], empresa: str, pisar: bool, filtrar: bool = False) -> int | str:
+    """Costo promedio por referencia de esas bodegas -> ddmrp.costo_item de ESA empresa. `pisar`=True (CEDI) manda sobre lo que haya;
     False (tiendas) solo llena lo que falte. Un fallo del origen (p.ej. la columna no existe) no tumba el ETL: devuelve el aviso."""
     try:
         filas = list(_stream(eng, _con_estado(_sql_costo(), filtrar), {"cia": settings.siesa_cia, "bodegas": bodegas}, expanding="bodegas"))
@@ -401,8 +406,8 @@ def _costos(cur, eng, bodegas: list[str], pisar: bool, filtrar: bool = False) ->
         log.warning("Costos no leidos (revisa SIESA_COSTO_TABLA/COLUMNA=%s.%s): %s", settings.siesa_costo_tabla, settings.siesa_costo_columna, e)
         return "no se pudo leer " + settings.siesa_costo_tabla + "." + settings.siesa_costo_columna + ": " + str(e)[:150]
     accion = "DO UPDATE SET costo = EXCLUDED.costo, fecha_corte = current_date" if pisar else "DO NOTHING"
-    cur.executemany(f"INSERT INTO ddmrp.costo_item (producto_id, costo) VALUES (%s, %s) ON CONFLICT (producto_id) {accion}",
-                    [(p, c) for p, c in filas if c and c > 0])
+    cur.executemany(f"INSERT INTO ddmrp.costo_item (empresa, producto_id, costo) VALUES (%s, %s, %s) ON CONFLICT (empresa, producto_id) {accion}",
+                    [(empresa, p, c) for p, c in filas if c and c > 0])
     return len(filas)
 
 
@@ -414,10 +419,10 @@ def diagnostico_inventario(bodega: str, producto: str) -> dict:
         out["local"]["en_bitacora"] = [dict(r) for r in c.execute(text("SELECT empresa, bodega_id FROM ddmrp.abast_bitacora WHERE bodega_id = :b"), {"b": bodega}).mappings()]
         out["local"]["inventario_actual"] = [{k: (float(v) if hasattr(v, "as_tuple") else str(v) if k == "fecha_corte" else v) for k, v in r.items()}
                                               for r in c.execute(text("SELECT empresa, producto_id, bodega_id, fecha_corte, disponible FROM ddmrp.inventario_actual WHERE bodega_id = :b AND producto_id = :p"), {"b": bodega, "p": producto}).mappings()]
-        out["local"]["costo"] = [float(r[0]) for r in c.execute(text("SELECT costo FROM ddmrp.costo_item WHERE producto_id = :p"), {"p": producto}).all()]
+        out["local"]["costo"] = [{"empresa": r[0], "costo": float(r[1])} for r in c.execute(text("SELECT empresa, costo FROM ddmrp.costo_item WHERE producto_id = :p"), {"p": producto}).all()]
         out["local"]["resta_comprometido"] = bool((c.execute(text("SELECT valor FROM ddmrp.parametro WHERE clave='inv_tiendas_resta_comprometido'")).scalar() or 0))
         out["local"]["resta_sin_acumular"] = bool((c.execute(text("SELECT valor FROM ddmrp.parametro WHERE clave='inv_tiendas_resta_sin_acumular'")).scalar() or 0))
-        out["local"]["en_maestro"] = c.execute(text("SELECT count(*) FROM ddmrp.maestro_item WHERE producto_id = :p"), {"p": producto}).scalar() > 0
+        out["local"]["en_maestro"] = c.execute(text("SELECT count(*) FROM ddmrp.maestro_item WHERE producto_id = :p"), {"p": producto}).scalar() > 0   # en alguna empresa
         out["local"]["estado"] = [dict(r) for r in c.execute(text("SELECT empresa, estado FROM ddmrp.item_estado WHERE producto_id = :p"), {"p": producto}).mappings()]
         out["local"]["ultimo_etl_inventario"] = str(c.execute(text("SELECT max(fecha_corte) FROM ddmrp.inventario_actual WHERE bodega_id = :b"), {"b": bodega}).scalar())
         out["local"]["filas_bodega"] = c.execute(text("SELECT count(*) FROM ddmrp.inventario_actual WHERE bodega_id = :b"), {"b": bodega}).scalar()
@@ -755,7 +760,8 @@ def _cond_pago_de_siesa(cur, eng, empresa: str) -> dict:
 def _items_de_siesa(cur, eng, primera: bool = True, empresa: str | None = None) -> dict:
     """Descripcion, laboratorio (plan 006) y TODOS los criterios de items de una base de Siesa.
     Primero se lee todo del origen y solo despues se escribe, para que un fallo de Siesa no deje la tabla a medias.
-    Si hay dos bases (Funat y Stores), la primera manda y la segunda solo agrega lo que falte."""
+    Cada empresa (Funat 05, Stores 21) tiene SU catalogo: lo que se escribe aqui lleva la empresa y no toca lo de la otra."""
+    empresa = empresa or "05"
     prm = {"cia": settings.siesa_cia}
     aviso_estado = _probe_estado(eng)     # None = la columna de estado existe
     items_all = list(_stream(eng, _sql_items(aviso_estado is None), prm))   # TODOS los t120: el estado y los REC se leen antes de filtrar por criterio
@@ -780,18 +786,17 @@ def _items_de_siesa(cur, eng, primera: bool = True, empresa: str | None = None) 
     with cur.copy("COPY stg_items FROM STDIN") as cp:
         for x in items:
             cp.write_row(x)
-    # la primera base (Funat) manda: pisa la descripcion. La segunda (Stores) solo agrega los items que falten; antes tambien la pisaba y,
-    # como se lee despues, un nombre viejo de Stores (p. ej. "*DESC ...") tapaba el nombre ya corregido en Funat
-    cur.execute(f"""INSERT INTO ddmrp.maestro_item (producto_id, descripcion)
-                   SELECT producto_id, COALESCE(descripcion, producto_id) FROM stg_items
-                   ON CONFLICT (producto_id) DO {"UPDATE SET descripcion = EXCLUDED.descripcion, actualizado = now()" if primera else "NOTHING"}""")
+    # cada empresa es espejo de SU Siesa: pisa la descripcion de sus items y borra los suyos que ya no estan en la seleccion (lo de la otra empresa no se toca)
+    cur.execute("""INSERT INTO ddmrp.maestro_item (empresa, producto_id, descripcion)
+                   SELECT %s, producto_id, COALESCE(descripcion, producto_id) FROM stg_items
+                   ON CONFLICT (empresa, producto_id) DO UPDATE SET descripcion = EXCLUDED.descripcion, actualizado = now()""", (empresa,))
     borrados = 0
-    if primera and items:   # espejo de Siesa: se van los items viejos que ya no estan en la seleccion (los de Stores se agregan despues)
-        cur.execute("DELETE FROM ddmrp.maestro_item m WHERE NOT EXISTS (SELECT 1 FROM stg_items s WHERE s.producto_id = m.producto_id)")
+    if items:
+        cur.execute("DELETE FROM ddmrp.maestro_item m WHERE m.empresa = %s AND NOT EXISTS (SELECT 1 FROM stg_items s WHERE s.producto_id = m.producto_id)", (empresa,))
         borrados = cur.rowcount
-    if empresa:   # a que empresa pertenece cada item (filtro por empresa de Maestros)
-        cur.execute("DELETE FROM ddmrp.item_empresa WHERE empresa = %s", (empresa,))
-        cur.execute("INSERT INTO ddmrp.item_empresa (empresa, producto_id) SELECT DISTINCT %s, producto_id FROM stg_items ON CONFLICT DO NOTHING", (empresa,))
+    # a que empresa pertenece cada item (filtro por empresa de Maestros)
+    cur.execute("DELETE FROM ddmrp.item_empresa WHERE empresa = %s", (empresa,))
+    cur.execute("INSERT INTO ddmrp.item_empresa (empresa, producto_id) SELECT DISTINCT %s, producto_id FROM stg_items ON CONFLICT DO NOTHING", (empresa,))
     cur.execute("DROP TABLE stg_items")
     extra: dict = {}
     if empresa:
@@ -812,15 +817,14 @@ def _items_de_siesa(cur, eng, primera: bool = True, empresa: str | None = None) 
         extra.update(rec=len(pares), rec_sin_original=len(sin_original))
         if sin_original:
             log.warning("Items REC sin original en Siesa (quedan como items normales): %s", ", ".join(sin_original[:10]))
-    cur.executemany("UPDATE ddmrp.maestro_item SET categoria = %s WHERE producto_id = %s", [(l, p) for p, l in labs])
+    cur.executemany("UPDATE ddmrp.maestro_item SET categoria = %s WHERE empresa = %s AND producto_id = %s", [(l, empresa, p) for p, l in labs])
     for cod, nom in nombres_lab:
-        cur.execute("INSERT INTO ddmrp.laboratorio (codigo, nombre) VALUES (%s, %s) "
-                    "ON CONFLICT (codigo) DO UPDATE SET nombre = EXCLUDED.nombre", (cod, nom))
-    if primera and crit:
-        cur.execute("TRUNCATE ddmrp.item_criterio")
-    resolver = "DO UPDATE SET criterio_id = EXCLUDED.criterio_id" if primera else "DO NOTHING"
-    cur.executemany(f"INSERT INTO ddmrp.item_criterio (producto_id, plan_id, criterio_id) VALUES (%s, %s, %s) "
-                    f"ON CONFLICT (producto_id, plan_id) {resolver}", crit)
+        cur.execute("INSERT INTO ddmrp.laboratorio (empresa, codigo, nombre) VALUES (%s, %s, %s) "
+                    "ON CONFLICT (empresa, codigo) DO UPDATE SET nombre = EXCLUDED.nombre", (empresa, cod, nom))
+    if crit:
+        cur.execute("DELETE FROM ddmrp.item_criterio WHERE empresa = %s", (empresa,))
+    cur.executemany("INSERT INTO ddmrp.item_criterio (empresa, producto_id, plan_id, criterio_id) VALUES (%s, %s, %s, %s) "
+                    "ON CONFLICT (empresa, producto_id, plan_id) DO UPDATE SET criterio_id = EXCLUDED.criterio_id", [(empresa, *c) for c in crit])
     for pid, nom in nombres_plan:
         cur.execute("INSERT INTO ddmrp.criterio_plan (plan_id, nombre) VALUES (%s, %s) "
                     "ON CONFLICT (plan_id) DO UPDATE SET nombre = EXCLUDED.nombre", (pid, nom))
@@ -836,13 +840,13 @@ def _items_de_siesa(cur, eng, primera: bool = True, empresa: str | None = None) 
     return {"items": len(items), "eliminados": borrados, "con_laboratorio": len(labs), "criterios": len(crit), "planes": len({c[1] for c in crit}), **extra}
 
 
-def sincronizar_items_ahora(usuario: str | None = None) -> dict:
+def sincronizar_items_ahora(usuario: str | None = None, empresa: str | None = None) -> dict:
     with bitacora.registrar("items", "manual", usuario) as r:
-        r.resumen = res = _sincronizar_items_ahora()
+        r.resumen = res = _sincronizar_items_ahora(empresa)
         return res
 
 
-def _sincronizar_items_ahora() -> dict:
+def _sincronizar_items_ahora(solo_emp: str | None = None) -> dict:
     """Boton "Traer items de Siesa": las dos bases (Funat y Stores) sin correr el ETL completo."""
     if not settings.siesa_host:
         raise RuntimeError("Siesa no esta configurado (SIESA_HOST)")
@@ -850,7 +854,7 @@ def _sincronizar_items_ahora() -> dict:
     raw = pg.raw_connection()
     try:
         with raw.cursor() as cur:
-            for empresa, db in (("05", settings.siesa_db), ("21", settings.siesa_db_s)):
+            for empresa, db in _bases(solo_emp):
                 if db:
                     out[empresa] = _items_de_siesa(cur, siesa_engine(db), primera=(empresa == "05"), empresa=empresa)
         raw.commit()
@@ -862,7 +866,7 @@ def _sincronizar_items_ahora() -> dict:
         raw.close()
 
 
-def _cedi_de_siesa(cur) -> dict:
+def _cedi_de_siesa(cur, solo_emp: str | None = None) -> dict:
     """Inventario disponible del CEDI de cada empresa (05: SIESA_CEDI_BODEGA en la base Funat; 21: SIESA_CEDI_BODEGA_S en Stores).
     Se lee todo antes de escribir; si una empresa falla se conserva el ultimo corte de esa empresa y se avisa."""
     leidos: dict[str, tuple] = {}
@@ -872,7 +876,7 @@ def _cedi_de_siesa(cur) -> dict:
     cur.execute("SELECT empresa, min(bodega_id) FROM ddmrp.maestro_cedi GROUP BY empresa")   # el CEDI de cada empresa sale del maestro de CEDIs
     cedis = dict(cur.fetchall())
     for emp, db, bod in (("05", settings.siesa_db, cedis.get("05") or settings.siesa_cedi_bodega), ("21", settings.siesa_db_s, cedis.get("21") or settings.siesa_cedi_bodega_s)):
-        if not (db and bod):
+        if not (db and bod) or (solo_emp and emp != solo_emp):
             continue
         try:
             eng = siesa_engine(db)
@@ -897,7 +901,7 @@ def _cedi_de_siesa(cur) -> dict:
     out: dict = {}
     lanz: dict = {}
     for emp, (bod, eng, filas, fisica, filtrar) in leidos.items():
-        costos = _costos(cur, eng, [bod], pisar=(emp == "05"), filtrar=filtrar)   # el costo del CEDI de Funat manda; el de Stores solo llena lo que falte
+        costos = _costos(cur, eng, [bod], emp, pisar=True, filtrar=filtrar)   # el costo del CEDI de cada empresa manda sobre lo suyo
         cur.execute("DELETE FROM ddmrp.inventario_cedi WHERE empresa = %s", (emp,))
         mapa = rec.get(emp, {})
         datos: dict = {}
@@ -925,7 +929,7 @@ def _cedi_de_siesa(cur) -> dict:
     return res
 
 
-def refrescar_cedi() -> dict:
+def refrescar_cedi(empresa: str | None = None) -> dict:
     """Lee de Siesa el inventario FRESCO del CEDI, para que el reparto del motor no dependa de cuando corrio el ETL.
     Si Siesa no responde se sigue con el ultimo corte y se avisa."""
     if not (settings.siesa_host and settings.siesa_db and settings.siesa_cedi_bodega):
@@ -933,7 +937,7 @@ def refrescar_cedi() -> dict:
     raw = pg.raw_connection()
     try:
         with raw.cursor() as cur:
-            r = _cedi_de_siesa(cur)
+            r = _cedi_de_siesa(cur, empresa)
         raw.commit()
         return {"fresco": True, **r}
     except Exception as e:
@@ -944,7 +948,7 @@ def refrescar_cedi() -> dict:
         raw.close()
 
 
-def refrescar_oc_cedi() -> dict:
+def refrescar_oc_cedi(empresa: str | None = None) -> dict:
     """Vuelve a leer de Siesa SOLO las ordenes de compra abiertas hacia los CEDI (su saldo por recibir es el transito del buffer del CEDI) y reemplaza esas filas de
     ddmrp.transitos. Es lo que necesita «recalcular necesidades de compra» sin correr el ETL completo. Si Siesa falla, queda lo que habia."""
     res: dict = {}
@@ -960,7 +964,7 @@ def refrescar_oc_cedi() -> dict:
             oc_dias = _param(cur, "oc_dias_historia")
             desde_oc = date.today() - timedelta(days=int(min(max(oc_dias, 30), 1500)) if oc_dias else 365)
             solo = _solo_activos(cur)
-            for empresa, db in (("05", settings.siesa_db), ("21", settings.siesa_db_s)):
+            for empresa, db in _bases(empresa):
                 bods = cedis.get(empresa, [])
                 if not db or not bods:
                     continue
@@ -985,13 +989,13 @@ def _param(cur, clave: str):
     return float(f[0]) if f else None
 
 
-def sincronizar_ventas(origen: str = "manual", usuario: str | None = None) -> dict:
+def sincronizar_ventas(origen: str = "manual", usuario: str | None = None, empresa: str | None = None) -> dict:
     with bitacora.registrar("ventas", origen, usuario) as r:
-        r.resumen = res = _sincronizar_ventas()
+        r.resumen = res = _sincronizar_ventas(empresa)
         return res
 
 
-def _sincronizar_ventas() -> dict:
+def _sincronizar_ventas(solo_emp: str | None = None) -> dict:
     """Ventas por mes de Siesa -> ddmrp.ventas_mensual. Solo reemplaza la ventana de meses y las bodegas leidas
     (el historico anterior no se toca). Va aparte del ETL porque es la consulta pesada: se lanza a demanda o por parametro."""
     res: dict = {}
@@ -1043,7 +1047,7 @@ def _sincronizar_ventas() -> dict:
                 cur.execute("CREATE TEMP TABLE stg_vm (empresa text, mes char(6), bodega_id text, producto_id text, cantidad numeric, valor numeric) ON COMMIT DROP")
                 leidas: list[str] = []
                 tiendas_l: list[tuple] = []   # solo tiendas (sin CEDI): para avisar cuales no trajeron ninguna venta
-                for empresa, db in (("05", settings.siesa_db), ("21", settings.siesa_db_s)):
+                for empresa, db in _bases(solo_emp):
                     bodegas = por_empresa.get(empresa, [])
                     cedis = cedis_por_empresa.get(empresa, []) if csql else []
                     if not db or not (bodegas or cedis):
@@ -1111,15 +1115,18 @@ def _analizar_tablas():
         log.exception("No se pudo actualizar las estadisticas tras el ETL (ANALYZE)")
 
 
-def correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
+def correr_etl(origen: str = "manual", usuario: str | None = None, empresa: str | None = None) -> dict:
+    """ETL de Siesa. Con `empresa` (05 o 21) solo lee y reemplaza lo de esa empresa; sin ella, las dos."""
     with progreso.tarea("ETL", "ETL listo"), bitacora.registrar("etl", origen, usuario) as r:
-        r.resumen = res = _correr_etl(origen, usuario)
+        r.resumen = res = _correr_etl(origen, usuario, empresa)
         _analizar_tablas()
         return res
 
 
-def _correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
+def _correr_etl(origen: str = "manual", usuario: str | None = None, solo_emp: str | None = None) -> dict:
     res: dict = {}
+    if solo_emp:
+        res["empresa"] = solo_emp
     raw = pg.raw_connection()
     try:
         with raw.cursor() as cur:
@@ -1149,16 +1156,20 @@ def _correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
                 raw.commit()
                 return {"aviso": "Siesa no configurado"}
 
-            cur.execute("TRUNCATE ddmrp.inventario_actual")
-            cur.execute("TRUNCATE ddmrp.transitos")
-            cur.execute("TRUNCATE ddmrp.rit_alerta")
+            if solo_emp:   # una empresa: no se toca lo de la otra
+                for t in ("inventario_actual", "transitos", "rit_alerta"):
+                    cur.execute(f"DELETE FROM ddmrp.{t} WHERE empresa = %s", (solo_emp,))
+            else:
+                cur.execute("TRUNCATE ddmrp.inventario_actual")
+                cur.execute("TRUNCATE ddmrp.transitos")
+                cur.execute("TRUNCATE ddmrp.rit_alerta")
             traer_ventas = (_param(cur, "etl_traer_ventas") or 0) >= 1
             resta_comp = (_param(cur, "inv_tiendas_resta_comprometido") or 0) >= 1
             resta_sa = (_param(cur, "inv_tiendas_resta_sin_acumular") or 0) >= 1   # ventas del POS aun sin acumular (salida sin confirmar)
             solo = _solo_activos(cur)
             if not traer_ventas:
                 log.info("ETL: las ventas por mes no se traen aqui (parametro etl_traer_ventas = 0); usa el boton 'Traer ventas'")
-            for empresa, db in (("05", settings.siesa_db), ("21", settings.siesa_db_s)):
+            for empresa, db in _bases(solo_emp):
                 bodegas = por_empresa.get(empresa, [])
                 if not db or not bodegas:
                     continue
@@ -1173,7 +1184,7 @@ def _correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
                     cur, ((empresa,) + r for r in _stream(eng, _con_estado(SQL_INVENTARIO, filtrar), prm_inv, expanding="bodegas")), "ddmrp.inventario_actual",
                     ["empresa", "producto_id", "bodega_id", "fecha_corte", "disponible"], reemplazar=False)
                 progreso.avance(f"Leyendo costos promedio de Siesa ({db})…")
-                res[f"costos_{empresa}"] = _costos(cur, eng, bodegas, pisar=False, filtrar=filtrar)   # respaldo: el costo del CEDI manda (se lee al final)
+                res[f"costos_{empresa}"] = _costos(cur, eng, bodegas, empresa, pisar=False, filtrar=filtrar)   # respaldo: el costo del CEDI manda (se lee al final)
                 progreso.avance(f"Leyendo traslados en tránsito de Siesa ({db})…")
                 res[f"transitos_{empresa}"] = _volcar(
                     cur, ((empresa,) + r for r in _stream(eng, _con_estado(SQL_TRANSITOS, filtrar), prm, expanding="bodegas")), "ddmrp.transitos",
@@ -1225,7 +1236,7 @@ def _correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
             # Items (maestro, descripcion, laboratorio, criterios, item_empresa y estado) de LAS DOS bases, SIEMPRE y en orden (Funat manda, Stores agrega).
             # Antes iba dentro del ciclo de bodegas: si una empresa no tenia bodegas en la bitacora (Stores) sus items no se leian, y el espejo de Funat
             # sacaba del maestro los items que solo existen en Stores; la purga de despues les borraba las ventas y el motor los veia con ADU 0.
-            for empresa, db in (("05", settings.siesa_db), ("21", settings.siesa_db_s)):
+            for empresa, db in _bases(solo_emp):
                 if not db:
                     continue
                 progreso.avance(f"Leyendo items y criterios ({db})…")
@@ -1239,7 +1250,7 @@ def _correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
             if settings.siesa_db and settings.siesa_cedi_bodega:
                 progreso.avance(f"Leyendo el inventario del CEDI ({settings.siesa_cedi_bodega})…")
                 try:
-                    res["cedi"] = _cedi_de_siesa(cur)
+                    res["cedi"] = _cedi_de_siesa(cur, solo_emp)
                 except Exception as e:   # un fallo de Siesa no debe tumbar el ETL: el CEDI queda con el corte anterior
                     if isinstance(e, psycopg.Error):
                         raise
@@ -1252,5 +1263,5 @@ def _correr_etl(origen: str = "manual", usuario: str | None = None) -> dict:
     finally:
         raw.close()
     if traer_ventas:
-        res.update(sincronizar_ventas(origen, usuario))
+        res.update(sincronizar_ventas(origen, usuario, solo_emp))
     return res

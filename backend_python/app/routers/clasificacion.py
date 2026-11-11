@@ -15,7 +15,7 @@ from ..modo import fijar_modo, solo_cedi
 from .control import _csv
 
 router = APIRouter(prefix="/clasificacion", tags=["clasificacion"], dependencies=[Depends(requiere("ver_control")), Depends(fijar_modo)])
-ULTIMA = "(SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok')"
+ULTIMA = "ANY (SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok' GROUP BY empresa)"   # la ultima corrida buena de CADA empresa (sus filas solo existen bajo su propia corrida)
 
 
 def _ventana(meses: int) -> tuple[str, date, int]:
@@ -66,25 +66,27 @@ def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, l
             if ":" in x:
                 pl, cr = x.split(":", 1); por_plan.setdefault(pl, []).append(cr)
         for i, (pl, crs) in enumerate(por_plan.items()):
-            cond.append(f"EXISTS (SELECT 1 FROM ddmrp.item_criterio ic{i} WHERE ic{i}.producto_id = k.producto_id AND ic{i}.plan_id = :cp{i} AND ic{i}.criterio_id = ANY(:cc{i}))")
+            cond.append(f"EXISTS (SELECT 1 FROM ddmrp.item_criterio ic{i} WHERE ic{i}.empresa = k.empresa AND ic{i}.producto_id = k.producto_id AND ic{i}.plan_id = :cp{i} AND ic{i}.criterio_id = ANY(:cc{i}))")
             p[f"cp{i}"] = pl; p[f"cc{i}"] = crs
         if solo_con:    # excluir los items que no tienen valor en los criterios elegidos (los del filtro ya lo exigen)
             for j, pl in enumerate(dict.fromkeys(_csv(planes))):
-                cond.append(f"EXISTS (SELECT 1 FROM ddmrp.item_criterio is{j} WHERE is{j}.producto_id = k.producto_id AND is{j}.plan_id = :sp{j})")
+                cond.append(f"EXISTS (SELECT 1 FROM ddmrp.item_criterio is{j} WHERE is{j}.empresa = k.empresa AND is{j}.producto_id = k.producto_id AND is{j}.plan_id = :sp{j})")
                 p[f"sp{j}"] = pl
     if filtrar and (_csv(labs) or _csv(crit) or (q and q.strip()) or (solo_con and _csv(planes))):
         # los filtros de item se resuelven UNA vez a la lista de productos y se empujan a cada CTE: el planner ya no agrega toda la historia ni evalua EXISTS por fila
         wi = ["true"]; pi: dict = {}
+        if _csv(empresa):
+            wi.append("mi2.empresa = ANY(:i_emp)"); pi["i_emp"] = _csv(empresa)
         if _csv(labs):
             wi.append("COALESCE(mi2.categoria, '') = ANY(:i_lab)"); pi["i_lab"] = [("" if x == "(sin laboratorio)" else x) for x in _csv(labs)]
         if q and q.strip():
             wi.append("(mi2.producto_id ILIKE :i_q OR mi2.descripcion ILIKE :i_q)"); pi["i_q"] = f"%{q.strip()}%"
         for i, (pl, crs) in enumerate(por_plan.items()):
-            wi.append(f"EXISTS (SELECT 1 FROM ddmrp.item_criterio xc{i} WHERE xc{i}.producto_id = mi2.producto_id AND xc{i}.plan_id = :xp{i} AND xc{i}.criterio_id = ANY(:xc{i}))")
+            wi.append(f"EXISTS (SELECT 1 FROM ddmrp.item_criterio xc{i} WHERE xc{i}.empresa = mi2.empresa AND xc{i}.producto_id = mi2.producto_id AND xc{i}.plan_id = :xp{i} AND xc{i}.criterio_id = ANY(:xc{i}))")
             pi[f"xp{i}"] = pl; pi[f"xc{i}"] = crs
         if solo_con:
             for j, pl in enumerate(dict.fromkeys(_csv(planes))):
-                wi.append(f"EXISTS (SELECT 1 FROM ddmrp.item_criterio xs{j} WHERE xs{j}.producto_id = mi2.producto_id AND xs{j}.plan_id = :xq{j})")
+                wi.append(f"EXISTS (SELECT 1 FROM ddmrp.item_criterio xs{j} WHERE xs{j}.empresa = mi2.empresa AND xs{j}.producto_id = mi2.producto_id AND xs{j}.plan_id = :xq{j})")
                 pi[f"xq{j}"] = pl
         ids = [r[0] for r in c.execute(text("SELECT mi2.producto_id FROM ddmrp.maestro_item mi2 WHERE " + " AND ".join(wi)), pi)]
         p["f_ids"] = ids
@@ -118,8 +120,8 @@ def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, l
     SELECT k.empresa, k.bodega_id, mb.descripcion AS bodega_nombre, k.producto_id, mi.descripcion, COALESCE(mi.categoria, '(sin laboratorio)') AS laboratorio,
            COALESCE(k.cant, 0) AS cant, COALESCE(k.valor, 0) AS valor, k.primer_mes, COALESCE(k.inventario, 0) AS inventario, k.iv, COALESCE(k.adu, 0) AS adu,
            k.zona, k.pct_buffer, k.flujo_neto, k.tog_aj, k.sugerido, k.inv_suma, k.dias_hist, k.dias_cero,
-           (SELECT ci.costo::float8 FROM ddmrp.costo_item ci WHERE ci.producto_id = k.producto_id) AS costo
-    FROM k LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = k.producto_id LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = k.bodega_id AND mb.empresa = k.empresa
+           (SELECT ci.costo::float8 FROM ddmrp.costo_item ci WHERE ci.empresa = k.empresa AND ci.producto_id = k.producto_id) AS costo
+    FROM k LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = k.empresa AND mi.producto_id = k.producto_id LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = k.bodega_id AND mb.empresa = k.empresa
     WHERE {' AND '.join(cond)}
       AND (COALESCE(k.cant, 0) > 0 OR COALESCE(k.valor, 0) > 0 OR COALESCE(k.inventario, 0) > 0)"""   # sin venta y sin inventario no es un D: no se lista
     return [dict(r) for r in c.execute(text(sql), p).mappings()]
@@ -134,7 +136,7 @@ def _clase_global(c, user, mes_desde, nivel, criterio, corte_a, corte_b, nuevo, 
     se guarda 10 minutos por (corrida del motor, permisos del usuario, ventana, nivel, criterio y cortes)."""
     import time
     w, p = filtro_sql_permisos(user, "k.bodega_id", "mi.categoria")
-    ej = c.execute(text(f"SELECT {ULTIMA}")).scalar()
+    ej = c.execute(text(f"SELECT string_agg(id::text, ',' ORDER BY id) FROM ddmrp.ejecucion_motor WHERE id = {ULTIMA}")).scalar()   # clave de cache: cambia si corre cualquiera de las dos
     clave_c = (ej, solo_cedi(), w, tuple(sorted((k, str(v)) for k, v in p.items())), mes_desde, nivel, criterio, corte_a, corte_b, str(nuevo), tuple(cortes), metodo, corte_i)
     hit = _CACHE_GLOBAL.get(clave_c)
     if hit and time.time() - hit[0] < _CACHE_TTL:
@@ -143,7 +145,7 @@ def _clase_global(c, user, mes_desde, nivel, criterio, corte_a, corte_b, nuevo, 
     anotar(cache_global="miss")
     filas_g = _filas(c, user, mes_desde, False, hist=False)
     glob = cl.agregar(filas_g, nivel); cl.calcular(glob, dias); cl.clasificar(glob, criterio, corte_a, corte_b, nuevo, cortes, metodo, corte_i)
-    clave = (lambda x: (x["empresa"], x["bodega_id"], x["producto_id"])) if nivel == "tienda_item" else (lambda x: x["producto_id"])
+    clave = (lambda x: (x["empresa"], x["bodega_id"], x["producto_id"])) if nivel == "tienda_item" else (lambda x: (x["empresa"], x["producto_id"]))
     g = {clave(x): x["clase"] for x in glob}
     if len(_CACHE_GLOBAL) >= 8:
         _CACHE_GLOBAL.pop(next(iter(_CACHE_GLOBAL)))
@@ -182,7 +184,7 @@ def _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, 
     items = cl.agregar(filas, nivel); cl.calcular(items, dias); cl.clasificar(items, criterio, corte_a, corte_b, nuevo, cortes, metodo, corte_i)
     anotar(ms_sql=int((t_sql - t_ini) * 1000), ms_calc=int((time.perf_counter() - t_sql) * 1000), filas=len(items), filas_sql=len(filas), nivel=nivel, con_global=g is not None)
     if g is not None:       # clase de cada item contra TODO el universo que el usuario puede ver (sin los filtros de pantalla)
-        clave = (lambda x: (x["empresa"], x["bodega_id"], x["producto_id"])) if nivel == "tienda_item" else (lambda x: x["producto_id"])
+        clave = (lambda x: (x["empresa"], x["bodega_id"], x["producto_id"])) if nivel == "tienda_item" else (lambda x: (x["empresa"], x["producto_id"]))
         for it in items:
             it["clase_global"] = g.get(clave(it))
     else:
@@ -210,12 +212,12 @@ def _por_grupo(items: list[dict], plan: str | None, dentro: bool = False, criter
         return None
     with pg.connect() as c:
         pn = c.execute(text("SELECT nombre FROM ddmrp.criterio_plan WHERE plan_id = :p"), {"p": plan}).scalar()
-        val = dict(c.execute(text("SELECT producto_id, criterio_id FROM ddmrp.item_criterio WHERE plan_id = :p"), {"p": plan}).all())
+        val = {(e, pr): cr for e, pr, cr in c.execute(text("SELECT empresa, producto_id, criterio_id FROM ddmrp.item_criterio WHERE plan_id = :p"), {"p": plan}).all()}
         nom = dict(c.execute(text("SELECT criterio_id, nombre FROM ddmrp.criterio WHERE plan_id = :p"), {"p": plan}).all())
     grupos: dict[str, dict] = {}
     miembros: dict[str, list[dict]] = {}
     for it in items:
-        v = val.get(it["producto_id"]) or ""
+        v = val.get((it["empresa"], it["producto_id"])) or ""
         g = grupos.setdefault(v, {"id": v, "nombre": (nom.get(v) or v).strip() if v else "(sin valor)", "n": 0, "venta": 0.0, "margen": 0.0, "inv_costo": 0.0,
                                   "inv_prom_costo": 0.0, "margen_anual": 0.0, "costo_venta_anual": 0.0, **{a: 0 for a in cl.ORDEN_ABC}})
         miembros.setdefault(v, []).append(it)
@@ -297,29 +299,29 @@ def _nombres_para_excel(items: list[dict], planes_sel: str | None = None) -> lis
     """Agrega a cada fila el nombre del laboratorio y los criterios CATEGORIA y LINEA (los planes de Siesa con ese nombre) para poder armar tablas dinamicas
     sin cruzar codigos a mano. Devuelve las columnas extra que si se pudieron llenar (si no existe el plan, no sale la columna)."""
     with pg.connect() as c:
-        lab = dict(c.execute(text("SELECT codigo, nombre FROM ddmrp.laboratorio")).all())
+        lab = {(e, cod): nom for e, cod, nom in c.execute(text("SELECT empresa, codigo, nombre FROM ddmrp.laboratorio")).all()}
         planes = {_norm(n): p for p, n in c.execute(text("SELECT plan_id, nombre FROM ddmrp.criterio_plan")).all()}
         por_plan = {}
         for clave in ("CATEGORIA", "LINEA"):
             p = next((pid for n, pid in planes.items() if n == clave), None) or next((pid for n, pid in planes.items() if n.startswith(clave)), None)
             if p:
-                por_plan[clave] = dict(c.execute(text("SELECT ic.producto_id, cr.nombre FROM ddmrp.item_criterio ic JOIN ddmrp.criterio cr "
-                                                      "ON cr.plan_id = ic.plan_id AND cr.criterio_id = ic.criterio_id WHERE ic.plan_id = :p"), {"p": p}).all())
+                por_plan[clave] = {(e, pr): nm for e, pr, nm in c.execute(text("SELECT ic.empresa, ic.producto_id, cr.nombre FROM ddmrp.item_criterio ic JOIN ddmrp.criterio cr "
+                                                      "ON cr.plan_id = ic.plan_id AND cr.criterio_id = ic.criterio_id WHERE ic.plan_id = :p"), {"p": p}).all()}
     for it in items:
         cod = it.get("laboratorio")
-        it["lab_nombre"] = (lab.get(cod) or "").strip() or None
+        it["lab_nombre"] = (lab.get((it["empresa"], cod)) or "").strip() or None
         for clave, mapa in por_plan.items():
-            it[clave.lower()] = (mapa.get(it["producto_id"]) or "").strip() or None
+            it[clave.lower()] = (mapa.get((it["empresa"], it["producto_id"])) or "").strip() or None
     extra_pl = []
     with pg.connect() as c:    # ademas, una columna por cada criterio elegido en la pantalla (filtro o agrupar), con el valor de cada item
         for pl in dict.fromkeys(_csv(planes_sel)):
             nom = c.execute(text("SELECT nombre FROM ddmrp.criterio_plan WHERE plan_id = :p"), {"p": pl}).scalar()
             if nom is None or _norm(nom) in ("CATEGORIA", "LINEA") and _norm(nom) in por_plan:
                 continue
-            mapa = dict(c.execute(text("SELECT ic.producto_id, cr.nombre FROM ddmrp.item_criterio ic JOIN ddmrp.criterio cr "
-                                       "ON cr.plan_id = ic.plan_id AND cr.criterio_id = ic.criterio_id WHERE ic.plan_id = :p"), {"p": pl}).all())
+            mapa = {(e, pr): nm for e, pr, nm in c.execute(text("SELECT ic.empresa, ic.producto_id, cr.nombre FROM ddmrp.item_criterio ic JOIN ddmrp.criterio cr "
+                                       "ON cr.plan_id = ic.plan_id AND cr.criterio_id = ic.criterio_id WHERE ic.plan_id = :p"), {"p": pl}).all()}
             for it in items:
-                it["crit_" + pl] = (mapa.get(it["producto_id"]) or "").strip() or None
+                it["crit_" + pl] = (mapa.get((it["empresa"], it["producto_id"])) or "").strip() or None
             extra_pl.append({"t": nom.strip().capitalize(), "k": "crit_" + pl, "w": 24})
     extra = [{"t": "Nombre laboratorio", "k": "lab_nombre", "w": 28}]
     if "CATEGORIA" in por_plan:
@@ -337,7 +339,7 @@ def exportar(nivel: str = "item", criterio: str = "margen", meses: int = 12, cor
     m = cl.matriz(items)
     vis = _filtrar_salida(items, abc, xyz)
     vis.sort(key=lambda i: (cl.ORDEN_ABC.index(i["abc"]), i["puesto"] or 10**9, i["producto_id"]))
-    cols = [c for c in COLS if nivel == "tienda_item" or c["k"] not in ("empresa", "bodega_id", "bodega_nombre")]
+    cols = [c for c in COLS if nivel == "tienda_item" or c["k"] not in ("bodega_id", "bodega_nombre")]
     extra = _nombres_para_excel(vis, planes)
     i_lab = next(i for i, c in enumerate(cols) if c["k"] == "laboratorio")
     cols = cols[:i_lab + 1] + extra + cols[i_lab + 1:]

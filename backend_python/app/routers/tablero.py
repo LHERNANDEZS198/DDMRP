@@ -54,7 +54,7 @@ def _q_base(user, emp: list[str]) -> tuple[str, dict]:
     w, pw = filtro_sql_permisos(user, "s.bodega_id", "mi.categoria")
     fe, pe = _fe("s", emp)
     return (f"""FROM ddmrp.sugerencias_cedi s JOIN ddmrp.item_compra ic ON ic.empresa = s.empresa AND ic.producto_id = s.producto_id
-                LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = s.producto_id LEFT JOIN ddmrp.laboratorio lb ON lb.codigo = mi.categoria
+                LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = s.empresa AND mi.producto_id = s.producto_id LEFT JOIN ddmrp.laboratorio lb ON lb.empresa = mi.empresa AND lb.codigo = mi.categoria
                 WHERE s.ejecucion_id = {ULTIMA} AND {w} AND {COMPRABLE}{fe}""", pw | pe)
 
 
@@ -110,7 +110,7 @@ def _vencidas(c, cfg, t: int, emp: list[str]) -> list[dict]:
 def _rit(c, t: int, emp: list[str]) -> list[dict]:
     fe, pe = _fe("a", emp)
     return _filas(c, f"""SELECT a.empresa, a.producto_id, mi.descripcion, a.bodega_id, a.documento, a.saldo::float8 AS saldo, (current_date - a.fecha)::int AS dias
-                         FROM ddmrp.rit_alerta a LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = a.producto_id
+                         FROM ddmrp.rit_alerta a LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = a.empresa AND mi.producto_id = a.producto_id
                          WHERE {_comprable('a')}{fe} ORDER BY dias DESC, a.producto_id LIMIT :t""", {"t": t} | pe)
 
 
@@ -119,7 +119,7 @@ def _oc_abiertas(c, t: int, emp: list[str]) -> list[dict]:
     fe, pe = _fe("t", emp)
     return _filas(c, f"""SELECT t.empresa, t.documento, t.bodega_id, t.producto_id, mi.descripcion, COALESCE(lb.nombre, mi.categoria, '') AS laboratorio, t.cantidad::float8 AS cantidad,
                                 t.fecha_oc::text AS fecha_oc, t.fecha_esperada::text AS fecha_esperada, (current_date - t.fecha_esperada)::int AS dias_atraso
-                         FROM ddmrp.transitos t LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = t.producto_id LEFT JOIN ddmrp.laboratorio lb ON lb.codigo = mi.categoria
+                         FROM ddmrp.transitos t LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = t.empresa AND mi.producto_id = t.producto_id LEFT JOIN ddmrp.laboratorio lb ON lb.empresa = mi.empresa AND lb.codigo = mi.categoria
                          WHERE t.documento LIKE 'OC-%' AND {_comprable('t')}{fe} ORDER BY t.fecha_esperada NULLS LAST, t.documento, t.producto_id LIMIT :t""", {"t": t} | pe)
 
 
@@ -212,7 +212,7 @@ def tablero(fresco: bool = False, empresa: str | None = None, user=Depends(requi
                                 WHERE estado = 'creada' AND creado > now() - make_interval(days => :d){fo} GROUP BY proveedor_nombre ORDER BY 3 DESC LIMIT 8""", {"d": dias} | po)
         por_lab = _filas(c, f"""SELECT COALESCE(lb.nombre, mi.categoria, '(sin laboratorio)') AS laboratorio, sum(l.cantidad * l.costo)::float8 AS valor
                                FROM ddmrp.orden_compra_linea l JOIN ddmrp.orden_compra o ON o.id = l.oc_id
-                               LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = l.producto_id LEFT JOIN ddmrp.laboratorio lb ON lb.codigo = mi.categoria
+                               LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = o.empresa AND mi.producto_id = l.producto_id LEFT JOIN ddmrp.laboratorio lb ON lb.empresa = mi.empresa AND lb.codigo = mi.categoria
                                WHERE o.estado = 'creada' AND o.creado > now() - make_interval(days => :d){foo} GROUP BY 1 ORDER BY 2 DESC LIMIT 8""", {"d": dias} | poo)
     marca("6_cumplimiento")
     # lo que ve la pantalla Diagnostico para esta llamada: calculo = las necesidades completas (bloque 1); SQL = el resto; y el tiempo de cada bloque en el detalle

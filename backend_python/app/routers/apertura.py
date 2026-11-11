@@ -100,14 +100,14 @@ def _armar(c, p: Plan) -> tuple[list[dict], dict]:
         if n < p.base_meses:
             avisos.append(f"La espejo solo tiene {n} mes(es) cerrado(s) con venta: se promedia sobre esos {n}, no sobre {p.base_meses}.")
         datos = c.execute(text("""SELECT v.producto_id, sum(v.cantidad)::float8 / :n AS base, mi.descripcion, mi.categoria AS lab, (mi.producto_id IS NOT NULL) AS en_maestro
-                                  FROM ddmrp.ventas_mensual v LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = v.producto_id
+                                  FROM ddmrp.ventas_mensual v LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = v.empresa AND mi.producto_id = v.producto_id
                                   WHERE v.empresa = :e AND v.bodega_id = :b AND v.mes BETWEEN :d AND :h
                                   GROUP BY v.producto_id, mi.producto_id, mi.descripcion, mi.categoria HAVING sum(v.cantidad) > 0"""),
                           {"n": n, "e": emp, "b": esp, "d": desde, "h": hasta}).mappings().all()
         resumen.update({"meses_base": n, "desde": desde, "hasta": hasta})
     else:
         datos = c.execute(text("""SELECT pr.producto_id, pr.pronostico::float8 AS base, mi.descripcion, mi.categoria AS lab, (mi.producto_id IS NOT NULL) AS en_maestro
-                                  FROM ddmrp.pronostico pr LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = pr.producto_id
+                                  FROM ddmrp.pronostico pr LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = pr.empresa AND mi.producto_id = pr.producto_id
                                   WHERE pr.empresa = :e AND pr.bodega_id = :b AND pr.pronostico > 0"""), {"e": emp, "b": esp}).mappings().all()
         if not datos:
             raise HTTPException(400, "La tienda espejo no tiene pronostico cargado en el maestro")
@@ -196,7 +196,7 @@ def aplicar(a: Aplicar, user=Depends(requiere("cargar_maestros"))):
             if not por_id:
                 raise HTTPException(400, "No hay items con pronostico mayor que cero")
             ids = sorted(por_id)
-            ok = {r[0] for r in c.execute(text("SELECT producto_id FROM ddmrp.maestro_item WHERE producto_id = ANY(:p)"), {"p": ids})}
+            ok = {r[0] for r in c.execute(text("SELECT producto_id FROM ddmrp.maestro_item WHERE empresa = :em AND producto_id = ANY(:p)"), {"p": ids, "em": emp})}
             falta = [i for i in ids if i not in ok]
             if falta:
                 raise HTTPException(400, f"{len(falta)} item(s) no estan en el maestro de items, p.ej. {falta[:5]}")

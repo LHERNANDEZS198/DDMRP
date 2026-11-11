@@ -124,7 +124,7 @@ function ConfigTabla({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
     const conocidas = new Set([...def.llave, ...def.editable, 'descripcion', 'bodega_nombre', 'costo', 'estado', 'clase_calc', 'clase', 'venta', 'venta_prom', 'pct_venta', 'pct_acum', ...(def.lectura ?? []).map(c => c.k)])
     const extra: ColDef[] = def.clave === 'items' && rows[0]
       ? Object.keys(rows[0]).filter(k => !conocidas.has(k)).map(k => ({ field: k, headerName: k, width: 190 })) : []
-    const ed2 = def.clave === 'items-compras' ? ed.map(c => c.field === 'cotizacion' ? { ...c, headerName: 'Cotización manual', headerTooltip: 'Solo si quieres pisar la cotización de Siesa. Vacía = se usa la de Siesa', width: 150 } : c.field === 'unidad_pedido' ? { ...c, headerName: 'Unidad de pedido', width: 140 } : c.field === 'unidad_empaque' ? { ...c, headerName: 'Unidad de empaque', width: 150 } : c.field === 'moq' ? { ...c, headerName: 'MOQ (u.)', width: 110, headerTooltip: 'Cantidad mínima de compra en unidades (por defecto 1). Si el pedido queda por debajo, se sube a este mínimo al múltiplo de pedido' } : c) : def.clave === 'bitacora' ? ed.map(c => c.field === 'descripcion' ? { ...c, headerName: 'Tienda (nombre)', width: 240 } : c) : def.clave === 'items' ? ed.map(c => c.field === 'categoria' ? { ...c, headerName: 'Laboratorio (código)', width: 150 } : c.field === 'descripcion' ? { ...c, width: 300 } : c) : ed
+    const ed2 = def.clave === 'items-compras' ? ed.map(c => ayudaItemCompra(c)) : def.clave === 'bitacora' ? ed.map(c => c.field === 'descripcion' ? { ...c, headerName: 'Tienda (nombre)', width: 240 } : c) : def.clave === 'items' ? ed.map(c => c.field === 'categoria' ? { ...c, headerName: 'Laboratorio (código)', width: 150 } : c.field === 'descripcion' ? { ...c, width: 300 } : c) : ed
     const costo: ColDef[] = def.clave === 'items' ? [{ field: 'costo', headerName: 'Costo promedio', type: 'numericColumn', width: 140,
       valueFormatter: p => p.value == null ? '' : '$' + Math.round(p.value).toLocaleString('es-CO'), headerTooltip: 'Costo promedio por instalación (lo trae el ETL desde Siesa). Solo lectura.' }] : []
     const est: ColDef[] = def.clave === 'items' ? [{ field: 'estado', headerName: 'Estado Siesa', width: 120, headerTooltip: 'Estado del item en Siesa (extensión del item). Solo lectura; sin dato = activo.' }] : []
@@ -137,7 +137,7 @@ function ConfigTabla({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
       { field: 'pct_acum', headerName: '% acumulado', type: 'numericColumn', width: 120, headerTooltip: 'Suma del % de la venta de esta tienda y de todas las que venden más que ella. Con él se corta A / B / C.', valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(1) + ' %' }] : []
     // columnas de solo lectura que declara el maestro (p.ej. items de compras: laboratorio, línea, exhibición, costo, proveedor)
     const lect: ColDef[] = (def.lectura ?? []).map((c): ColDef => {
-      const base = { field: c.k, headerName: c.t, headerTooltip: 'Solo lectura (viene de Siesa)' }
+      const base = { field: c.k, headerName: c.t, headerTooltip: (def.clave === 'items-compras' && AYUDA_LECTURA_COMPRA[c.k]) || 'Solo lectura (viene de Siesa)' }
       if (['costo', 'cotizacion_siesa', 'costo_compra', 'costo_otro', 'ultimo_costo'].includes(c.k))
         return { ...base, type: 'numericColumn', width: 130, valueFormatter: (p: any) => p.value == null ? '' : '$' + Math.round(p.value).toLocaleString('es-CO') }
       if (c.k === 'iva_tasa') return { ...base, type: 'numericColumn', width: 120, valueFormatter: (p: any) => p.value == null ? '' : Number(p.value).toLocaleString('es-CO', { maximumFractionDigits: 2 }) + '%',
@@ -147,12 +147,13 @@ function ConfigTabla({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
     const todas = [...llave, ...desc, ...ed2.map(c => def.clave === 'clase-tienda' && c.field === 'clase_manual' ? { ...c, headerName: 'Clase fija (A/B/C)', width: 150, headerTooltip: 'Opcional: escribe A, B o C para forzar la clase de esta tienda sin importar su venta. Vacía = se usa la calculada.' } : c), ...clasT, ...lect, ...costo, ...est, ...extra]
     if (def.clave === 'proveedores') {   // NIT y nombre fijos a la izquierda; la empresa y la sucursal van después
       const g = (f: string) => todas.find(c => c.field === f) as ColDef
-      const nit: ColDef = { ...g('proveedor_id'), headerName: 'NIT', width: 130, pinned: 'left', checkboxSelection: pCarga && !def.sin_reemplazo, headerCheckboxSelection: pCarga && !def.sin_reemplazo }
-      const nom: ColDef = { ...g('nombre'), headerName: 'Proveedor', width: 280, pinned: 'left' }
+      const nit: ColDef = { ...g('proveedor_id'), headerName: 'NIT', width: 130, pinned: 'left', headerTooltip: 'NIT del proveedor en Siesa. No se edita.', checkboxSelection: pCarga && !def.sin_reemplazo, headerCheckboxSelection: pCarga && !def.sin_reemplazo }
+      const nom: ColDef = { ...g('nombre'), headerName: 'Proveedor', width: 280, pinned: 'left', headerTooltip: 'Razón social del proveedor (viene de Siesa). Si la cambias aquí, solo cambia como se ve en DDMRP.' }
       const resto: ColDef[] = todas.filter(c => c.field !== 'proveedor_id' && c.field !== 'nombre').map(c => ({ ...c, pinned: undefined, checkboxSelection: undefined, headerCheckboxSelection: undefined,
         ...(c.field === 'frecuencia' ? { headerName: 'Frecuencia de compra (d)', width: 170, headerTooltip: 'Cada cuántos días se le compra a este proveedor: define el tamaño de la zona verde del CEDI (vacío = el general de Configuración de compras, 15 días)' } : {}),
         ...(c.field === 'cond_pago' ? { headerName: 'Condición de pago', width: 150, headerTooltip: 'Código de Siesa que lleva la OC (ej. C30). Se pre-llena con la de la última OC del proveedor y lo que escribas no se pisa; sin ella no se crea la OC' } : {}),
-        ...(c.field === 'leadtime' ? { headerName: 'Lead time (d)', width: 120, headerTooltip: 'Días que tarda en llegar lo que se le pide (vacío = el del ítem o el general, 8 días)' } : {}) }))
+        ...(c.field === 'leadtime' ? { headerName: 'Lead time (d)', width: 120, headerTooltip: 'Días que tarda en llegar lo que se le pide (vacío = el del ítem o el general, 8 días)' } : {}),
+        ...(AYUDA_PROVEEDOR[c.field as string] ?? {}) }))
       return [nit, nom, ...resto]
     }
     return todas
@@ -209,8 +210,8 @@ function ConfigTabla({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
   const traerItems = async () => {
     try {
       setMsg('Trayendo los items de Siesa con todos sus criterios… puede tardar un par de minutos')
-      const r = await conProgreso(setMsg, () => api('/admin/sincronizar-items', { method: 'POST' }))
-      const a = r['05'] ?? r['21'] ?? {}
+      const r = await conProgreso(setMsg, () => api('/admin/sincronizar-items?empresa=' + empresa, { method: 'POST' }))
+      const a = r[empresa] ?? r['05'] ?? r['21'] ?? {}
       setMsg(`Items traídos de Siesa: ${a.items ?? 0} items` + (a.eliminados ? ` (${a.eliminados} viejos eliminados)` : '') + ` · `+ `${a.criterios ?? 0} asignaciones de criterio en ${a.planes ?? 0} criterios`)
       if (sel === 'items') cargar()
     } catch (x: any) { setMsg('Error: ' + x.message) }
@@ -219,7 +220,7 @@ function ConfigTabla({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
     if (!(await confirmar('Traer las ventas por mes de Siesa', 'Reemplaza la ventana de meses (los meses anteriores no se tocan). Puede tardar varios minutos.', { si: 'Traer ventas' }))) return
     try {
       setMsg('Trayendo las ventas por mes de Siesa… puede tardar varios minutos')
-      const r = await conProgreso(setMsg, () => api('/admin/sincronizar-ventas', { method: 'POST' }))
+      const r = await conProgreso(setMsg, () => api('/admin/sincronizar-ventas?empresa=' + empresa, { method: 'POST' }))
       const n = (r.ventas_05 ?? 0) + (r.ventas_21 ?? 0)
       setMsg(`Ventas traídas de Siesa: ${n.toLocaleString()} filas desde ${r.meses_desde}`)
       if (sel === 'ventas-mensual') cargar()
@@ -450,6 +451,48 @@ function ConfigTabla({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
       </Dialog>
       <Aviso msg={msg} onClose={() => setMsg('')} />
     </Box>)
+}
+
+// Proveedores: ayuda (tooltip) de cada columna editable. Frecuencia y condición de pago ya tienen la suya más abajo.
+const AYUDA_PROVEEDOR: Record<string, { headerName?: string; width?: number; headerTooltip: string }> = {
+  empresa: { headerTooltip: 'Empresa de Siesa: 05 Funat, 21 Stores. Cada proveedor se configura por separado en cada empresa.' },
+  sucursal: { headerTooltip: 'Sucursal del proveedor en Siesa (001 por defecto). Un mismo NIT puede tener varias sucursales, cada una con sus propios datos.' },
+  leadtime: { headerName: 'Lead time (d)', width: 120, headerTooltip: 'Días que tarda en llegar lo que se le pide. Al calcular el CEDI manda primero el del item (maestro «Lead time del CEDI»), luego este del proveedor y, si no hay ninguno, el general. «Aplicar configuración sugerida» puede proponerlo según el historial de OC.' },
+  email_para: { headerName: 'Correo(s) para la OC', width: 230, headerTooltip: 'Correo(s) del proveedor a donde se envía su orden de pedido. Varios separados por «;». Sin correo, el proveedor sale en Necesidades de compra marcado «Sin correo» y no se le puede montar la OC.' },
+  email_cc: { headerName: 'Con copia (CC)', width: 200, headerTooltip: 'Correo(s) que reciben copia de la orden de pedido (por ejemplo el negociador o contabilidad). Varios separados por «;». Opcional.' },
+  activo: { headerName: 'Activo', width: 100, headerTooltip: '1 = se le compra con normalidad. 0 = proveedor inactivo: sus items siguen saliendo en Necesidades de compra pero marcados «Proveedor inactivo» (alerta, para no montarle OC). Acepta 1/0 o sí/no; vacío = activo.' },
+  redondeo: { headerName: 'Redondeo', width: 120, headerTooltip: 'Cómo se lleva la cantidad a pedir al múltiplo de la Unidad de pedido de cada item: arriba (por defecto), cercano o abajo. Ejemplo con unidad 12 y el buffer pide 40: arriba = 48, cercano = 36, abajo = 36. El MOQ del item siempre sube hacia arriba.' },
+  pedido_minimo: { headerName: 'Pedido mínimo ($)', width: 150, headerTooltip: 'Valor mínimo (sin IVA) que acepta el proveedor por OC. Si el total de lo que se le va a pedir queda por debajo, sale «Bajo el pedido mínimo». Por defecto solo es una alerta; si en Configuración de compras pedido_minimo_bloquea = 1, ese proveedor no se muestra. Vacío o 0 = sin mínimo.' },
+  pedir_verde: { headerName: 'Pedir en verde (1/0)', width: 150, headerTooltip: '1 = pedirle también cuando el CEDI está en zona verde, hasta el tope verde (compras más grandes y menos frecuentes). 0 = no. Vacío = rige la regla general «Pedir también en zona verde» de Reglas de compras. «Aplicar configuración sugerida» lo puede proponer.' },
+  factor_tor: { headerName: 'Colchón zona roja (×)', width: 160, headerTooltip: 'Para proveedores que no surten completo o se atrasan: multiplica la zona roja del CEDI (1 o más) y por eso se pide antes y más. Ejemplo: 1,25 = zona roja 25 % más grande. Vacío = sin cambio. «Aplicar configuración sugerida» lo calcula del historial de OC.' },
+  contacto: { headerName: 'Contacto', width: 150, headerTooltip: 'Persona de contacto en el proveedor. Solo informativo.' },
+  telefono: { headerName: 'Teléfono', width: 130, headerTooltip: 'Teléfono del proveedor o del contacto. Solo informativo.' },
+  notas: { headerName: 'Notas', width: 220, headerTooltip: 'Notas internas de compras sobre el proveedor (condiciones, horarios, recomendaciones). Solo informativo.' },
+}
+// Items de compras: encabezado y ayuda (tooltip) de cada columna editable. Los ejemplos usan los mismos números que el cálculo de Necesidades de compra (routers/compras.py).
+const AYUDA_ITEM_COMPRA: Record<string, { headerName: string; width: number; headerTooltip: string }> = {
+  activo: { headerName: 'Activo', width: 100, headerTooltip: '1 = el item se compra y aparece en Necesidades de compra. 0 = no se compra (descontinuado, lo hace otra empresa, etc.): no sale aunque el buffer lo pida. Acepta 1/0 o sí/no.' },
+  cotizacion: { headerName: 'Cotización manual', width: 150, headerTooltip: 'Precio unitario con el que se valora el pedido. Llénalo solo si quieres pisar el precio de Siesa. Vacía = se usa, en este orden: la cotización de Siesa, el último costo de compra. La columna «Costo a usar» muestra cuál queda.' },
+  unidad_pedido: { headerName: 'Unidad de pedido', width: 140, headerTooltip: 'Múltiplo en que el proveedor permite pedir este item (ej. 12 = solo de a docenas; por defecto 1 = sin restricción). La cantidad a pedir se redondea a un múltiplo de este número; hacia arriba, salvo que el proveedor tenga otro redondeo en Maestros → Proveedores. Ejemplo: el buffer pide 50 y la unidad es 12 → se pide 60. Si editas la cantidad a mano y no es múltiplo, el pedido sale con alerta.' },
+  unidad_empaque: { headerName: 'Unidad de empaque', width: 150, headerTooltip: 'Unidades que trae una caja o empaque (por defecto 1). Es un dato de referencia: hoy NO cambia la cantidad a pedir ni la OC; lo que ajusta el pedido es la Unidad de pedido. Si el proveedor solo vende cajas completas, pon el mismo número aquí y en Unidad de pedido.' },
+  moq: { headerName: 'MOQ (u.)', width: 110, headerTooltip: 'Mínimo de compra de este item, en unidades (por defecto 1). Si el buffer pide algo mayor que 0 pero menor al MOQ, se sube al MOQ (llevado hacia arriba al múltiplo de la Unidad de pedido) y sale la alerta «Subió al MOQ». Si no hay necesidad no se pide nada. Ejemplo: MOQ 100, unidad 12, el buffer pide 30 → se pide 108. Es por item; el pedido mínimo del proveedor (total en $) se configura en Proveedores. Si editas la cantidad por debajo del MOQ, solo sale una alerta, no se bloquea.' },
+}
+const ayudaItemCompra = (c: ColDef): ColDef => { const a = AYUDA_ITEM_COMPRA[c.field as string]; return a ? { ...c, ...a } : c }
+// Items de compras, columnas de solo lectura: qué significa cada una
+const AYUDA_LECTURA_COMPRA: Record<string, string> = {
+  laboratorio: 'Laboratorio del item en Siesa (criterio del plan de laboratorios). Solo lectura.',
+  categoria: 'Criterio del plan 001 de Siesa: 0001 Productos Funat, 0002 Productos de terceros, 0003 Maquila Funat. Solo lectura.',
+  linea: 'Línea del item en Siesa. Solo lectura.',
+  exhibicion: 'Exhibición del item en Siesa. Solo lectura.',
+  costo: 'Costo promedio del item en Siesa. Solo lectura.',
+  cotizacion_siesa: 'Precio de la última cotización vigente al proveedor en Siesa. Solo lectura.',
+  cotizacion_vigencia: 'Desde cuándo rige la cotización de Siesa. Solo lectura.',
+  ultimo_costo: 'Costo de la última compra (entrada) de este item. Se usa solo si no hay cotización manual ni de Siesa. Solo lectura.',
+  ultimo_costo_fecha: 'Fecha de esa última compra. Solo lectura.',
+  costo_compra: 'Precio unitario con el que se valora el pedido: la cotización manual, si no la de Siesa, si no el último costo de compra. Solo lectura (para cambiarlo usa «Cotización manual»).',
+  origen_costo: 'De dónde sale el «Costo a usar»: Manual, Cotización (Siesa) o Última compra.',
+  proveedor: 'NIT del proveedor al que se le compra este item (el de la cotización o última compra). Solo lectura.',
+  proveedor_nombre: 'Nombre del proveedor al que se le compra este item. Solo lectura.',
 }
 
 /** Maestros DDMRP: sin `?maestro=` se ve el home de tarjetas con buscador; con él, la tabla de ese maestro. Compras abre directo la tabla. */

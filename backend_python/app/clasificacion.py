@@ -28,10 +28,10 @@ def agregar(filas: list[dict], nivel: str) -> list[dict]:
         raise ValueError(f"nivel debe ser uno de {list(NIVELES)}")
     grupos: dict[tuple, dict] = {}
     for r in filas:
-        k = (r.get("empresa"), r["bodega_id"], r["producto_id"]) if nivel == "tienda_item" else (r["producto_id"],)
+        k = (r.get("empresa"), r["bodega_id"], r["producto_id"]) if nivel == "tienda_item" else (r.get("empresa"), r["producto_id"])   # el mismo codigo puede ser otro item en la otra empresa
         g = grupos.get(k)
         if g is None:
-            g = grupos[k] = {"producto_id": r["producto_id"], "empresa": r.get("empresa") if nivel == "tienda_item" else None, "bodega_id": r["bodega_id"] if nivel == "tienda_item" else None,
+            g = grupos[k] = {"producto_id": r["producto_id"], "empresa": r.get("empresa"), "bodega_id": r["bodega_id"] if nivel == "tienda_item" else None,
                              "bodega_nombre": r.get("bodega_nombre") if nivel == "tienda_item" else None,
                              "descripcion": r.get("descripcion"), "laboratorio": r.get("laboratorio"), "costo": r.get("costo"),
                              "cant": 0.0, "valor": 0.0, "inventario": 0.0, "inv_prom": 0.0, "dias_hist": 0, "_dias_tot": 0, "_dias_cero": 0, "adu": 0.0, "primer_mes": None, "tiendas": 0,

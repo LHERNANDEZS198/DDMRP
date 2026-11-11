@@ -15,7 +15,7 @@ from ..etl.reportes_compras import config as cfg_rep, sincronizar_reportes_compr
 from ..security import asignaciones, requiere
 
 router = APIRouter(prefix="/compras/reportes", tags=["compras"], dependencies=[Depends(requiere("ver_control_compras"))])
-ULTIMA = "(SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok')"
+ULTIMA = "ANY (SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok' GROUP BY empresa)"   # la ultima corrida buena de CADA empresa (sus filas solo existen bajo su propia corrida)
 TOPE_FILAS = 20000
 
 
@@ -57,11 +57,11 @@ class Filtros:
 
     def base(self, tabla: str, con_un: bool = False, con_prov: bool = False) -> tuple[str, str, dict]:
         joins = f"""FROM {tabla} x
-            LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = x.producto_id
-            LEFT JOIN ddmrp.laboratorio lb ON lb.codigo = mi.categoria
-            LEFT JOIN ddmrp.item_criterio ic1 ON ic1.producto_id = x.producto_id AND ic1.plan_id = :plan_cat
+            LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = x.empresa AND mi.producto_id = x.producto_id
+            LEFT JOIN ddmrp.laboratorio lb ON lb.empresa = mi.empresa AND lb.codigo = mi.categoria
+            LEFT JOIN ddmrp.item_criterio ic1 ON ic1.empresa = x.empresa AND ic1.producto_id = x.producto_id AND ic1.plan_id = :plan_cat
             LEFT JOIN ddmrp.criterio cr1 ON cr1.plan_id = ic1.plan_id AND cr1.criterio_id = ic1.criterio_id
-            LEFT JOIN ddmrp.item_criterio ic3 ON ic3.producto_id = x.producto_id AND ic3.plan_id = :plan_acc
+            LEFT JOIN ddmrp.item_criterio ic3 ON ic3.empresa = x.empresa AND ic3.producto_id = x.producto_id AND ic3.plan_id = :plan_acc
             LEFT JOIN ddmrp.criterio cr3 ON cr3.plan_id = ic3.plan_id AND cr3.criterio_id = ic3.criterio_id"""
         w, p = ["TRUE"], dict(self.p)
         if self.emp:
@@ -79,7 +79,7 @@ class Filtros:
         if self.q:
             w.append("(x.producto_id ILIKE :q OR mi.descripcion ILIKE :q)"); p["q"] = f"%{self.q}%"
         for i, (pl, crs) in enumerate(self.crit.items()):
-            w.append(f"EXISTS (SELECT 1 FROM ddmrp.item_criterio icx{i} WHERE icx{i}.producto_id = x.producto_id AND icx{i}.plan_id = :cp{i} AND icx{i}.criterio_id = ANY(:cc{i}))")
+            w.append(f"EXISTS (SELECT 1 FROM ddmrp.item_criterio icx{i} WHERE icx{i}.empresa = x.empresa AND icx{i}.producto_id = x.producto_id AND icx{i}.plan_id = :cp{i} AND icx{i}.criterio_id = ANY(:cc{i}))")
             p[f"cp{i}"] = pl; p[f"cc{i}"] = crs
         if con_un and self.un:
             w.append("x.unidad_negocio = ANY(:un)"); p["un"] = self.un
@@ -109,15 +109,17 @@ def opciones(empresa: str | None = None, user=Depends(requiere("ver_control_comp
     emp = f.emp or ["05"]
     with pg.connect() as c:
         lab_w, lab_p = ("AND mi.categoria = ANY(:perm)", {"perm": f.perm}) if f.perm is not None else ("", {})
-        labs = _filas(c, f"""SELECT DISTINCT mi.categoria AS id, COALESCE(lb.nombre, mi.categoria) AS nombre FROM ddmrp.maestro_item mi
-                             LEFT JOIN ddmrp.laboratorio lb ON lb.codigo = mi.categoria WHERE COALESCE(mi.categoria, '') <> '' {lab_w} ORDER BY 2""", lab_p)
+        if f.emp:   # los items son de cada empresa: las listas son las de la empresa elegida
+            lab_w += " AND mi.empresa = ANY(:emp_l)"; lab_p = {**lab_p, "emp_l": f.emp}
+        labs = _filas(c, f"""SELECT DISTINCT mi.categoria AS id, COALESCE(mi.categoria || ' - ' || NULLIF(lb.nombre, ''), mi.categoria) AS nombre FROM ddmrp.maestro_item mi
+                             LEFT JOIN ddmrp.laboratorio lb ON lb.empresa = mi.empresa AND lb.codigo = mi.categoria WHERE COALESCE(mi.categoria, '') <> '' {lab_w} ORDER BY 1""", lab_p)
 
         def criterios(plan: str) -> list[dict]:
             return _filas(c, """SELECT cr.criterio_id AS id, COALESCE(cr.nombre, cr.criterio_id) AS nombre, COALESCE(cc.se_compra, 1) = 1 AS se_compra
                                 FROM ddmrp.criterio cr
                                 LEFT JOIN ddmrp.categoria_compra cc ON cc.empresa = :e AND cc.plan_id = cr.plan_id AND cc.criterio_id = cr.criterio_id
-                                WHERE cr.plan_id = :plan AND EXISTS (SELECT 1 FROM ddmrp.item_criterio ic WHERE ic.plan_id = cr.plan_id AND ic.criterio_id = cr.criterio_id)
-                                ORDER BY 1""", {"plan": plan, "e": emp[0]})
+                                WHERE cr.plan_id = :plan AND EXISTS (SELECT 1 FROM ddmrp.item_criterio ic WHERE ic.empresa = ANY(:emps) AND ic.plan_id = cr.plan_id AND ic.criterio_id = cr.criterio_id)
+                                ORDER BY 1""", {"plan": plan, "e": emp[0], "emps": f.emp or ["05", "21"]})
         cats, accs = criterios(f.p["plan_cat"]), criterios(f.p["plan_acc"])
         # los datos de las listas son los de la empresa elegida en la barra (vacio = ambas)
         pe = {"emp": f.emp} if f.emp else {}
@@ -130,8 +132,8 @@ def opciones(empresa: str | None = None, user=Depends(requiere("ver_control_comp
         crit_rows = c.execute(text("""SELECT ic.plan_id, COALESCE(p.nombre, ic.plan_id), ic.criterio_id, COALESCE(cr.nombre, ic.criterio_id), count(*)
                                       FROM ddmrp.item_criterio ic LEFT JOIN ddmrp.criterio_plan p ON p.plan_id = ic.plan_id
                                       LEFT JOIN ddmrp.criterio cr ON cr.plan_id = ic.plan_id AND cr.criterio_id = ic.criterio_id
-                                      WHERE COALESCE(p.en_filtros, 1) = 1 AND ic.plan_id <> ALL(:excl) GROUP BY 1, 2, 3, 4 ORDER BY 1, 3"""),
-                              {"excl": [f.p["plan_cat"], f.p["plan_acc"]]}).all()
+                                      WHERE COALESCE(p.en_filtros, 1) = 1 AND ic.plan_id <> ALL(:excl) AND ic.empresa = ANY(:emp_c) GROUP BY 1, 2, 3, 4 ORDER BY 1, 3"""),
+                              {"excl": [f.p["plan_cat"], f.p["plan_acc"]], "emp_c": f.emp or ["05", "21"]}).all()
     por_plan: dict[str, dict] = {}
     for pid, pnom, cid, cnom, n in crit_rows:
         por_plan.setdefault(pid, {"plan_id": pid, "nombre": pnom, "valores": []})["valores"].append({"id": cid, "nombre": cnom, "items": n})
@@ -157,7 +159,7 @@ def ventas_producto(empresa: str | None = None, desde: str | None = None, hasta:
                                    COALESCE(SUM(x.descuento), 0)::float8 AS descuento, COALESCE(SUM(x.costo), 0)::float8 AS costo {joins} WHERE {w}""", p)[0]
         serie = _filas(c, f"""SELECT x.periodo, SUM(x.cantidad)::float8 AS cantidad, SUM(x.valor_bruto - x.descuento)::float8 AS neta, SUM(x.costo)::float8 AS costo
                               {joins} WHERE {w} GROUP BY x.periodo ORDER BY x.periodo""", p)
-        filas = _filas(c, f"""SELECT {per}x.producto_id, mi.descripcion, COALESCE(lb.nombre, mi.categoria, '') AS laboratorio, COALESCE(cr1.nombre, ic1.criterio_id, '') AS categoria,
+        filas = _filas(c, f"""SELECT {per}x.producto_id, mi.descripcion, COALESCE(mi.categoria || ' - ' || NULLIF(lb.nombre, ''), mi.categoria, '') AS laboratorio, COALESCE(cr1.nombre, ic1.criterio_id, '') AS categoria,
                                      COALESCE(cr3.nombre, ic3.criterio_id, '') AS accion, SUM(x.cantidad)::float8 AS cantidad, SUM(x.valor_bruto)::float8 AS bruto,
                                      SUM(x.descuento)::float8 AS descuento, SUM(x.costo)::float8 AS costo
                               {joins} WHERE {w}
@@ -199,14 +201,14 @@ def proveedor(empresa: str | None = None, desde: str | None = None, hasta: str |
         compras = _filas(c, f"SELECT x.periodo, SUM(x.valor)::float8 AS compras, SUM(x.cantidad)::float8 AS cant_c {jc} WHERE {wc} GROUP BY 1", pc)
         otif = _filas(c, f"""SELECT x.periodo, AVG(x.completa)::float8 AS infull, AVG(x.a_tiempo)::float8 AS ontime, count(*)::int AS lineas {jo}
                              WHERE {wo} AND x.periodo IS NOT NULL GROUP BY 1""", po)
-        productos = _filas(c, f"""WITH ve AS (SELECT x.producto_id, SUM(x.cantidad) AS cant_v, SUM(x.valor_bruto - x.descuento) AS ventas, SUM(x.costo) AS costo {jv} WHERE {wv} GROUP BY 1),
-                                       co AS (SELECT x.producto_id, SUM(x.cantidad) AS cant_c, SUM(x.valor) AS compras {jc} WHERE {wc} GROUP BY 1)
-                                  SELECT COALESCE(ve.producto_id, co.producto_id) AS producto_id, mi.descripcion, COALESCE(lb.nombre, mi.categoria, '') AS laboratorio,
+        productos = _filas(c, f"""WITH ve AS (SELECT x.empresa, x.producto_id, SUM(x.cantidad) AS cant_v, SUM(x.valor_bruto - x.descuento) AS ventas, SUM(x.costo) AS costo {jv} WHERE {wv} GROUP BY 1, 2),
+                                       co AS (SELECT x.empresa, x.producto_id, SUM(x.cantidad) AS cant_c, SUM(x.valor) AS compras {jc} WHERE {wc} GROUP BY 1, 2)
+                                  SELECT COALESCE(ve.empresa, co.empresa) AS empresa, COALESCE(ve.producto_id, co.producto_id) AS producto_id, mi.descripcion, COALESCE(mi.categoria || ' - ' || NULLIF(lb.nombre, ''), mi.categoria, '') AS laboratorio,
                                          COALESCE(ve.cant_v, 0)::float8 AS cant_v, COALESCE(ve.ventas, 0)::float8 AS ventas, COALESCE(ve.costo, 0)::float8 AS costo,
                                          COALESCE(co.cant_c, 0)::float8 AS cant_c, COALESCE(co.compras, 0)::float8 AS compras
-                                  FROM ve FULL JOIN co ON co.producto_id = ve.producto_id
-                                  LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = COALESCE(ve.producto_id, co.producto_id)
-                                  LEFT JOIN ddmrp.laboratorio lb ON lb.codigo = mi.categoria
+                                  FROM ve FULL JOIN co ON co.empresa = ve.empresa AND co.producto_id = ve.producto_id
+                                  LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = COALESCE(ve.empresa, co.empresa) AND mi.producto_id = COALESCE(ve.producto_id, co.producto_id)
+                                  LEFT JOIN ddmrp.laboratorio lb ON lb.empresa = mi.empresa AND lb.codigo = mi.categoria
                                   ORDER BY COALESCE(co.compras, 0) + COALESCE(ve.ventas, 0) DESC, 1 LIMIT :lim""", pv | pc | {"lim": lim})
         provs = _filas(c, f"""WITH co AS (SELECT x.proveedor_id, max(x.proveedor_nombre) AS nombre, SUM(x.valor) AS compras, count(DISTINCT x.producto_id) AS items {jc} WHERE {wc} GROUP BY 1),
                                    ot AS (SELECT x.proveedor_id, AVG(x.completa) AS infull, AVG(x.a_tiempo) AS ontime, count(*) AS lineas {jo} WHERE {wo} GROUP BY 1)

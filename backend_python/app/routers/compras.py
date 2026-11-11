@@ -16,15 +16,15 @@ from ..orchestrator import recalcular_compras
 from ..security import usuario_actual, filtro_sql_permisos, requiere
 
 router = APIRouter(prefix="/compras", tags=["compras"], dependencies=[Depends(requiere("ver_compras"))])
-ULTIMA = "(SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok')"
+ULTIMA = "ANY (SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok' GROUP BY empresa)"   # la ultima corrida buena de CADA empresa (sus filas solo existen bajo su propia corrida)
 # categoria de compras = criterio del plan 001 de Siesa
-CAT_ID = "(SELECT ci.criterio_id FROM ddmrp.item_criterio ci WHERE ci.producto_id = s.producto_id AND ci.plan_id = '001' LIMIT 1)"
+CAT_ID = "(SELECT ci.criterio_id FROM ddmrp.item_criterio ci WHERE ci.empresa = s.empresa AND ci.producto_id = s.producto_id AND ci.plan_id = '001' LIMIT 1)"
 CAT_NOM = ("(SELECT CASE WHEN cr.nombre IS NULL THEN ci.criterio_id ELSE ci.criterio_id || ' · ' || cr.nombre END FROM ddmrp.item_criterio ci "
-           "LEFT JOIN ddmrp.criterio cr ON cr.plan_id = ci.plan_id AND cr.criterio_id = ci.criterio_id WHERE ci.producto_id = s.producto_id AND ci.plan_id = '001' LIMIT 1)")
+           "LEFT JOIN ddmrp.criterio cr ON cr.plan_id = ci.plan_id AND cr.criterio_id = ci.criterio_id WHERE ci.empresa = s.empresa AND ci.producto_id = s.producto_id AND ci.plan_id = '001' LIMIT 1)")
 # se compra si la categoria no esta marcada como produccion propia en esa empresa (sin fila o vacio = se compra)
 # mercancia en consignacion = criterio 0001 del plan 007 de Siesa (esos items van en OC aparte, con el indicador de consignacion prendido)
 CONSIG_PLAN, CONSIG_CRIT = "007", "0001"
-CONSIG = f"(EXISTS (SELECT 1 FROM ddmrp.item_criterio cn WHERE cn.producto_id = s.producto_id AND cn.plan_id = '{CONSIG_PLAN}' AND cn.criterio_id = '{CONSIG_CRIT}'))"
+CONSIG = f"(EXISTS (SELECT 1 FROM ddmrp.item_criterio cn WHERE cn.empresa = s.empresa AND cn.producto_id = s.producto_id AND cn.plan_id = '{CONSIG_PLAN}' AND cn.criterio_id = '{CONSIG_CRIT}'))"
 COMPRABLE = f"COALESCE((SELECT cc.se_compra FROM ddmrp.categoria_compra cc WHERE cc.empresa = s.empresa AND cc.plan_id = '001' AND cc.criterio_id = {CAT_ID}), 1) <> 0"
 CONFIG_DEFECTO = {"pedido_minimo_bloquea": 0.0, "poca_historia_meses": 3.0, "frecuencia_defecto": 15.0}
 
@@ -105,15 +105,15 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
       LEFT JOIN ddmrp.compras_cantidad cm ON cm.empresa = s.empresa AND cm.producto_id = s.producto_id
       LEFT JOIN ddmrp.compras_costo ccs ON ccs.empresa = s.empresa AND ccs.producto_id = s.producto_id
       LEFT JOIN ddmrp.proveedor pv ON pv.empresa = ic.empresa AND pv.proveedor_id = ic.proveedor_id AND pv.sucursal = ic.sucursal
-      LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = s.producto_id
-      LEFT JOIN ddmrp.laboratorio lb ON lb.codigo = mi.categoria
+      LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = s.empresa AND mi.producto_id = s.producto_id
+      LEFT JOIN ddmrp.laboratorio lb ON lb.empresa = mi.empresa AND lb.codigo = mi.categoria
       LEFT JOIN hist h ON h.empresa = s.empresa AND h.producto_id = s.producto_id
       LEFT JOIN tiendas tn ON tn.empresa = s.empresa AND tn.producto_id = s.producto_id"""
     p["mes12"] = _mes_hace(11)
     prov_cond = _csv(proveedores)
     with pg.connect() as c:
         cfg = _config(c)
-        ej = c.execute(text(f"SELECT id, fecha_calculo FROM ddmrp.ejecucion_motor WHERE id = {ULTIMA}")).mappings().first()
+        ej = c.execute(text(f"SELECT id, fecha_calculo FROM ddmrp.ejecucion_motor WHERE id = {ULTIMA} ORDER BY id LIMIT 1")).mappings().first()
         con_prov = " AND ".join(cond + ["ic.proveedor_id IS NOT NULL"] + (["ic.proveedor_id = ANY(:f_prov)"] if prov_cond else []))
         if prov_cond:
             p["f_prov"] = prov_cond
@@ -122,7 +122,7 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
         sin = [dict(r) for r in c.execute(text(f"{base} WHERE {sin_cond} ORDER BY s.pct_buffer NULLS FIRST, s.producto_id LIMIT 1000"), p).mappings()]
         n_sin = c.execute(text(f"SELECT count(*) FROM ddmrp.sugerencias_cedi s JOIN ddmrp.item_compra ic ON ic.empresa = s.empresa AND ic.producto_id = s.producto_id "
                                f"LEFT JOIN ddmrp.compras_cantidad cm ON cm.empresa = s.empresa AND cm.producto_id = s.producto_id "
-                               f"LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = s.producto_id WHERE {sin_cond}"), {k: v for k, v in p.items() if k != "mes12"}).scalar()
+                               f"LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = s.empresa AND mi.producto_id = s.producto_id WHERE {sin_cond}"), {k: v for k, v in p.items() if k != "mes12"}).scalar()
     truncado = len(filas) > limite
     filas = filas[:limite]
     poca = cfg.get("poca_historia_meses", 3.0)
@@ -289,11 +289,11 @@ def guardar_costo(b: CostoIn, user=Depends(requiere("gestionar_compras"))):
 
 
 @router.post("/recalcular")
-def recalcular(user=Depends(requiere("gestionar_compras"))):
+def recalcular(empresa: str | None = None, user=Depends(requiere("gestionar_compras"))):
     """Recalcula las necesidades de compra SIN correr el motor completo: inventario fresco y OC abiertas del CEDI + buffer del CEDI. No toca las tiendas ni los despachos;
     las cantidades editadas se conservan."""
     try:
-        return recalcular_compras("manual", usuario_de(user))
+        return recalcular_compras("manual", usuario_de(user), empresa if empresa in ("05", "21") else None)
     except RuntimeError as e:
         raise HTTPException(400, str(e))
 

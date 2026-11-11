@@ -134,7 +134,7 @@ def aplicar_a_ejecucion(c, eid: int) -> dict:
                            "LEFT JOIN ddmrp.v_tienda_clase tc ON tc.empresa = s.empresa AND tc.bodega_id = s.bodega_id "
                            "WHERE s.ejecucion_id = :e AND s.cantidad_sugerida > 0 AND NOT s.condenado AND s.empresa = ANY(CAST(:em AS text[])) "
                            "AND NOT EXISTS (SELECT 1 FROM ddmrp.maestro_item mi JOIN ddmrp.laboratorio_sin_envio ls ON ls.laboratorio = mi.categoria "
-                           "                WHERE mi.producto_id = s.producto_id) "
+                           "                WHERE mi.empresa = s.empresa AND mi.producto_id = s.producto_id) "
                            f"AND {solo_activos('s')} "
                            "AND (cardinality(CAST(:d AS int[])) = 0 OR (s.empresa, s.bodega_id) IN (SELECT empresa, bodega_id FROM ddmrp.bodega_dia WHERE dia = ANY(CAST(:d AS int[]))))"),
                      {"e": eid, "d": dias, "em": d["empresas"]}).all()

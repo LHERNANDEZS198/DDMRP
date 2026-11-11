@@ -273,7 +273,7 @@ export default function Necesidades() {
   const recalcular = async () => {
     setRecalculando(true); setErr(''); setMsg('')
     try {
-      await conProgreso(setMsg, () => api('/compras/recalcular', { method: 'POST' }))
+      await conProgreso(setMsg, () => api('/compras/recalcular' + (empresa.length === 1 ? `?empresa=${empresa[0]}` : ''), { method: 'POST' }))
       setMsg('Necesidades recalculadas con el inventario y las órdenes de compra de ahora. Las cantidades que editaste se conservaron.')
       recargar()
     } catch (e: any) { setMsg(''); setErr(e.message) } finally { setRecalculando(false) }

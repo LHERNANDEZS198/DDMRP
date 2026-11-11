@@ -49,7 +49,7 @@ def vista(bodegas: str | None = None, labs: str | None = None, q: str | None = N
           user=Depends(requiere("ver_auditoria"))):
     w, p = _donde(user, bodegas, labs, q, zonas, dia, empresa, crit, solo_sugerido)
     with pg.connect() as c:
-        ej = c.execute(text(f"SELECT id, fecha_calculo FROM ddmrp.ejecucion_motor WHERE id = {ULTIMA}")).mappings().first()
+        ej = c.execute(text(f"SELECT id, fecha_calculo FROM ddmrp.ejecucion_motor WHERE id = {ULTIMA} ORDER BY id LIMIT 1")).mappings().first()
         total = c.execute(text(f"SELECT count(*) {FROM} WHERE {w}"), p).scalar()
         filas = [dict(r) for r in c.execute(text(f"""
             SELECT s.empresa, s.bodega_id, s.producto_id, mi.descripcion, s.adu::float8 adu, s.forecast::float8 forecast, s.lead_time::float8 lead_time,
@@ -64,7 +64,7 @@ def vista(bodegas: str | None = None, labs: str | None = None, q: str | None = N
 def _generar_excel(user, w: str, p: dict, limite: int, origen: str = ""):
     """Arma el Excel (con formulas) de las filas que cumplen `w` en la ultima corrida."""
     with pg.connect() as c:
-        ej = c.execute(text(f"SELECT id, fecha_calculo FROM ddmrp.ejecucion_motor WHERE id = {ULTIMA}")).mappings().first()
+        ej = c.execute(text(f"SELECT id, fecha_calculo FROM ddmrp.ejecucion_motor WHERE id = {ULTIMA} ORDER BY id LIMIT 1")).mappings().first()
         if not ej:
             return Response("No hay una corrida del motor", status_code=404)
         total = c.execute(text(f"SELECT count(*) {FROM} WHERE {w}"), p).scalar()

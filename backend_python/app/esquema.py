@@ -254,6 +254,85 @@ def empresa_en_llaves() -> None:
             log.exception("No se pudo meter la empresa en la llave de %s", tabla)
 
 
+# Items por empresa: Funat (05) y Stores (21) tienen catalogos distintos (el mismo codigo puede ser otro producto), asi que el maestro de items, sus criterios,
+# el costo, la regla de reposicion por item y los nombres de laboratorio llevan empresa. tabla -> llave nueva
+ITEMS_POR_EMPRESA = {
+    "maestro_item": ("empresa", "producto_id"),
+    "item_criterio": ("empresa", "producto_id", "plan_id"),
+    "costo_item": ("empresa", "producto_id"),
+    "reposicion_item": ("empresa", "producto_id"),
+    "laboratorio": ("empresa", "codigo"),
+}
+
+
+def items_por_empresa() -> None:
+    """Migracion idempotente: lo que hoy hay (un solo juego de filas) se COPIA a las dos empresas; el siguiente «Traer items» de cada empresa
+    deja en cada una solo lo suyo (borra lo que no esta en su Siesa)."""
+    for tabla, llave in ITEMS_POR_EMPRESA.items():
+        try:
+            with pg.begin() as c:
+                if not c.execute(text("SELECT to_regclass(:t)"), {"t": f"ddmrp.{tabla}"}).scalar():
+                    continue
+                en_pk = c.execute(text("""SELECT count(*) FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+                                          WHERE i.indrelid = CAST(:t AS regclass) AND i.indisprimary AND a.attname = 'empresa'"""), {"t": f"ddmrp.{tabla}"}).scalar()
+                if en_pk:
+                    continue
+                c.execute(text(f"ALTER TABLE ddmrp.{tabla} ADD COLUMN IF NOT EXISTS empresa TEXT"))
+                cols = [r[0] for r in c.execute(text("SELECT column_name FROM information_schema.columns WHERE table_schema = 'ddmrp' AND table_name = :t "
+                                                     "ORDER BY ordinal_position"), {"t": tabla})]
+                otras = [k for k in cols if k != "empresa"]
+                lista = ", ".join(otras)
+                c.execute(text(f"CREATE TEMP TABLE _mig AS SELECT {lista} FROM ddmrp.{tabla} WHERE empresa IS NULL"))
+                c.execute(text(f"DELETE FROM ddmrp.{tabla} WHERE empresa IS NULL"))
+                pk = c.execute(text("SELECT conname FROM pg_constraint WHERE conrelid = CAST(:t AS regclass) AND contype = 'p'"), {"t": f"ddmrp.{tabla}"}).scalar()
+                if pk:
+                    c.execute(text(f'ALTER TABLE ddmrp.{tabla} DROP CONSTRAINT "{pk}"'))
+                c.execute(text(f"ALTER TABLE ddmrp.{tabla} ALTER COLUMN empresa SET NOT NULL"))
+                c.execute(text(f"ALTER TABLE ddmrp.{tabla} ADD PRIMARY KEY ({', '.join(llave)})"))
+                c.execute(text(f"INSERT INTO ddmrp.{tabla} (empresa, {lista}) SELECT e.e, m.* FROM _mig m, (VALUES ('05'), ('21')) e(e) ON CONFLICT DO NOTHING"))
+                c.execute(text("DROP TABLE _mig"))
+                log.warning("Items por empresa aplicado a %s", tabla)
+        except Exception:
+            log.exception("No se pudo separar por empresa la tabla %s", tabla)
+    try:   # indice del plan/criterio (la tabla ya lleva empresa)
+        with pg.begin() as c:
+            c.execute(text("CREATE INDEX IF NOT EXISTS idx_itemcrit_emp_plan ON ddmrp.item_criterio (empresa, plan_id, criterio_id)"))
+    except Exception:
+        log.exception("No se pudo crear el indice de criterios")
+
+
+def motor_por_empresa() -> None:
+    """Migracion idempotente: cada corrida del motor es de UNA empresa (columna empresa). Las corridas anteriores (que cubrian las dos) se parten en una
+    corrida por empresa: sus sugerencias pasan a la corrida de su empresa, asi la ultima de cada una queda completa y no se pisan entre si."""
+    try:
+        with pg.begin() as c:
+            c.execute(text("ALTER TABLE ddmrp.ejecucion_motor ADD COLUMN IF NOT EXISTS empresa TEXT"))
+            c.execute(text("CREATE INDEX IF NOT EXISTS idx_ejec_emp ON ddmrp.ejecucion_motor (empresa, estado, id DESC)"))
+            c.execute(text("UPDATE ddmrp.ejecucion_motor SET empresa = '05' WHERE empresa IS NULL AND estado <> 'ok'"))
+            viejas = c.execute(text("SELECT id, fecha_calculo, inicio, fin, estado, filas, detalle FROM ddmrp.ejecucion_motor "
+                                    "WHERE empresa IS NULL ORDER BY id")).all()
+            for oid, fecha, ini, fin, est, filas, det in viejas:
+                emps = [r[0] for r in c.execute(text("SELECT empresa FROM ddmrp.sugerencias_envio WHERE ejecucion_id = :o UNION "
+                                                      "SELECT empresa FROM ddmrp.sugerencias_cedi WHERE ejecucion_id = :o ORDER BY 1"), {"o": oid})]
+                for e in emps:
+                    nid = c.execute(text("INSERT INTO ddmrp.ejecucion_motor (fecha_calculo, inicio, fin, estado, filas, detalle, empresa) "
+                                         "VALUES (:f, :i, :n, :s, :l, :d, :e) RETURNING id"),
+                                    {"f": fecha, "i": ini, "n": fin, "s": est, "l": None, "d": det, "e": e}).scalar_one()
+                    n1 = c.execute(text("UPDATE ddmrp.sugerencias_envio SET ejecucion_id = :n WHERE ejecucion_id = :o AND empresa = :e"), {"n": nid, "o": oid, "e": e}).rowcount
+                    c.execute(text("UPDATE ddmrp.sugerencias_cedi SET ejecucion_id = :n WHERE ejecucion_id = :o AND empresa = :e"), {"n": nid, "o": oid, "e": e})
+                    c.execute(text("UPDATE ddmrp.ejecucion_motor SET filas = :l WHERE id = :n"), {"l": n1, "n": nid})
+                still = c.execute(text("SELECT (SELECT count(*) FROM ddmrp.sugerencias_envio WHERE ejecucion_id = :o) + "
+                                       "(SELECT count(*) FROM ddmrp.sugerencias_cedi WHERE ejecucion_id = :o)"), {"o": oid}).scalar()
+                if still:
+                    c.execute(text("UPDATE ddmrp.ejecucion_motor SET empresa = '05' WHERE id = :o"), {"o": oid})
+                else:
+                    c.execute(text("DELETE FROM ddmrp.ejecucion_motor WHERE id = :o"), {"o": oid})
+            if viejas:
+                log.warning("Corridas del motor separadas por empresa: %s corrida(s) anteriores", len(viejas))
+    except Exception:
+        log.exception("No se pudo separar la corrida del motor por empresa")
+
+
 COLS_SUG = ("ejecucion_id, fecha_calculo, empresa, bodega_id, producto_id, adu, iv, forecast, lead_time, frecuencia, unidad_despacho, zrb, zrs, za, zv, "
             "tor, toy, tog, toy_aj, tog_aj, inventario, en_transito, demanda_calificada, flujo_neto, pct_buffer, zona, vectorizacion, cantidad_sugerida, "
             "condenado, cantidad_necesaria, stock_cedi, regla_objetivo, estado, cantidad_aprobada")
@@ -586,6 +665,8 @@ def asegurar_esquema():
     except Exception:
         log.exception("No se pudo actualizar el esquema")
     empresa_en_llaves()
+    items_por_empresa()
+    motor_por_empresa()
     esquema_cedi()
     if nueva:
         cedi_y_co_iniciales()

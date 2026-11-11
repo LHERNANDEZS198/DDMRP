@@ -3,12 +3,13 @@ import { Alert, AlertTitle, Box, Button, CircularProgress } from '@mui/material'
 import { Link as RouterLink } from 'react-router-dom'
 import { api } from './api'
 import { useYo } from './Yo'
+import { useEmpresa } from './Empresa'
 
 type Problema = { tipo: 'etl' | 'motor'; estado: 'error' | 'interrumpido'; mensaje: string | null; inicio: string; origen: string; usuario: string | null }
 export type Salud = {
   en_curso: { tarea: string; mensaje: string; segundos: number } | null
   problemas: Problema[]
-  ultimo_motor_ok: { fecha: string; fin: string } | null
+  ultimo_motor_ok: { fecha: string; fin: string; empresa?: string } | null
   horas_sin_motor: number | null
   sin_corridas: boolean
 }
@@ -18,6 +19,7 @@ export const useSalud = () => useContext(SaludCtx)
 
 /** Consulta al servidor qué está corriendo y si la última corrida quedó a medias: cada 3 s mientras hay algo corriendo, cada 30 s si no. */
 export function SaludProvider({ children }: { children: ReactNode }) {
+  const { una } = useEmpresa()   // el aviso habla de la corrida de la empresa elegida (con «ambas», de la más vieja)
   const [salud, setSalud] = useState<Salud | null>(null)
   const [tic, setTic] = useState(0)
   const timer = useRef<number>()
@@ -26,12 +28,12 @@ export function SaludProvider({ children }: { children: ReactNode }) {
     let vivo = true
     const tomar = async () => {
       let sig = 30000
-      try { const s: Salud = await api('/admin/salud'); if (vivo) { setSalud(s); sig = s.en_curso ? 3000 : 30000 } } catch { /* sin conexión: reintenta */ }
+      try { const s: Salud = await api('/admin/salud' + (una ? `?empresa=${una}` : '')); if (vivo) { setSalud(s); sig = s.en_curso ? 3000 : 30000 } } catch { /* sin conexión: reintenta */ }
       if (vivo) timer.current = window.setTimeout(tomar, sig)
     }
     tomar()
     return () => { vivo = false; window.clearTimeout(timer.current) }
-  }, [tic])
+  }, [tic, una])
   return <SaludCtx.Provider value={{ salud, enCurso: !!salud?.en_curso, refrescar }}>{children}</SaludCtx.Provider>
 }
 

@@ -9,9 +9,9 @@ from .control import _filtros
 
 router = APIRouter(prefix="/alertas", tags=["alertas"], dependencies=[Depends(requiere("ver_alertas")), Depends(fijar_modo)])
 
-ULTIMA = "(SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok')"
-BASE = "FROM ddmrp.v_sugerencias_informe s LEFT JOIN ddmrp.maestro_item mi ON mi.producto_id = s.producto_id"
-BASE_C = BASE + " LEFT JOIN ddmrp.costo_item ci ON ci.producto_id = s.producto_id"
+ULTIMA = "ANY (SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok' GROUP BY empresa)"   # la ultima corrida buena de CADA empresa (sus filas solo existen bajo su propia corrida)
+BASE = "FROM ddmrp.v_sugerencias_informe s LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = s.empresa AND mi.producto_id = s.producto_id"
+BASE_C = BASE + " LEFT JOIN ddmrp.costo_item ci ON ci.empresa = s.empresa AND ci.producto_id = s.producto_id"
 # unidades que sobran (sobre el tope verde ajustado, solo en sobrestock) o faltan (distancia al tope verde, en las demas zonas); x costo promedio = plata
 SOBRAN = "CASE WHEN s.zona::text = 'EXCESO' THEN GREATEST(s.flujo_neto - GREATEST(s.tog_aj, 0), 0) ELSE 0 END"
 FALTAN = "CASE WHEN s.zona::text <> 'EXCESO' THEN GREATEST(s.tog_aj - s.flujo_neto, 0) ELSE 0 END"

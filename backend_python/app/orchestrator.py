@@ -11,6 +11,8 @@ from . import progreso, bitacora
 
 log = logging.getLogger("orq")
 
+EMPRESAS = ("05", "21")   # Funat y Stores: cada una tiene su propia corrida del motor (ejecucion_motor.empresa) y su propia ultima corrida
+
 
 def resumir_inventario_mensual(c, fecha):
     """Resume por mes (suma de inventario, dias y dias en cero de cada tienda x item) la foto diaria: es la base del inventario promedio del GMROI.
@@ -31,8 +33,9 @@ def guardar_historia(eid: int):
     """Foto diaria liviana de la corrida (reemplaza la del mismo dia) y limpieza: la historia dura `retener_dias`; el detalle
     completo de sugerencias (que es pesado) solo se conserva `DETALLE_DIAS` dias y una corrida por dia."""
     with pg.begin() as c:
-        fecha = c.execute(text("SELECT fecha_calculo FROM ddmrp.ejecucion_motor WHERE id = :e"), {"e": eid}).scalar()
-        c.execute(text("DELETE FROM ddmrp.buffer_historia WHERE fecha = :f"), {"f": fecha})
+        fecha, emp = c.execute(text("SELECT fecha_calculo, empresa FROM ddmrp.ejecucion_motor WHERE id = :e"), {"e": eid}).one()
+        # la foto del dia se rehace SOLO de la empresa que corrio: la de la otra empresa no se toca
+        c.execute(text("DELETE FROM ddmrp.buffer_historia WHERE fecha = :f AND empresa = :m"), {"f": fecha, "m": emp})
         cols = "empresa, bodega_id, producto_id, zona, tor, toy_aj, tog_aj, inventario, flujo_neto, pct_buffer"
         c.execute(text(f"INSERT INTO ddmrp.buffer_historia (fecha, {cols}) SELECT :f, {cols} FROM ddmrp.sugerencias_envio WHERE ejecucion_id = :e"),
                   {"f": fecha, "e": eid})
@@ -43,10 +46,10 @@ def guardar_historia(eid: int):
         c.execute(text(f"""INSERT INTO ddmrp.buffer_historia (fecha, {cols})
                            SELECT e.fecha_calculo, {', '.join('s.' + x.strip() for x in cols.split(','))}
                            FROM (SELECT DISTINCT ON (fecha_calculo) id, fecha_calculo FROM ddmrp.ejecucion_motor
-                                 WHERE estado = 'ok' ORDER BY fecha_calculo, id DESC) e
+                                 WHERE estado = 'ok' AND empresa = :m ORDER BY fecha_calculo, id DESC) e
                            JOIN ddmrp.sugerencias_envio s ON s.ejecucion_id = e.id
-                           WHERE e.fecha_calculo NOT IN (SELECT DISTINCT fecha FROM ddmrp.buffer_historia)
-                           ON CONFLICT DO NOTHING"""))
+                           WHERE e.fecha_calculo NOT IN (SELECT DISTINCT fecha FROM ddmrp.buffer_historia WHERE empresa = :m)
+                           ON CONFLICT DO NOTHING"""), {"m": emp})
         # items fuera del maestro (no pasan el filtro de criterios, ej. materia prima) que quedaron en fotos de corridas anteriores
         for sql in purgas_fuera_del_maestro():
             c.execute(text(sql))
@@ -55,14 +58,16 @@ def guardar_historia(eid: int):
         c.execute(text("DELETE FROM ddmrp.buffer_historia WHERE fecha < current_date - :d"), {"d": int(dias) if dias else 180})
         c.execute(text("""DELETE FROM ddmrp.sugerencias_envio s USING ddmrp.ejecucion_motor e
                           WHERE s.ejecucion_id = e.id AND s.ejecucion_id <> :e
+                            AND e.id NOT IN (SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado = 'ok' GROUP BY empresa)
                             AND (e.fecha_calculo < current_date - :d OR e.id NOT IN
-                                 (SELECT DISTINCT ON (fecha_calculo) id FROM ddmrp.ejecucion_motor WHERE estado = 'ok'
-                                  ORDER BY fecha_calculo, id DESC) AND e.fecha_calculo < current_date)"""), {"e": eid, "d": DETALLE_DIAS})
+                                 (SELECT DISTINCT ON (empresa, fecha_calculo) id FROM ddmrp.ejecucion_motor WHERE estado = 'ok'
+                                  ORDER BY empresa, fecha_calculo, id DESC) AND e.fecha_calculo < current_date)"""), {"e": eid, "d": DETALLE_DIAS})
         c.execute(text("""DELETE FROM ddmrp.sugerencias_cedi s USING ddmrp.ejecucion_motor e
                           WHERE s.ejecucion_id = e.id AND s.ejecucion_id <> :e
+                            AND e.id NOT IN (SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado = 'ok' GROUP BY empresa)
                             AND (e.fecha_calculo < current_date - :d OR e.id NOT IN
-                                 (SELECT DISTINCT ON (fecha_calculo) id FROM ddmrp.ejecucion_motor WHERE estado = 'ok'
-                                  ORDER BY fecha_calculo, id DESC) AND e.fecha_calculo < current_date)"""), {"e": eid, "d": DETALLE_DIAS})
+                                 (SELECT DISTINCT ON (empresa, fecha_calculo) id FROM ddmrp.ejecucion_motor WHERE estado = 'ok'
+                                  ORDER BY empresa, fecha_calculo, id DESC) AND e.fecha_calculo < current_date)"""), {"e": eid, "d": DETALLE_DIAS})
 
     actualizar_estadisticas()
 
@@ -95,18 +100,32 @@ def heredar_enviadas(c, eid: int) -> int:
     return r.rowcount or 0
 
 
-def ejecutar_motor(fecha: date | None = None, origen: str = "manual", usuario: str | None = None) -> dict:
+def ejecutar_motor(fecha: date | None = None, origen: str = "manual", usuario: str | None = None, empresa: str | None = None) -> dict:
+    """Corre el motor de UNA empresa (05 Funat / 21 Stores): su corrida, su ultima corrida y su historia, sin tocar las de la otra.
+    Sin `empresa` corre las dos, una tras otra (solo lo usa el nocturno); si una falla la otra se corre igual y el error queda en el resultado."""
     with progreso.tarea("Motor", "Motor listo"), bitacora.registrar("motor", origen, usuario) as r:
-        r.resumen = res = _ejecutar_motor(fecha)
+        if empresa:
+            r.resumen = res = {**_ejecutar_motor(fecha, empresa), "empresa": empresa}
+            return res
+        res = {}
+        for e in EMPRESAS:
+            try:
+                res[e] = _ejecutar_motor(fecha, e)
+            except Exception as ex:
+                log.exception("Motor de la empresa %s fallo", e)
+                res[e] = {"error": str(ex)[-300:]}
+        r.resumen = res
+        if all("error" in v for v in res.values()):
+            raise RuntimeError("El motor fallo en las dos empresas: " + "; ".join(f"{k}: {v['error']}" for k, v in res.items()))
         return res
 
 
-def calcular_cedi(eid: int, fecha: date) -> dict:
+def calcular_cedi(eid: int, fecha: date, empresa: str = "") -> dict:
     """Buffer del CEDI (PT001) con el mismo motor Rust en modo cedi: escribe en ddmrp.sugerencias_cedi, que despacho, reparto y planos no leen.
     Si falla NO tumba la corrida de las tiendas: se anota y los Informes en modo CEDI quedan sin la corrida de hoy."""
     try:
         out = subprocess.run(
-            [settings.core_bin, "--ejecucion-id", str(eid), "--fecha", fecha.isoformat(), "--modo", "cedi"],
+            [settings.core_bin, "--ejecucion-id", str(eid), "--fecha", fecha.isoformat(), "--modo", "cedi", "--empresa", empresa or ""],
             env={**os.environ, "DATABASE_URL": settings.pg_dsn}, capture_output=True, text=True, timeout=300, check=True)
         res = json.loads(out.stdout.strip().splitlines()[-1])
         try:   # cuantas tiendas alimentan la demanda de cada CEDI: 0 seria un CEDI sin rotacion (y un buffer engañoso)
@@ -121,17 +140,17 @@ def calcular_cedi(eid: int, fecha: date) -> dict:
         return {"ok": False, "error": ((getattr(e, "stderr", None) or str(e))[-300:])}
 
 
-def _ejecutar_motor(fecha: date | None = None) -> dict:
+def _ejecutar_motor(fecha: date | None = None, empresa: str = "05") -> dict:
     fecha = fecha or date.today()
-    progreso.avance("Leyendo el inventario fresco del CEDI…")
-    cedi = refrescar_cedi()
-    progreso.avance("Calculando buffers con el motor Rust (varios minutos con todas las tiendas)…")
+    progreso.avance(f"Leyendo el inventario fresco del CEDI ({empresa})…")
+    cedi = refrescar_cedi(empresa)
+    progreso.avance(f"Calculando buffers de la empresa {empresa} con el motor Rust (varios minutos con todas las tiendas)…")
     with pg.begin() as c:
-        eid = c.execute(text("INSERT INTO ddmrp.ejecucion_motor (fecha_calculo) VALUES (:f) RETURNING id"),
-                        {"f": fecha}).scalar_one()
+        eid = c.execute(text("INSERT INTO ddmrp.ejecucion_motor (fecha_calculo, empresa) VALUES (:f, :m) RETURNING id"),
+                        {"f": fecha, "m": empresa}).scalar_one()
     try:
         out = subprocess.run(
-            [settings.core_bin, "--ejecucion-id", str(eid), "--fecha", fecha.isoformat()],
+            [settings.core_bin, "--ejecucion-id", str(eid), "--fecha", fecha.isoformat(), "--empresa", empresa],
             env={**os.environ, "DATABASE_URL": settings.pg_dsn},
             capture_output=True, text=True, timeout=600, check=True)
         res = json.loads(out.stdout.strip().splitlines()[-1])
@@ -139,7 +158,7 @@ def _ejecutar_motor(fecha: date | None = None) -> dict:
             c.execute(text("UPDATE ddmrp.ejecucion_motor SET fin=now(), estado='ok', filas=:n WHERE id=:i"),
                       {"n": res["filas"], "i": eid})
         progreso.avance("Calculando el buffer del CEDI…")
-        cedi_motor = calcular_cedi(eid, fecha)
+        cedi_motor = calcular_cedi(eid, fecha, empresa)
         progreso.avance("Repartiendo el inventario del CEDI entre las tiendas…")
         try:
             with pg.begin() as c:
@@ -166,26 +185,36 @@ def _ejecutar_motor(fecha: date | None = None) -> dict:
         raise
 
 
-def recalcular_compras(origen: str = "manual", usuario: str | None = None) -> dict:
+def recalcular_compras(origen: str = "manual", usuario: str | None = None, empresa: str | None = None) -> dict:
     """Recalcula SOLO el buffer del CEDI (lo que usa Necesidades de compra) sin correr el motor completo: inventario fresco del CEDI y ordenes de compra abiertas de Siesa,
     y el motor Rust en modo CEDI sobre la ultima corrida. No toca las tiendas, el reparto ni la matriz de despacho. Las cantidades editadas por compras se conservan."""
     with progreso.tarea("Compras", "Necesidades de compra recalculadas"), bitacora.registrar("compras", origen, usuario) as r:
-        r.resumen = res = _recalcular_compras()
+        if empresa:
+            r.resumen = res = _recalcular_compras(empresa)
+            return res
+        res = {}
+        for e in EMPRESAS:
+            try:
+                res[e] = _recalcular_compras(e)
+            except Exception as ex:
+                log.warning("Compras de la empresa %s no se recalcularon: %s", e, ex)
+                res[e] = {"error": str(ex)[-300:]}
+        r.resumen = res
         return res
 
 
-def _recalcular_compras() -> dict:
+def _recalcular_compras(empresa: str = "05") -> dict:
     from .etl.replicacion import refrescar_oc_cedi
     with pg.connect() as c:
-        ej = c.execute(text("SELECT id FROM ddmrp.ejecucion_motor WHERE estado = 'ok' ORDER BY id DESC LIMIT 1")).first()
+        ej = c.execute(text("SELECT id FROM ddmrp.ejecucion_motor WHERE estado = 'ok' AND empresa = :m ORDER BY id DESC LIMIT 1"), {"m": empresa}).first()
     if not ej:
-        raise RuntimeError("Aún no hay una corrida del motor: pídele a quien tenga el permiso que la corra una vez.")
+        raise RuntimeError(f"Aún no hay una corrida del motor de la empresa {empresa}: pídele a quien tenga el permiso que la corra una vez.")
     eid = ej[0]
     progreso.avance("Leyendo el inventario fresco del CEDI…")
-    cedi = refrescar_cedi()
+    cedi = refrescar_cedi(empresa)
     progreso.avance("Leyendo las órdenes de compra abiertas de Siesa…")
     try:
-        oc = refrescar_oc_cedi()
+        oc = refrescar_oc_cedi(empresa)
     except Exception as e:   # sin las OC el tránsito queda como estaba: se avisa pero se sigue
         log.exception("No se pudieron refrescar las OC abiertas")
         oc = {"error": str(e)[:200]}
@@ -193,7 +222,7 @@ def _recalcular_compras() -> dict:
     tmp = -eid   # se calcula aparte (id negativo) y solo si sale bien se cambia por el anterior: un fallo del motor no deja a compras sin buffer
     with pg.begin() as c:
         c.execute(text("DELETE FROM ddmrp.sugerencias_cedi WHERE ejecucion_id = :t"), {"t": tmp})
-    cm = calcular_cedi(tmp, date.today())
+    cm = calcular_cedi(tmp, date.today(), empresa)
     if not cm.get("ok", True) or "error" in cm:
         with pg.begin() as c:
             c.execute(text("DELETE FROM ddmrp.sugerencias_cedi WHERE ejecucion_id = :t"), {"t": tmp})
@@ -201,7 +230,7 @@ def _recalcular_compras() -> dict:
     with pg.begin() as c:
         c.execute(text("DELETE FROM ddmrp.sugerencias_cedi WHERE ejecucion_id = :e"), {"e": eid})
         c.execute(text("UPDATE ddmrp.sugerencias_cedi SET ejecucion_id = :e WHERE ejecucion_id = :t"), {"e": eid, "t": tmp})
-    return {"ejecucion_id": eid, "cedi": cedi, "oc": oc, "cedi_motor": cm}
+    return {"empresa": empresa, "ejecucion_id": eid, "cedi": cedi, "oc": oc, "cedi_motor": cm}
 
 
 def revisar_pipeline():
@@ -234,14 +263,14 @@ def revisar_pipeline():
     pipeline_nocturno("auto")
 
 
-def pipeline_nocturno(origen: str = "auto", usuario: str | None = None):
-    """Programado (origen 'auto') o lanzado a mano desde la pantalla (origen 'manual')."""
+def pipeline_nocturno(origen: str = "auto", usuario: str | None = None, empresa: str | None = None):
+    """Programado (origen 'auto', las dos empresas) o lanzado a mano desde la pantalla (origen 'manual'; con `empresa` solo esa, sin ella las dos)."""
     try:
         with progreso.tarea("ETL + motor", "ETL y motor listos"), bitacora.registrar("pipeline", origen, usuario):
             log.info("Pipeline: ETL")
-            etl = correr_etl(origen, usuario)
+            etl = correr_etl(origen, usuario, empresa)
             log.info("ETL listo: %s. Pipeline: motor", etl)
-            return {"etl": etl, **ejecutar_motor(None, origen, usuario)}
+            return {"etl": etl, "motor": ejecutar_motor(None, origen, usuario, empresa)}
     except progreso.Ocupado as e:   # otra corrida en curso: no se pisa, y queda anotado en el Log
         log.warning("Pipeline omitido: %s", e)
         bitacora.omitida("pipeline", origen, usuario, str(e))

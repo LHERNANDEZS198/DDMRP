@@ -11,9 +11,9 @@ from ..activos import solo_activos
 from ..security import usuario_actual, filtro_sql_permisos, exigir, requiere, empresas_permitidas
 
 router = APIRouter(prefix="/despacho", tags=["despacho"])
-ULTIMA = "(SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok')"
+ULTIMA = "ANY (SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok' GROUP BY empresa)"   # la ultima corrida buena de CADA empresa (sus filas solo existen bajo su propia corrida)
 # lo que NO se sugiere ni se envia: laboratorios sin envio (maestro) e items sin stock en el CEDI de su empresa
-SIN_ENVIO = "NOT EXISTS (SELECT 1 FROM ddmrp.maestro_item mi_x JOIN ddmrp.laboratorio_sin_envio ls_x ON ls_x.laboratorio = mi_x.categoria WHERE mi_x.producto_id = s.producto_id)"
+SIN_ENVIO = "NOT EXISTS (SELECT 1 FROM ddmrp.maestro_item mi_x JOIN ddmrp.laboratorio_sin_envio ls_x ON ls_x.laboratorio = mi_x.categoria WHERE mi_x.empresa = s.empresa AND mi_x.producto_id = s.producto_id)"
 CON_CEDI = "(s.stock_cedi IS NULL OR s.stock_cedi > 0)"
 ACTIVO = solo_activos("s")   # items inactivos o bloqueados en Siesa no se sugieren ni se envian (regla solo_items_activos)
 
@@ -56,9 +56,9 @@ def matriz(empresa: str, bodega_id: str | None = None, bodegas: str | None = Non
                      ci.costo::float8 AS costo, s.regla_objetivo, tc.clase AS clase_tienda,
                      (SELECT max(current_date - r.fecha) FROM ddmrp.rit_alerta r WHERE r.empresa = s.empresa AND r.producto_id = s.producto_id AND r.bodega_id = s.bodega_id) AS rit_dias,
                      (SELECT string_agg(split_part(r.documento, '-', 2) || '-' || split_part(r.documento, '-', 3) || ' (' || (current_date - r.fecha) || ' d, ' || round(r.saldo) || ' u)', ', ') FROM ddmrp.rit_alerta r WHERE r.empresa = s.empresa AND r.producto_id = s.producto_id AND r.bodega_id = s.bodega_id) AS rit_detalle
-              FROM ddmrp.sugerencias_envio s LEFT JOIN ddmrp.maestro_item mi USING (producto_id)
+              FROM ddmrp.sugerencias_envio s LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = s.empresa AND mi.producto_id = s.producto_id
                    LEFT JOIN ddmrp.v_tienda_clase tc ON tc.empresa = s.empresa AND tc.bodega_id = s.bodega_id
-                   LEFT JOIN ddmrp.costo_item ci ON ci.producto_id = s.producto_id
+                   LEFT JOIN ddmrp.costo_item ci ON ci.empresa = s.empresa AND ci.producto_id = s.producto_id
               WHERE {f} ORDER BY s.bodega_id, s.pct_buffer"""
     # Lo que se reparte de cada item (suma de lo sugerido a todas las tiendas de la empresa) se calcula aparte y se cruza aqui: dentro del mismo SELECT, con
     # estadisticas viejas Postgres repetia esa agregacion de ~400 mil filas por cada fila de la matriz (consultas de 20 minutos y 504).
@@ -133,8 +133,8 @@ def excel_pedido(req: ExcelPedido, user=Depends(requiere("ver_despacho"))):
     p.update(emp=req.empresa, k_b=[k[0] for k in llaves], k_p=[k[1] for k in llaves])
     with pg.connect() as c:
         datos = c.execute(text(f"""SELECT s.bodega_id, s.producto_id, mi.descripcion, mi.categoria AS laboratorio, ci.costo::float8 AS costo
-                                   FROM ddmrp.sugerencias_envio s LEFT JOIN ddmrp.maestro_item mi USING (producto_id)
-                                        LEFT JOIN ddmrp.costo_item ci ON ci.producto_id = s.producto_id
+                                   FROM ddmrp.sugerencias_envio s LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = s.empresa AND mi.producto_id = s.producto_id
+                                        LEFT JOIN ddmrp.costo_item ci ON ci.empresa = s.empresa AND ci.producto_id = s.producto_id
                                    WHERE s.ejecucion_id = {ULTIMA} AND s.empresa = :emp AND {w}
                                      AND (s.bodega_id, s.producto_id) IN (SELECT k.b, k.p FROM unnest(CAST(:k_b AS text[]), CAST(:k_p AS text[])) k(b, p))
                                    ORDER BY s.bodega_id, s.producto_id"""), p).all()
@@ -195,8 +195,8 @@ class Aprobacion(BaseModel):
 def aprobar(items: list[Aprobacion], user=Depends(requiere("aprobar_despacho"))):
     with pg.begin() as c:
         for it in items:
-            cat = c.execute(text("SELECT categoria FROM ddmrp.maestro_item WHERE producto_id=:p"),
-                            {"p": it.producto_id}).scalar()
+            cat = c.execute(text("SELECT categoria FROM ddmrp.maestro_item WHERE producto_id=:p AND (CAST(:em AS text) IS NULL OR empresa = :em) LIMIT 1"),
+                            {"p": it.producto_id, "em": it.empresa}).scalar()
             exigir(user, it.bodega_id, cat, "aprobacion" if it.aprobar else "edicion")
             c.execute(text("""UPDATE ddmrp.sugerencias_envio SET cantidad_aprobada=:q,
                               estado = CASE WHEN :ap THEN 'APROBADA'::ddmrp.estado_sugerencia ELSE estado END,
@@ -222,7 +222,7 @@ def desaprobar(items: list[Clave], user=Depends(requiere("aprobar_despacho"))):
     n = 0
     with pg.begin() as c:
         for it in items:
-            cat = c.execute(text("SELECT categoria FROM ddmrp.maestro_item WHERE producto_id=:p"), {"p": it.producto_id}).scalar()
+            cat = c.execute(text("SELECT categoria FROM ddmrp.maestro_item WHERE producto_id=:p AND (CAST(:em AS text) IS NULL OR empresa = :em) LIMIT 1"), {"p": it.producto_id, "em": it.empresa}).scalar()
             exigir(user, it.bodega_id, cat, "aprobacion")
             n += c.execute(text("""UPDATE ddmrp.sugerencias_envio SET estado='PENDIENTE'::ddmrp.estado_sugerencia, cantidad_aprobada=NULL,
                                    aprobado_por=:u, aprobado_en=now()
@@ -241,7 +241,7 @@ def tiendas_bajo_minimo(c, eid: int, bodegas: list[str] | None = None, empresa: 
     if minimo <= 0 or not hay:
         return {}, minimo, hay
     rows = c.execute(text("""SELECT s.bodega_id, COALESCE(SUM(COALESCE(s.cantidad_aprobada, s.cantidad_sugerida) * COALESCE(ci.costo, 0)), 0)::float8
-                             FROM ddmrp.sugerencias_envio s LEFT JOIN ddmrp.costo_item ci ON ci.producto_id = s.producto_id
+                             FROM ddmrp.sugerencias_envio s LEFT JOIN ddmrp.costo_item ci ON ci.empresa = s.empresa AND ci.producto_id = s.producto_id
                              WHERE s.ejecucion_id = :e AND s.estado = 'APROBADA' AND COALESCE(s.cantidad_aprobada, s.cantidad_sugerida) >= 0.5
                                AND (CAST(:bs AS text[]) IS NULL OR s.bodega_id = ANY(CAST(:bs AS text[]))) AND (CAST(:em AS text) IS NULL OR s.empresa = :em)
                              GROUP BY s.bodega_id"""), {"e": eid, "bs": bodegas or None, "em": empresa}).all()
@@ -272,9 +272,9 @@ def marcar_enviadas(req: MarcarReq, user=Depends(requiere("aprobar_despacho", "d
     """APROBADAS -> ENVIADAS sin bajar el plano (p.ej. el plano ya se subio a Siesa). Una tienda cuyo despacho vale menos que el
     minimo no se deja enviar: queda aprobada y se informa."""
     with pg.begin() as c:
-        eid = req.ejecucion_id or c.execute(text(f"SELECT {ULTIMA}")).scalar()
         if req.empresa not in ("05", "21"):
             raise HTTPException(400, "Elige la empresa (05 o 21)")
+        eid = req.ejecucion_id or c.execute(text("SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok' AND empresa = :emp"), {"emp": req.empresa}).scalar()
         tiendas = [r[0] for r in c.execute(text("""SELECT DISTINCT bodega_id FROM ddmrp.sugerencias_envio WHERE ejecucion_id = :e AND estado = 'APROBADA' AND empresa = :emp
                                                    AND (CAST(:bs AS text[]) IS NULL OR bodega_id = ANY(CAST(:bs AS text[])))"""),
                                       {"e": eid, "bs": req.bodegas or None, "emp": req.empresa}).all()]
@@ -308,9 +308,9 @@ class PlanoReq(BaseModel):
 def exportar_plano(req: PlanoReq, user=Depends(requiere("descargar_planos"))):
     """FASE 2: archivo plano para Siesa con las sugerencias APROBADAS (una requisicion RIT por bodega)."""
     with pg.begin() as c:
-        eid = req.ejecucion_id or c.execute(text("SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok'")).scalar()
         if req.empresa not in ("05", "21"):
             raise HTTPException(400, "Elige la empresa (05 o 21)")
+        eid = req.ejecucion_id or c.execute(text("SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok' AND empresa = :emp"), {"emp": req.empresa}).scalar()
         rows = c.execute(text(f"""SELECT s.bodega_id, s.producto_id, COALESCE(s.cantidad_aprobada, s.cantidad_sugerida) AS q,
                                         co.id_co
                                  FROM ddmrp.sugerencias_envio s
