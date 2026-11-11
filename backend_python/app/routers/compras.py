@@ -151,7 +151,7 @@ def _necesidades(user, empresa, proveedores, categorias, labs, zonas, q, limite:
         if f["costo_editado"]:
             ref = f["costo_calculado"]
             alertas.append("Costo editado" + (f" ({(costo / ref - 1) * 100:+.0f}% vs cotización)" if ref else " (sin cotización de referencia)"))
-        if f["meses_venta"] < poca: alertas.append(f"Poca historia ({f['meses_venta']} m)")
+        if f["meses_venta"] < poca_de(f["empresa"]): alertas.append(f"Poca historia ({f['meses_venta']} m)")
         if not f["prov_activo"]: alertas.append("Proveedor inactivo")
         if f["editada"]:
             alertas.append(f"Cantidad editada (el buffer pedía {round(f['qty_buffer']):,})".replace(",", "."))

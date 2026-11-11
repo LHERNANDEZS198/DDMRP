@@ -11,8 +11,10 @@ ESTADOS = {1: "Activo", 0: "Inactivo", 2: "Bloqueado"}
 def en_maestro(a: str = "s") -> str:
     """Fragmento WHERE: solo items del maestro DE SU EMPRESA (ddmrp.maestro_item = los que pasan el filtro de criterios de Siesa; un item de Funat no se
     muestra en Stores ni al reves). Lo que no esta ahi (materia prima, etc.) no sale ni se usa.
-    Una empresa con el maestro vacio (antes de su primer «Traer items») no filtra. Un item REC vale si su original esta."""
-    return (f"(NOT EXISTS (SELECT 1 FROM ddmrp.maestro_item mi_e WHERE mi_e.empresa = {a}.empresa) "
+    Una empresa con el maestro vacio (antes de su primer «Traer items») no filtra. Un item REC vale si su original esta.
+    La condicion de maestro vacio es NOT IN sobre una subconsulta sin correlacion (se evalua UNA vez); como NOT EXISTS correlacionado recorria el maestro entero
+    por cada fila de sugerencias (24 millones de lecturas, 50 s)."""
+    return (f"({a}.empresa NOT IN (SELECT DISTINCT mi_e.empresa FROM ddmrp.maestro_item mi_e) "
             f"OR EXISTS (SELECT 1 FROM ddmrp.maestro_item mi_m WHERE mi_m.empresa = {a}.empresa AND mi_m.producto_id = {a}.producto_id) "
             f"OR EXISTS (SELECT 1 FROM ddmrp.item_rec ir_m JOIN ddmrp.maestro_item mo_m ON mo_m.empresa = ir_m.empresa AND mo_m.producto_id = ir_m.original_id "
             f"WHERE ir_m.empresa = {a}.empresa AND ir_m.rec_id = {a}.producto_id))")
