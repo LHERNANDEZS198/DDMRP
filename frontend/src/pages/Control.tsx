@@ -193,7 +193,7 @@ export default function Control() {
     { field: 'verde', headerName: 'Verde', type: 'numericColumn', width: 85 },
     { field: 'exceso', headerName: 'Exceso', type: 'numericColumn', width: 90 },
     { field: 'no_aplica', headerName: 'No aplica', type: 'numericColumn', width: 100, headerTooltip: AYUDA['No aplica'] },
-    { field: 'agotado', headerName: 'Agotado', type: 'numericColumn', width: 100, headerTooltip: AYUDA['Agotado'], cellStyle: { fontWeight: 600 } },
+    { field: 'agotado', headerName: 'Agotado', type: 'numericColumn', width: 100, headerTooltip: AYUDA['Agotado'] },
     { field: 'pct_prom', headerName: '% buffer prom.', type: 'numericColumn', width: 130, valueFormatter: p => p.value == null ? '' : p.value + '%' },
     { field: 'a_pedir', headerName: 'A pedir', type: 'numericColumn', width: 100 },
     { field: 'unidades', headerName: 'Unidades sug.', type: 'numericColumn', width: 130, valueFormatter: p => Math.round(p.value).toLocaleString() },
