@@ -46,7 +46,7 @@ export const PANTALLAS = [
   { to: '/compras/reportes/ventas', req: ['ver_control_compras'] },
   { to: '/compras/reportes/proveedor', req: ['ver_control_compras'] },
   { to: '/compras/reportes/indicadores', req: ['ver_control_compras'] },
-  { to: '/compras/necesidades', req: ['ver_compras'] },
+  { to: '/compras/necesidades', req: ['ver_compras', 'gestionar_compras'] },
   { to: '/compras/maestros', req: ['ver_compras', 'cargar_maestros_compras'] },
   { to: '/compras/reglas', req: ['ver_compras', 'cargar_maestros_compras', 'editar_reglas_compras'] },
   { to: '/usuarios', req: ['admin_usuarios'] },

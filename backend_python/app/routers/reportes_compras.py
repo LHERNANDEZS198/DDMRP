@@ -208,6 +208,9 @@ def ventas_producto(empresa: str | None = None, desde: str | None = None, hasta:
         act = _actualizacion(c)
     for r in filas:
         neta = r["bruto"] - r["descuento"]
+        cant = r["cantidad"]
+        # unitarios del periodo: costo total / unidades y venta neta (ya sin descuento) / unidades; sin unidades vendidas (o devoluciones que las dejan en 0 o negativas) no hay unitario
+        r.update(costo_unit=(r["costo"] / cant) if cant and cant > 0 else None, precio_unit=(neta / cant) if cant and cant > 0 else None)
         r.update(neta=neta, rent=_pct(neta - r["costo"], neta), inv_cedi=inv_cedi.get(r["producto_id"]), inv_tiendas=inv_tiendas.get(r["producto_id"]), adu=adu.get(r["producto_id"]))
     for s in serie:
         s["rent"] = _pct(s["neta"] - s["costo"], s["neta"])

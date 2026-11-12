@@ -43,7 +43,7 @@ export const NAV = [
   { to: '/control', label: 'Informes', icon: <Insights />, vistas: true, req: ['ver_control', 'ver_alertas', 'ver_control_compras'] },
   { to: '/despacho', label: 'Matriz de despacho', icon: <LocalShipping />, req: ['ver_despacho'] },
   { to: '/auditoria', label: 'Auditoría', icon: <FactCheck />, req: ['ver_auditoria'] },
-  { to: '/compras/necesidades', label: 'Necesidades de compra', icon: <ShoppingBasket />, req: ['ver_compras'] },
+  { to: '/compras/necesidades', label: 'Necesidades de compra', icon: <ShoppingBasket />, req: ['ver_compras', 'gestionar_compras'] },
   { to: '/config', label: 'Maestros', icon: <Storage />, req: ['ver_maestros', 'cargar_maestros', 'sincronizar_siesa'] },
   { to: '/compras/maestros', label: 'Maestros compras', icon: <ShoppingCart />, req: ['ver_compras', 'cargar_maestros_compras'] },
   // lo que se agrupa en el menú «Config» (desplegable)

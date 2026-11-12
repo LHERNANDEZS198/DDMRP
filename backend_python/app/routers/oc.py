@@ -17,7 +17,7 @@ from ..security import requiere
 from ..reglas_empresa import compras, todas_compras
 from .compras import _necesidades
 
-router = APIRouter(prefix="/compras/oc", tags=["ordenes de compra"], dependencies=[Depends(requiere("ver_compras"))])
+router = APIRouter(prefix="/compras/oc", tags=["ordenes de compra"], dependencies=[Depends(requiere("ver_compras", "gestionar_compras"))])
 MAX_POR_ENVIO = 10
 ESPERA_INCIERTA = timedelta(minutes=3)       # una OC 'incierta' no se reenvia antes de esto, aunque Siesa aun no la muestre
 

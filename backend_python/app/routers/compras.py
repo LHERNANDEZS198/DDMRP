@@ -16,7 +16,7 @@ from ..reglas_empresa import todas_compras, todas_param
 from ..orchestrator import recalcular_compras
 from ..security import usuario_actual, filtro_sql_permisos, requiere
 
-router = APIRouter(prefix="/compras", tags=["compras"], dependencies=[Depends(requiere("ver_compras"))])
+router = APIRouter(prefix="/compras", tags=["compras"], dependencies=[Depends(requiere("ver_compras", "gestionar_compras"))])
 ULTIMA = "ANY (SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok' GROUP BY empresa)"   # la ultima corrida buena de CADA empresa (sus filas solo existen bajo su propia corrida)
 # categoria de compras = criterio del plan 001 de Siesa
 CAT_ID = "(SELECT ci.criterio_id FROM ddmrp.item_criterio ci WHERE ci.empresa = s.empresa AND ci.producto_id = s.producto_id AND ci.plan_id = '001' LIMIT 1)"

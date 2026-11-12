@@ -91,14 +91,16 @@ def usuario_actual(token: str = Depends(oauth2)) -> dict:
 PERMISOS = [
     ("ver_control", "Ver Control DDMRP (foto, cambios, tendencia)", "Consultar"),
     ("ver_alertas", "Ver alertas de zona roja", "Consultar"),
-    ("ver_control_compras", "Ver el informe Control compras (tablero de compras y sus detalles)", "Consultar"),
     ("ver_auditoria", "Auditar el cálculo (página Auditoría) y descargarlo a Excel con fórmulas, también desde la matriz de despacho", "Consultar"),
     ("ver_despacho", "Ver la matriz de despacho", "Despacho"),
     ("aprobar_despacho", "Aprobar / ajustar cantidades a despachar", "Despacho"),
     ("descargar_planos", "Descargar planos de Siesa", "Despacho"),
-    ("ver_compras", "Ver los informes y maestros de compras (CEDI, proveedores, órdenes de compra)", "Compras"),
-    ("cargar_maestros_compras", "Cargar / editar / eliminar en los maestros de compras", "Compras"),
-    ("gestionar_compras", "Editar las cantidades a pedir, recalcular las necesidades de compra y enviar órdenes de compra", "Compras"),
+    # Compras: tres niveles independientes. Informes (solo consulta de los reportes), Maestros (ver y editar) y Necesidades (ver y operar). `ver_compras` queda como el nivel
+    # de SOLO CONSULTA de necesidades y maestros (sin editar ni operar) para los perfiles que ya lo tenian: quitarlo les habria cerrado el acceso o dado de mas.
+    ("ver_control_compras", "Ver los informes de compras (Control compras, Ventas por producto, Indicadores y Proveedor / PT)", "Compras"),
+    ("cargar_maestros_compras", "Ver y editar los maestros de compras (CEDI, proveedores, cotizaciones, órdenes de compra)", "Compras"),
+    ("gestionar_compras", "Ver y operar las necesidades de compra (editar cantidades a pedir, recalcular y enviar órdenes de compra)", "Compras"),
+    ("ver_compras", "Solo consultar las necesidades y los maestros de compras (sin editar ni operar)", "Compras"),
     ("editar_reglas_compras", "Ver y editar las reglas de compras (Configuración de compras)", "Compras"),
     ("ver_maestros", "Ver y descargar los maestros", "Configurar"),
     ("cargar_maestros", "Cargar / editar / eliminar en los maestros", "Configurar"),

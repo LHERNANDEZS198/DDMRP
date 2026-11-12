@@ -5,6 +5,7 @@ import Tabla from '../Tabla'
 import { api } from '../api'
 import { Actualizacion, AvisoEmpresa, BarraFiltros, COLOR, Kpi, LineasAnio, MM, Panel, SelectorVista, ejeM, ent, mesLargo, pct, pesos, useFiltros, useModoVista } from '../reportes/comun'
 
+const pesos2 = (v: any) => v == null ? '' : '$' + Number(v).toLocaleString('es-CO', { maximumFractionDigits: 2 })
 const ejeUds = (v: number) => Math.abs(v) >= 1e6 ? (Math.round(v / 1e5) / 10).toLocaleString('es-CO') + ' M' : Math.abs(v) >= 1e3 ? (Math.round(v / 100) / 10).toLocaleString('es-CO') + ' mil' : String(Math.round(v))
 
 /** Ventas por producto: lo que era la hoja «Ventas x Producto» del Power BI de compras. */
@@ -35,6 +36,8 @@ export default function ReporteVentas() {
     num('inv_tiendas', 'Inv. tiendas', ent, 115, 'Disponible hoy en las tiendas de la bitácora'),
     num('cantidad', 'Ventas uds', ent, 115, 'Unidades facturadas en el rango (las devoluciones restan)'),
     num('adu', 'Demanda (ADU mes)', ent, 140, 'Rotación mensual que usa el buffer del CEDI (reemplaza la «Demanda» del Sheet Top Terceros)'),
+    num('costo_unit', 'Costo unitario', pesos2, 125, 'Costo total ÷ unidades vendidas del periodo (el costo que trae Siesa en cada venta)'),
+    num('precio_unit', 'Precio unit. venta', pesos2, 135, 'Venta neta (bruto − descuento) ÷ unidades vendidas: el precio promedio al que se vendió'),
     num('costo', 'Costo total', pesos, 130),
     num('neta', 'Venta neta', pesos, 135, 'Valor bruto − descuento de línea'),
     num('bruto', 'Valor bruto', pesos, 135),

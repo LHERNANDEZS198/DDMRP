@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Autocomplete, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, IconButton, MenuItem,
-  Paper, Stack, Switch, Tab, Table, TableBody, TableCell, TableHead, TableRow, Tabs, TextField, Tooltip, Typography } from '@mui/material'
+  Paper, Stack, Switch, Tab, Table, TableBody, TableCell, TableHead, TableRow, Tabs, TextField, Tooltip, Typography, useMediaQuery, useTheme } from '@mui/material'
 import Add from '@mui/icons-material/Add'
 import Edit from '@mui/icons-material/Edit'
 import DeleteOutline from '@mui/icons-material/DeleteOutline'
@@ -195,16 +195,40 @@ function Perfiles({ perfiles, permisos, recargar, setMsg }: { perfiles: Perfil[]
     } catch (e: any) { setMsg('Error: ' + e.message) }
   }
   const grupos = [...new Set(permisos.map(p => p.grupo))]
+  // celular: la matriz (una columna por perfil) no cabe; se muestra UN perfil a la vez, con sus funciones en una lista de casillas
+  const theme = useTheme(); const movil = useMediaQuery(theme.breakpoints.down('md'))
+  const [pm, setPm] = useState('')
+  const sel = perfiles.find(p => p.perfil_id === pm) ?? perfiles[0]
   return (
     <Stack spacing={1.5}>
-      <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+      <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} sx={{ alignItems: { xs: 'stretch', md: 'center' } }}>
         <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>
-          Cada columna es un perfil; marca lo que puede hacer. Los cambios se guardan al instante y aplican a todos sus usuarios.
+          {movil ? 'Elige un perfil y marca lo que puede hacer.' : 'Cada columna es un perfil; marca lo que puede hacer.'} Los cambios se guardan al instante y aplican a todos sus usuarios.
           El <b>nivel</b> define qué puede hacer sobre las tiendas y laboratorios de cada usuario.
         </Typography>
         <Button variant="contained" startIcon={<Add />} onClick={() => setNuevo({ id: '', nombre: '', descripcion: '' })}>Nuevo perfil</Button>
       </Stack>
-      <Paper variant="outlined" sx={{ overflow: 'auto' }}>
+      {movil ? (sel && <Paper variant="outlined" sx={{ p: 1.5 }}>
+        <Stack spacing={1.5}>
+          <TextField select size="small" label="Perfil" value={sel.perfil_id} onChange={e => setPm(e.target.value)}>
+            {perfiles.map(p => <MenuItem key={p.perfil_id} value={p.perfil_id}>{p.nombre} · {p.usuarios} usuario(s)</MenuItem>)}
+          </TextField>
+          {sel.descripcion && <Typography variant="body2" color="text.secondary">{sel.descripcion}</Typography>}
+          <TextField select size="small" label="Nivel sobre sus tiendas" value={sel.nivel} disabled={sel.permisos.includes('admin')} onChange={e => guardar(sel, { nivel: e.target.value })}
+            helperText={NIVELES[sel.nivel]}>
+            {Object.entries(NIVELES).map(([k, l]) => <MenuItem key={k} value={k}>{k[0].toUpperCase() + k.slice(1)}</MenuItem>)}
+          </TextField>
+          {grupos.map(g => <Box key={g}>
+            <Typography sx={{ bgcolor: '#f6f7f1', px: 1, py: .5, fontWeight: 700, fontSize: 12, letterSpacing: .5, textTransform: 'uppercase', color: 'text.secondary' }}>{g}</Typography>
+            {permisos.filter(x => x.grupo === g).map(x => {
+              const adm = sel.permisos.includes('admin')
+              return <FormControlLabel key={x.clave} sx={{ display: 'flex', alignItems: 'flex-start', m: 0, py: .25, borderBottom: '1px solid #eee', '& .MuiFormControlLabel-label': { fontSize: 14, pt: .75 } }}
+                control={<Checkbox size="small" checked={adm || sel.permisos.includes(x.clave)} disabled={adm} onChange={e => alternar(sel, x.clave, e.target.checked)} />} label={x.label} />
+            })}
+          </Box>)}
+          {!sel.sistema && <Button color="error" size="small" startIcon={<DeleteOutline />} onClick={() => borrar(sel)}>Borrar este perfil</Button>}
+        </Stack>
+      </Paper>) : <Paper variant="outlined" sx={{ overflow: 'auto' }}>
         <Table size="small" sx={{ minWidth: 700, width: '100%' }}>
           <TableHead><TableRow sx={{ bgcolor: '#eef2e3' }}>
             <TableCell sx={{ fontWeight: 700, minWidth: 320, position: 'sticky', left: 0, zIndex: 2, bgcolor: '#eef2e3' }}>Función</TableCell>
@@ -237,7 +261,7 @@ function Perfiles({ perfiles, permisos, recargar, setMsg }: { perfiles: Perfil[]
                 </TableRow>))])}
           </TableBody>
         </Table>
-      </Paper>
+      </Paper>}
       <Dialog open={!!nuevo} onClose={() => setNuevo(null)} maxWidth="xs" fullWidth>
         <DialogTitle>Nuevo perfil</DialogTitle>
         <DialogContent><Stack spacing={2} sx={{ mt: 1 }}>
