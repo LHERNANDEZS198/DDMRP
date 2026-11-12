@@ -74,6 +74,8 @@ export default function Tablero() {
   const nEst = (e: string) => v.estados.find((x: any) => x.estado === e)?.ocs || 0
   const pctDesv = cu.lineas.lineas ? (100 * cu.lineas.desv_cant / cu.lineas.lineas) : 0
   const irNecesidades = () => abrir('/compras/necesidades')
+  // clic en un proveedor de «Qué pedir hoy»: Necesidades de compra en SU empresa, con ese proveedor elegido y la vista de detalle por ítem
+  const irProveedor = (r: any) => abrir(`/compras/necesidades?empresa=${encodeURIComponent(r.empresa)}&proveedor=${encodeURIComponent(r.proveedor_id)}&vista=detalle`)
 
   return (
     <Box sx={{ pb: 4 }}>
@@ -100,9 +102,11 @@ export default function Tablero() {
           <Kpi titulo="Sin proveedor" valor={ent(p.sin_proveedor)} color={p.sin_proveedor ? 'aviso' : 'ok'} ayuda="Ítems con necesidad pero sin proveedor asignado en Maestros de compras" />
           <Kpi titulo="Consignación" valor={ent(p.consignacion.items)} sub={MM(p.consignacion.valor)} color="info" ayuda="Ítems en consignación (van en OC aparte)" />
         </Box>
-        <Lista onFila={irNecesidades} vacio="Nada por pedir con los filtros de tu perfil."
+        <Lista onFila={irProveedor} vacio="Nada por pedir con los filtros de tu perfil. Haz clic en un proveedor para ver sus ítems."
           cols={[{ t: 'Proveedor', f: r => `${r.proveedor_nombre} (${r.empresa})` }, { t: 'Ítems', f: r => ent(r.items), right: true }, { t: 'Unidades', f: r => ent(r.unidades), right: true },
                  { t: 'Total', f: r => MM(r.total), right: true },
+                 { t: 'OC abiertas', f: r => ent(r.ocs_abiertas), right: true },
+                 { t: 'Entrega más próxima', f: r => r.entrega_cercana ? <Chip size="small" variant="outlined" color={r.dias_entrega < 0 ? 'error' : 'default'} label={`${r.entrega_cercana.slice(8, 10)}/${r.entrega_cercana.slice(5, 7)}/${r.entrega_cercana.slice(2, 4)} · ${r.dias_entrega === 0 ? 'hoy' : r.dias_entrega > 0 ? `en ${r.dias_entrega} d` : `atrasada ${-r.dias_entrega} d`}`} /> : '—' },
                  { t: 'Estado', f: r => <Chip size="small" label={r.estado} color={r.estado === 'OK' ? 'success' : 'warning'} variant="outlined" /> }]}
           filas={p.proveedores} />
       </Bloque>

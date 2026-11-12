@@ -167,7 +167,7 @@ export function LineasAnio({ modo, periodos, series, ...r }: { modo: ModoVista }
 
 // ---------- filtros ----------
 export type CritSel = { plan: string; vals: string[] }
-export type Filtro = { desde: string; hasta: string; labs: string[]; cats: string[]; accs: string[]; un: string[]; q: string; crit: CritSel[] }
+export type Filtro = { desde: string; hasta: string; labs: string[]; cats: string[]; accs: string[]; un: string[]; q: string; crit: CritSel[]; skus?: string[] }
 type Op = { id: string; nombre: string; se_compra?: boolean }
 export type Criterio = { plan_id: string; nombre: string; valores: { id: string; nombre: string; items: number }[] }
 export type Opciones = { plan_categoria?: string; plan_accion?: string; labs: Op[]; categorias: Op[]; acciones: Op[]; unidades: string[]; periodo_min: string | null; periodo_max: string | null; actualizacion: any[]; criterios: Criterio[]; empresas_con_datos: string[] }
@@ -192,9 +192,9 @@ export function useFiltros(clave: string) {
       setF(prev => {
         if (prev && dueno.current === empKey) return prev
         dueno.current = empKey
-        try { const g = localStorage.getItem(LSK); if (g) return { crit: [], ...JSON.parse(g), q: '' } } catch { /* sin almacenamiento */ }
+        try { const g = localStorage.getItem(LSK); if (g) return { crit: [], skus: [], ...JSON.parse(g), q: '' } } catch { /* sin almacenamiento */ }
         const hasta = o.periodo_max || ''
-        return { desde: hasta ? restar(hasta, 11) : '', hasta, labs: [], cats: o.categorias.filter(c => c.se_compra).map(c => c.id), accs: [], un: [], q: '', crit: [] }
+        return { desde: hasta ? restar(hasta, 11) : '', hasta, labs: [], cats: o.categorias.filter(c => c.se_compra).map(c => c.id), accs: [], un: [], q: '', crit: [], skus: [] }
       })
     }).catch(e => setErr(String(e?.message || e)))
   }, [empKey, LSK])
@@ -210,9 +210,39 @@ export function useFiltros(clave: string) {
     const crit = (f.crit ?? []).filter(c => c.plan && c.vals.length).flatMap(c => c.vals.map(v => `${c.plan}:${v}`))
     if (crit.length) p.set('crit', crit.join(','))
     if (f.q.trim()) p.set('q', f.q.trim())
+    if (f.skus?.length) p.set('skus', f.skus.join(','))
     return p.toString()
   }, [f, empKey])
   return { op, f, setF, qs, err, recargarOpciones: cargarOpciones }
+}
+
+/** Selector de SKU exactos (uno o varios): escribe el código o parte de la descripción, elige de la lista y queda el SKU completo como un chip (como laboratorio o categoría).
+ *  También acepta pegar varios códigos separados por coma, espacio o salto de línea. Filtra por igualdad: elegir 192970 no trae el 2192970. */
+function SkuPicker({ valor, onChange }: { valor: string[]; onChange: (v: string[]) => void }) {
+  const { lista: empresa } = useEmpresa()
+  const [texto, setTexto] = useState(''); const [sug, setSug] = useState<{ id: string; descripcion: string }[]>([]); const [busca, setBusca] = useState(false)
+  const nombres = useRef<Record<string, string>>({})
+  useEffect(() => {
+    const t = texto.trim()
+    if (t.length < 2) { setSug([]); return }
+    let vivo = true; setBusca(true)
+    const h = setTimeout(() => api(`/compras/reportes/skus?buscar=${encodeURIComponent(t)}${empresa.length ? '&empresa=' + empresa.join(',') : ''}`)
+      .then((r: any[]) => { if (!vivo) return; r.forEach(x => { nombres.current[x.id] = x.descripcion }); setSug(r) }).catch(() => vivo && setSug([])).finally(() => vivo && setBusca(false)), 300)
+    return () => { vivo = false; clearTimeout(h) }
+  }, [texto, empresa.join(',')])
+  const agregar = (ids: string[]) => { const nuevos = ids.map(x => x.trim()).filter(Boolean); if (nuevos.length) onChange(Array.from(new Set([...valor, ...nuevos]))) }
+  return (
+    <Autocomplete multiple freeSolo size="small" limitTags={2} sx={{ width: 260 }} options={sug.map(s => s.id)} value={valor} inputValue={texto} loading={busca} disableCloseOnSelect filterOptions={x => x}
+      getOptionLabel={(o: string) => o} noOptionsText="Escribe al menos 2 letras o dígitos"
+      renderOption={(props, o: string) => <li {...props} key={o}><b>{o}</b>&nbsp;<span style={{ color: '#666', fontSize: 12 }}>{nombres.current[o] ?? ''}</span></li>}
+      onInputChange={(_, v, motivo) => {
+        if (motivo === 'reset') return              // al elegir una opción el texto se limpia solo
+        const t = v.trim(), solo = /^\d+(\s+\d+)+$/.test(t)      // varios códigos numéricos separados por espacio; con letras el espacio es parte de la descripción
+        if (/[,;\n\t]/.test(t) || solo) { agregar(t.split(/[,;\s]+/)); setTexto(''); return }   // pegar varios códigos
+        setTexto(v)
+      }}
+      onChange={(_, v) => { onChange((v as string[]).map(x => x.trim()).filter(Boolean)); setTexto('') }}
+      renderInput={p => <TextField {...p} label="SKU (uno o varios)" placeholder={valor.length ? '' : 'código o nombre'} />} />)
 }
 
 function Multi({ etiqueta, opciones, valor, onChange, ancho = 220 }: { etiqueta: string; opciones: Op[]; valor: string[]; onChange: (v: string[]) => void; ancho?: number }) {
@@ -227,12 +257,10 @@ function Multi({ etiqueta, opciones, valor, onChange, ancho = 220 }: { etiqueta:
 export function BarraFiltros({ op, f, setF, conUn, extra, sinPeriodo }: { op: Opciones; f: Filtro; setF: (f: Filtro) => void; conUn?: boolean; extra?: ReactNode; sinPeriodo?: boolean }) {
   const periodos = op.periodo_min && op.periodo_max ? rango(op.periodo_min, op.periodo_max) : []
   const set = (k: Partial<Filtro>) => setF({ ...f, ...k })
-  const [q, setQ] = useState(f.q)
   const crit: CritSel[] = f.crit?.length ? f.crit : [{ plan: '', vals: [] }]     // criterios de items elegidos: planes distintos se combinan (Y), valores del mismo plan (O)
   const valoresDe = (plan: string) => op.criterios.find(p => p.plan_id === plan)?.valores ?? []
   const libres = (actual: string) => op.criterios.filter(p => p.plan_id === actual || !crit.some(c => c.plan === p.plan_id))
   const ponerFila = (i: number, c: CritSel) => set({ crit: crit.map((x, j) => j === i ? c : x) })
-  useEffect(() => { const t = setTimeout(() => { if (q !== f.q) set({ q }) }, 450); return () => clearTimeout(t) }, [q])
   return (
     <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2, display: 'flex', gap: 1.25, flexWrap: 'wrap', alignItems: 'center', bgcolor: '#fff' }}>
       {!sinPeriodo && <>
@@ -245,7 +273,7 @@ export function BarraFiltros({ op, f, setF, conUn, extra, sinPeriodo }: { op: Op
       <Multi etiqueta="Categoría" opciones={op.categorias} valor={f.cats} onChange={cats => set({ cats })} />
       <Multi etiqueta="Acción" opciones={op.acciones} valor={f.accs} onChange={accs => set({ accs })} ancho={190} />
       {conUn && <Multi etiqueta="Unidad de negocio" opciones={op.unidades.map(u => ({ id: u, nombre: u }))} valor={f.un} onChange={un => set({ un })} />}
-      <TextField size="small" label="Buscar SKU o producto" value={q} onChange={e => setQ(e.target.value)} sx={{ width: 210 }} />
+      <SkuPicker valor={f.skus ?? []} onChange={skus => set({ skus })} />
       {op.criterios.length > 0 && <>
         {crit.map((c, i) => <Box key={i} sx={{ display: 'contents' }}>
           <TextField select size="small" label={i === 0 ? 'Criterio de ítems' : 'Y otro criterio'} value={c.plan} sx={{ minWidth: 190 }} slotProps={{ select: { displayEmpty: true }, inputLabel: { shrink: true } }}

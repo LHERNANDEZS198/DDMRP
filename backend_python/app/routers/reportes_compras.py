@@ -47,7 +47,7 @@ def _labs_permitidos(user) -> list[str] | None:
 class Filtros:
     """Filtros comunes. `base()` arma el FROM y el WHERE de una tabla de hechos (alias x: empresa, periodo, producto_id) con los maestros de item unidos."""
 
-    def __init__(self, user, empresa=None, desde=None, hasta=None, labs=None, categorias=None, acciones=None, un=None, q=None, proveedores=None, crit=None):
+    def __init__(self, user, empresa=None, desde=None, hasta=None, labs=None, categorias=None, acciones=None, un=None, q=None, proveedores=None, crit=None, skus=None):
         cfg = cfg_rep()
         self.p: dict = {"plan_cat": _plan(cfg.get("rep_plan_categoria", 1)), "plan_acc": _plan(cfg.get("rep_plan_accion", 3))}
         self.emp = _csv(empresa)
@@ -57,6 +57,7 @@ class Filtros:
                 raise HTTPException(400, f"El periodo «{nombre}» debe ser AAAAMM (ej. 202601)")
         self.labs, self.cats, self.accs, self.un = _csv(labs), _csv(categorias), _csv(acciones), _csv(un)
         self.q, self.provs = (q or "").strip(), _csv(proveedores)
+        self.skus = _csv(skus)      # SKU exactos elegidos (a diferencia de `q`, que busca por texto y trae tambien 2192970 al buscar 192970)
         self.crit: dict[str, list[str]] = {}     # criterios de items (cualquier plan de Siesa): «plan:valor,plan:valor»; valores del mismo plan = O, planes distintos = Y
         for x in _csv(crit):
             if ":" in x:
@@ -87,6 +88,8 @@ class Filtros:
             w.append("ic3.criterio_id = ANY(:accs)"); p["accs"] = self.accs
         if self.q:
             w.append("(x.producto_id ILIKE :q OR mi.descripcion ILIKE :q)"); p["q"] = f"%{self.q}%"
+        if self.skus:
+            w.append("x.producto_id = ANY(:skus)"); p["skus"] = self.skus
         for i, (pl, crs) in enumerate(self.crit.items()):
             w.append(f"EXISTS (SELECT 1 FROM ddmrp.item_criterio icx{i} WHERE icx{i}.empresa = x.empresa AND icx{i}.producto_id = x.producto_id AND icx{i}.plan_id = :cp{i} AND icx{i}.criterio_id = ANY(:cc{i}))")
             p[f"cp{i}"] = pl; p[f"cc{i}"] = crs
@@ -153,14 +156,32 @@ def opciones(empresa: str | None = None, user=Depends(requiere("ver_control_comp
             "criterios": list(por_plan.values()), "empresas_con_datos": con_datos, "plan_categoria": f.p["plan_cat"], "plan_accion": f.p["plan_acc"]}
 
 
+@router.get("/skus")
+def buscar_skus(buscar: str = "", empresa: str | None = None, user=Depends(requiere("ver_control_compras"))):
+    """Sugerencias para el selector de SKU de los reportes: por codigo o por descripcion, con el codigo EXACTO y los que empiezan por el texto primero.
+    El filtro que se guarda es siempre el SKU completo (`skus`), no un texto: buscar 192970 y elegirlo no trae el 2192970."""
+    b = (buscar or "").strip()
+    if len(b) < 2:
+        return []
+    f = Filtros(user, empresa)
+    w, p = ["(mi.producto_id ILIKE :b OR mi.descripcion ILIKE :b)"], {"b": f"%{b}%", "ex": b, "pre": f"{b}%"}
+    if f.emp:
+        w.append("mi.empresa = ANY(:emp)"); p["emp"] = f.emp
+    if f.perm is not None:
+        w.append("mi.categoria = ANY(:perm)"); p["perm"] = f.perm
+    with pg.connect() as c:
+        return _filas(c, f"""SELECT mi.producto_id AS id, min(mi.descripcion) AS descripcion FROM ddmrp.maestro_item mi WHERE {' AND '.join(w)}
+                             GROUP BY mi.producto_id ORDER BY (mi.producto_id = :ex) DESC, (mi.producto_id ILIKE :pre) DESC, mi.producto_id LIMIT 30""", p)
+
+
 @router.get("/ventas-producto")
 def ventas_producto(empresa: str | None = None, desde: str | None = None, hasta: str | None = None, labs: str | None = None, categorias: str | None = None,
-                    acciones: str | None = None, un: str | None = None, q: str | None = None, crit: str | None = None, agrupar: str = "producto", limite: int = 3000,
+                    acciones: str | None = None, un: str | None = None, q: str | None = None, crit: str | None = None, skus: str | None = None, agrupar: str = "producto", limite: int = 3000,
                     user=Depends(requiere("ver_control_compras"))):
     """Ventas facturadas por producto (o por mes y producto con agrupar=mes) con inventario y rotacion, KPI del filtro y la serie mensual."""
     if agrupar not in ("producto", "mes"):
         raise HTTPException(400, "agrupar debe ser producto o mes")
-    f = Filtros(user, empresa, desde, hasta, labs, categorias, acciones, un, q, crit=crit)
+    f = Filtros(user, empresa, desde, hasta, labs, categorias, acciones, un, q, crit=crit, skus=skus)
     joins, w, p = f.base("ddmrp.rep_venta_mes", con_un=True)
     lim = min(max(int(limite), 10), TOPE_FILAS)
     per = "x.periodo, " if agrupar == "mes" else ""
@@ -197,11 +218,11 @@ def ventas_producto(empresa: str | None = None, desde: str | None = None, hasta:
 
 @router.get("/proveedor")
 def proveedor(empresa: str | None = None, desde: str | None = None, hasta: str | None = None, labs: str | None = None, categorias: str | None = None,
-              acciones: str | None = None, un: str | None = None, q: str | None = None, proveedores: str | None = None, crit: str | None = None, limite: int = 3000,
+              acciones: str | None = None, un: str | None = None, q: str | None = None, proveedores: str | None = None, crit: str | None = None, skus: str | None = None, limite: int = 3000,
               user=Depends(requiere("ver_control_compras"))):
     """Ficha de proveedor / producto terminado: compras vs ventas netas y % rent por mes, OTIF por mes, productos con su venta y su compra y los proveedores con mas compras.
     La unidad de negocio solo filtra las ventas; el proveedor solo filtra las compras y el OTIF."""
-    f = Filtros(user, empresa, desde, hasta, labs, categorias, acciones, un, q, proveedores, crit=crit)
+    f = Filtros(user, empresa, desde, hasta, labs, categorias, acciones, un, q, proveedores, crit=crit, skus=skus)
     jv, wv, pv = f.base("ddmrp.rep_venta_mes", con_un=True)
     jc, wc, pc = f.base("ddmrp.rep_compra_mes", con_prov=True)
     jo, wo, po = f.base("ddmrp.rep_otif", con_prov=True)
@@ -271,7 +292,7 @@ def _dias_mes(p: str, hoy: date) -> int:
 
 @router.get("/indicadores", dependencies=[Depends(fijar_modo)])
 def indicadores(empresa: str | None = None, desde: str | None = None, hasta: str | None = None, labs: str | None = None, categorias: str | None = None,
-                acciones: str | None = None, crit: str | None = None, q: str | None = None, agrupar: str = "laboratorio", limite: int = 3000,
+                acciones: str | None = None, crit: str | None = None, q: str | None = None, skus: str | None = None, agrupar: str = "laboratorio", limite: int = 3000,
                 user=Depends(requiere("ver_control_compras"))):
     """Indicadores de compras por mes en el periodo elegido: GMROI, OTIF (completo y a tiempo) y % de abastecimiento (el «disponible» de la tendencia del Control: todas las
     zonas menos la roja), mas margen e inventario a costo. El GMROI usa el MISMO calculo de la Clasificacion (venta de las tiendas, costo promedio actual e inventario promedio
@@ -282,7 +303,7 @@ def indicadores(empresa: str | None = None, desde: str | None = None, hasta: str
     from .. import clasificacion as cl
     if agrupar != "laboratorio" and not re.fullmatch(r"\w{1,10}", agrupar):
         raise HTTPException(400, "agrupar debe ser laboratorio o el codigo de un plan de criterios")
-    f = Filtros(user, empresa, desde, hasta, labs, categorias, acciones, None, q, None, crit=crit)
+    f = Filtros(user, empresa, desde, hasta, labs, categorias, acciones, None, q, None, crit=crit, skus=skus)
     hoy = date.today()
     h_p = f.hasta or f"{hoy:%Y%m}"
     d_p = f.desde or _meses_atras(h_p, 11)
@@ -333,6 +354,8 @@ def indicadores(empresa: str | None = None, desde: str | None = None, hasta: str
             wi.append("COALESCE(mi2.categoria, '') = ANY(:i_lab)"); pi["i_lab"] = [("" if x == "(sin laboratorio)" else x) for x in f.labs]
         if f.q:
             wi.append("(mi2.producto_id ILIKE :i_q OR mi2.descripcion ILIKE :i_q)"); pi["i_q"] = f"%{f.q}%"
+        if f.skus:
+            wi.append("mi2.producto_id = ANY(:i_sk)"); pi["i_sk"] = f.skus
         por_plan: dict[str, list[str]] = {}
         for x in cr:
             pl, v = x.split(":", 1); por_plan.setdefault(pl, []).append(v)

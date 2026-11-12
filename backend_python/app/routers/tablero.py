@@ -123,6 +123,20 @@ def _oc_abiertas(c, t: int, emp: list[str]) -> list[dict]:
                          WHERE t.documento LIKE 'OC-%' AND {_comprable('t')}{fe} ORDER BY t.fecha_esperada NULLS LAST, t.documento, t.producto_id LIMIT :t""", {"t": t} | pe)
 
 
+def _oc_encabezados(c, t: int, emp: list[str]) -> list[dict]:
+    """Las mismas OC abiertas, una fila por OC (encabezado) sin sus items: lineas, unidades, fecha de montaje y fecha esperada (la mas cercana de sus lineas) y dias de atraso
+    (el de la linea mas atrasada). El proveedor es el asignado a los items de la OC (item_compra); si la OC mezcla varios se muestra el primero y cuantos mas."""
+    fe, pe = _fe("t", emp)
+    return _filas(c, f"""SELECT t.empresa, t.documento,
+                                COALESCE(min(pv.nombre), min(ic.proveedor_id), '') || CASE WHEN count(DISTINCT ic.proveedor_id) > 1 THEN ' (+' || (count(DISTINCT ic.proveedor_id) - 1) || ')' ELSE '' END AS proveedor,
+                                count(*)::int AS lineas, count(DISTINCT t.producto_id)::int AS items, sum(t.cantidad)::float8 AS cantidad,
+                                min(t.fecha_oc)::text AS fecha_oc, min(t.fecha_esperada)::text AS fecha_esperada, max(current_date - t.fecha_esperada)::int AS dias_atraso
+                         FROM ddmrp.transitos t LEFT JOIN ddmrp.item_compra ic ON ic.empresa = t.empresa AND ic.producto_id = t.producto_id
+                         LEFT JOIN ddmrp.proveedor pv ON pv.empresa = ic.empresa AND pv.proveedor_id = ic.proveedor_id AND pv.sucursal = ic.sucursal
+                         WHERE t.documento LIKE 'OC-%' AND {_comprable('t')}{fe} GROUP BY t.empresa, t.documento
+                         ORDER BY min(t.fecha_esperada) NULLS LAST, t.documento LIMIT :t""", {"t": t} | pe)
+
+
 def _en_vuelo(c, t: int, emp: list[str]) -> list[dict]:
     fe, pe = _fe("", emp)
     return _filas(c, f"""SELECT id, empresa, referencia, siesa_consecutivo, proveedor_nombre, estado, estado_siesa, total::float8 AS total, items, consignacion, requiere_revision,
@@ -162,7 +176,7 @@ def tablero(fresco: bool = False, empresa: str | None = None, user=Depends(requi
             "zonas": sorted(zonas.values(), key=lambda z: {"ROJA": 0, "AMARILLA": 1, "VERDE": 2}.get(z["zona"], 3)),
             "consignacion": {"items": len(cons), "valor": sum(f["valor"] or 0 for f in cons)},
             "sin_proveedor": r["sin_proveedor"]["total"],
-            "proveedores": [{k: g[k] for k in ("empresa", "proveedor_id", "proveedor_nombre", "items", "unidades", "total", "estado", "bajo_minimo", "sin_costo")} for g in r["proveedores"][:top]],
+            "proveedores": [{k: g[k] for k in ("empresa", "proveedor_id", "sucursal", "proveedor_nombre", "items", "unidades", "total", "estado", "bajo_minimo", "sin_costo")} for g in r["proveedores"][:top]],
             "con_problema": sum(1 for g in r["proveedores"] if g["estado"] != "OK"),
         }
         if ttl > 0:
@@ -172,6 +186,19 @@ def tablero(fresco: bool = False, empresa: str | None = None, user=Depends(requi
     fo, po = _fe("", emp)          # empresa en las consultas de orden_compra
     foo, poo = _fe("o", emp)        # ... cuando la tabla va con alias o
     with pg.connect() as c:
+        # OC abiertas y entrega mas cercana de cada proveedor de «Que pedir hoy»: las OC abiertas en Siesa (transitos 'OC-...') se atribuyen al proveedor con el que esta
+        # asignado el item (item_compra). Se calcula aparte del cache de necesidades (barato y siempre al dia). Entrega mas cercana = la fecha esperada mas proxima a HOY,
+        # hacia atras (atrasada) o hacia adelante; dias_entrega < 0 = atrasada.
+        fe_t, pe_t = _fe("t", emp)
+        oc_prov = {(r["empresa"], r["proveedor_id"]): r for r in _filas(c, f"""
+            SELECT t.empresa, ic.proveedor_id, count(DISTINCT t.documento)::int AS ocs_abiertas,
+                   (array_agg(t.fecha_esperada ORDER BY abs(t.fecha_esperada - current_date), t.fecha_esperada) FILTER (WHERE t.fecha_esperada IS NOT NULL))[1]::text AS entrega_cercana,
+                   ((array_agg(t.fecha_esperada ORDER BY abs(t.fecha_esperada - current_date), t.fecha_esperada) FILTER (WHERE t.fecha_esperada IS NOT NULL))[1] - current_date)::int AS dias_entrega
+            FROM ddmrp.transitos t JOIN ddmrp.item_compra ic ON ic.empresa = t.empresa AND ic.producto_id = t.producto_id
+            WHERE t.documento LIKE 'OC-%' AND ic.proveedor_id IS NOT NULL AND {_comprable('t')}{fe_t} GROUP BY t.empresa, ic.proveedor_id""", pe_t)}
+        pedir = {**pedir, "proveedores": [{**g, "ocs_abiertas": (oc_prov.get((g["empresa"], g["proveedor_id"])) or {}).get("ocs_abiertas", 0),
+                                           "entrega_cercana": (oc_prov.get((g["empresa"], g["proveedor_id"])) or {}).get("entrega_cercana"),
+                                           "dias_entrega": (oc_prov.get((g["empresa"], g["proveedor_id"])) or {}).get("dias_entrega")} for g in pedir["proveedores"]]}
         # ---- 2. OC en vuelo ----
         estados = _filas(c, f"""SELECT estado, count(*)::int AS ocs, COALESCE(sum(total), 0)::float8 AS total,
                                       COALESCE(max(EXTRACT(EPOCH FROM now() - COALESCE(estado_bpm_fecha, enviado, creado)) / 86400), 0)::float8 AS dias_max
@@ -258,14 +285,20 @@ DETALLES = {
 
 
 @router.get("/detalle/{tipo}")
-def detalle(tipo: str, empresa: str | None = None, user=Depends(requiere("ver_control_compras"))):
+def detalle(tipo: str, empresa: str | None = None, vista: str = "item", user=Depends(requiere("ver_control_compras"))):
     if tipo not in DETALLES:
         raise HTTPException(404, "Ese detalle no existe")
     titulo, ayuda, cols = DETALLES[tipo]
+    enc = tipo == "oc_abiertas" and vista == "encabezado"      # OC abiertas: una fila por OC (encabezado) en vez de una por item
+    if enc:
+        ayuda = ("Las OC abiertas en Siesa que hoy cuentan como tránsito al CEDI, una fila por OC (sin items): líneas, unidades, fecha de montaje, la fecha en que debía llegar (la más cercana "
+                 "de sus líneas) y los días de atraso de su línea más atrasada. Ordenadas de la que debía llegar primero. El proveedor es el asignado a los items de la OC.")
+        cols = [("empresa", "Emp.", T), ("documento", "OC", T), ("proveedor", "Proveedor", T), ("lineas", "Líneas", N), ("items", "Ítems", N), ("cantidad", "Unidades", N),
+                ("fecha_oc", "Fecha de montaje", T), ("fecha_esperada", "Debía llegar", T), ("dias_atraso", "Días de atraso", N)]
     cfg = _cfg()
     emp = _empresas(empresa)
     with pg.connect() as c:
-        filas = {"oc_abiertas": lambda: _oc_abiertas(c, SIN_LIMITE, emp), "oc_vencidas": lambda: _vencidas(c, cfg, SIN_LIMITE, emp), "rit_viejas": lambda: _rit(c, SIN_LIMITE, emp),
+        filas = {"oc_abiertas": lambda: (_oc_encabezados if enc else _oc_abiertas)(c, SIN_LIMITE, emp), "oc_vencidas": lambda: _vencidas(c, cfg, SIN_LIMITE, emp), "rit_viejas": lambda: _rit(c, SIN_LIMITE, emp),
                  "trabadas": lambda: _trabadas(c, cfg, SIN_LIMITE, emp), "oc_vuelo": lambda: _en_vuelo(c, SIN_LIMITE, emp), "riesgo": lambda: _riesgo(c, user, SIN_LIMITE, emp),
                  "agotados": lambda: _agotados(c, user, SIN_LIMITE, emp), "exceso": lambda: _exceso(c, user, SIN_LIMITE, emp)}[tipo]()
     for f in filas:

@@ -5,12 +5,15 @@ import Tabla from '../Tabla'
 import { api } from '../api'
 import { Actualizacion, AvisoEmpresa, BarraFiltros, COLOR, Kpi, LineasAnio, MM, Panel, SelectorVista, ejeM, ent, mesLargo, pct, pesos, useFiltros, useModoVista } from '../reportes/comun'
 
+const ejeUds = (v: number) => Math.abs(v) >= 1e6 ? (Math.round(v / 1e5) / 10).toLocaleString('es-CO') + ' M' : Math.abs(v) >= 1e3 ? (Math.round(v / 100) / 10).toLocaleString('es-CO') + ' mil' : String(Math.round(v))
+
 /** Ventas por producto: lo que era la hoja «Ventas x Producto» del Power BI de compras. */
 export default function ReporteVentas() {
   const { op, f, setF, qs, err, recargarOpciones } = useFiltros('ventas')
   const [d, setD] = useState<any>(null)
   const [modo, setModo] = useModoVista()
   const [agrupar, setAgrupar] = useState<'producto' | 'mes'>('producto')
+  const [grafUnidad, setGrafUnidad] = useState<'valor' | 'cantidad'>('valor')     // la gráfica por mes: venta y costo en pesos, o solo las unidades
   const [cargando, setCargando] = useState(false)
   const [e2, setE2] = useState('')
   const cargar = () => {
@@ -63,9 +66,15 @@ export default function ReporteVentas() {
         <Kpi titulo="% Rentabilidad" valor={k ? pct(k.rent, 0) : '…'} ayuda="(Venta neta − costo) ÷ venta neta" />
         <Kpi titulo="Descuento" valor={k ? MM(k.descuento) : '…'} />
       </Box>
-      <Panel titulo="Venta neta y costo por mes" ayuda="Pasa el cursor por un mes para ver las cifras.">
-        <LineasAnio modo={modo} periodos={per} fmt={v => MM(v)} fmtEje={ejeM} alto={220}
-          series={[{ nombre: 'Venta neta', color: COLOR.azul, valores: d?.serie.map((s: any) => s.neta) ?? [] }, { nombre: 'Costo', color: COLOR.naranja, valores: d?.serie.map((s: any) => s.costo) ?? [] }]} />
+      <Panel titulo={grafUnidad === 'valor' ? 'Venta neta y costo por mes' : 'Unidades vendidas por mes'} ayuda="Pasa el cursor por un mes para ver las cifras. Con el selector cambias entre pesos (venta neta y costo) y unidades vendidas.">
+        <ToggleButtonGroup size="small" exclusive value={grafUnidad} onChange={(_, v) => v && setGrafUnidad(v)} sx={{ mb: 1 }}>
+          <ToggleButton value="valor">Venta y costo ($)</ToggleButton><ToggleButton value="cantidad">Cantidad (uds)</ToggleButton>
+        </ToggleButtonGroup>
+        {grafUnidad === 'valor'
+          ? <LineasAnio modo={modo} periodos={per} fmt={v => MM(v)} fmtEje={ejeM} alto={220}
+              series={[{ nombre: 'Venta neta', color: COLOR.azul, valores: d?.serie.map((s: any) => s.neta) ?? [] }, { nombre: 'Costo', color: COLOR.naranja, valores: d?.serie.map((s: any) => s.costo) ?? [] }]} />
+          : <LineasAnio modo={modo} periodos={per} fmt={v => ent(v) + ' uds'} fmtEje={ejeUds} alto={220}
+              series={[{ nombre: 'Unidades vendidas', color: COLOR.azul, valores: d?.serie.map((s: any) => s.cantidad) ?? [] }]} />}
       </Panel>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
         <ToggleButtonGroup size="small" exclusive value={agrupar} onChange={(_, v) => v && setAgrupar(v)}>

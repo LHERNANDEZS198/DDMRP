@@ -98,6 +98,9 @@ export default function Necesidades() {
   const [sp] = useSearchParams(); const qUrl = sp.get('q') ?? ''; const empUrl = sp.get('empresa') ?? ''      // enlace desde el BPM: /compras/necesidades?q=<item>
   // el enlace del BPM trae la empresa de la OC (?empresa=21): se pone en el selector de la barra al abrir, para no depender de la que hubiera elegida antes
   useEffect(() => { if (empUrl && empresasOk.includes(empUrl)) setEmpresa(empUrl) }, [empUrl])
+  // enlace desde «Qué pedir hoy» del tablero: ?empresa=05&proveedor=<id>&vista=detalle → ese proveedor elegido y la vista de detalle por ítem
+  const provUrl = sp.get('proveedor') ?? ''; const vistaUrl = sp.get('vista') ?? ''
+  useEffect(() => { if (provUrl) setProvs(provUrl.split(',').filter(Boolean)); if (provUrl || vistaUrl === 'detalle') setTab(1) }, [provUrl, vistaUrl])
   const [labs, setLabs] = useState<string[]>([]); const [qd, setQd] = useState(qUrl); const [q, setQ] = useState(qUrl)
   const [opcLabs, setOpcLabs] = useState<{ codigo: string; nombre?: string }[]>([])
   const [bajando, setBajando] = useState(false); const [recalculando, setRecalculando] = useState(false)
