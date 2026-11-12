@@ -7,6 +7,7 @@ import ExpandMore from '@mui/icons-material/ExpandMore'
 import SaveOutlined from '@mui/icons-material/SaveOutlined'
 import DeleteOutline from '@mui/icons-material/DeleteOutline'
 import Tabla from '../Tabla'
+import Calculando from '../Calculando'
 import { CampoSelect } from '../Campos'
 import HelpOutline from '@mui/icons-material/HelpOutline'
 import { api, bajar } from '../api'
@@ -156,6 +157,7 @@ export default function Clasificacion() {
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 1.5, minHeight: 600 }}>
+      <Calculando activo={cargando} texto="Calculando la clasificación" />
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
         <Typography variant="h6" sx={{ fontWeight: 700 }}>Clasificación de items · ABC × XYZ</Typography>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', flex: 1, ml: 1 }}>

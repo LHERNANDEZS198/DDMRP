@@ -1,6 +1,7 @@
 import Plegable from '../Plegable'
 import { useEffect, useMemo, useState } from 'react'
 import Tabla from '../Tabla'
+import Calculando from '../Calculando'
 import { ColDef } from 'ag-grid-community'
 import { Alert, Autocomplete, Box, Button, Chip, FormControlLabel, MenuItem, Paper, Stack, Switch, TextField, Typography } from '@mui/material'
 import Download from '@mui/icons-material/Download'
@@ -71,6 +72,7 @@ export default function Auditoria() {
   const sobra = total > f.limite
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 1.5, minHeight: 500 }}>
+      <Calculando activo={cargando} texto="Calculando la auditoría" />
       <Plegable id="auditoria" titulo="explicación y filtros" resumen={d ? <Chip label={`${total.toLocaleString('es-CO')} combinaciones tienda × item`} size="small" /> : undefined}>
       <Box>
         <Typography variant="h6" sx={{ fontWeight: 700 }}>Auditoría del cálculo</Typography>

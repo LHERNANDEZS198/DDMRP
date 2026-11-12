@@ -9,6 +9,7 @@ import { api, bajar } from '../api'
 import { bodegasDeEmpresa, colsCobertura, tiendasDeEmpresa } from '../filtros'
 import { AYUDA, ayudar } from '../ayuda'
 import { useEmpresa } from '../Empresa'
+import Calculando from '../Calculando'
 
 const COLOR: Record<string, string> = { ROJA: '#c62828', AMARILLA: '#f9a825', VERDE: '#2e7d32', EXCESO: '#1565c0', NO_APLICA: '#9e9e9e' }
 const HEAT: Record<string, string> = { R: '#E8B9B7', A: '#FFC000', V: '#92D050', E: '#4792DC', N: '#D9D9D9' }   // mismos colores del Excel de control
@@ -129,29 +130,31 @@ export default function Control() {
   const grupos = gruposRaw && gruposRaw.m === cambiosModo ? gruposRaw.v : []
   const det = detRaw && detRaw.m === cambiosModo ? detRaw.v : { filas: [], total: 0, truncado: false }
   const [cargando, setCargando] = useState(false)
+  const [kpiCargando, setKpiCargando] = useState(false); const [opcCargando, setOpcCargando] = useState(true)   // los indicadores y las opciones de filtro llegan aparte de la tabla
   const [err, setErr] = useState('')
 
-  useEffect(() => { api('/control/filtros').then(r => setOpc((o: any) => ({ ...o, ...r }))).catch(e => setErr(e.message)) }, [])
+  useEffect(() => { api('/control/filtros').then(r => setOpc((o: any) => ({ ...o, ...r }))).catch(e => setErr(e.message)).finally(() => setOpcCargando(false)) }, [])
   useEffect(() => { const t = setTimeout(() => setF(x => x.q === qTxt ? x : { ...x, q: qTxt }), 400); return () => clearTimeout(t) }, [qTxt])
 
   const clave = qs(f).toString()
   const per = `desde=${desde}&hasta=${hasta}`
   useEffect(() => { setNivel(n => n === 'empresa' ? n : n) }, [cambiosModo])
   useEffect(() => {
-    let vivo = true; setCargando(true); setErr('')
+    let vivo = true; setCargando(true); setKpiCargando(false); setErr('')
     if (tendModo) {
       api(`/control/tendencia?${qs(f, true)}&${per}`).then(r => vivo && setSerie(r.serie)).catch(e => vivo && setErr(e.message)).finally(() => vivo && setCargando(false))
       return () => { vivo = false }
     }
     if (mapaModo) {
       api(`/control/mapa?limit=3000&paso=${paso}&metrica=${metrica}&orden=${orden}&ignorar_vacios=${ignorarVacios}&${qs(f)}&${per}`).then(r => vivo && setMapa(r)).catch(e => vivo && setErr(e.message)).finally(() => vivo && setCargando(false))
-      api(`/control/resumen?agrupar=empresa&${qs(f, true)}`).then(r => vivo && setKpi({ m: false, v: r.total })).catch(() => {})
+      setKpiCargando(true); api(`/control/resumen?agrupar=empresa&${qs(f, true)}`).then(r => vivo && setKpi({ m: false, v: r.total })).catch(() => {}).finally(() => vivo && setKpiCargando(false))
       return () => { vivo = false }
     }
     const base = cambiosModo ? '/control/cambios' : '/control/resumen'
     const extra = (cambiosModo ? '&' + per : '') + (nivel === 'criterio' ? '&plan=' + encodeURIComponent(f.plan || opc.criterios?.[0]?.plan_id || '') : '')
+    setKpiCargando(true)
     api(`${base}?agrupar=empresa&${qs(f, true)}${extra}`).then(r => { if (!vivo) return; setKpi({ m: cambiosModo, v: r.total }); if (cambiosModo) { setPeriodo(r.periodo); setMatriz(r.matriz) } })
-      .catch(e => vivo && setErr(e.message))
+      .catch(e => vivo && setErr(e.message)).finally(() => vivo && setKpiCargando(false))
     const p = nivel === 'detalle'
       ? api(cambiosModo ? `/control/cambios/detalle?limit=5000&mov=${mov}&${qs(f)}&${per}` : '/control/detalle?limit=5000&' + qs(f)).then(r => vivo && setDet({ m: cambiosModo, v: r }))
       : api(`${base}?agrupar=${nivel}&${qs(f)}${extra}`).then(r => vivo && setGrupos({ m: cambiosModo, v: r.grupos }))
@@ -275,6 +278,7 @@ export default function Control() {
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 1.5, minHeight: 600 }}>
+      <Calculando activo={cargando || kpiCargando || opcCargando} texto={tendModo ? 'Calculando la tendencia' : mapaModo ? 'Calculando el mapa de calor' : cambiosModo ? 'Calculando los cambios del periodo' : (cargando || kpiCargando) ? 'Calculando el control' : 'Cargando las opciones de filtro'} />
       {/* Indicadores del alcance actual: clic en una zona = filtrar por ella */}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         <Typography variant="h6" sx={{ fontWeight: 700, flex: 1 }}>{mapaModo ? 'Control DDMRP · mapa de calor' : tendModo ? 'Control DDMRP · tendencia en el tiempo' : cambiosModo ? 'Control DDMRP · cambios en un periodo' : 'Control DDMRP · foto actual'}</Typography>
@@ -284,7 +288,7 @@ export default function Control() {
         {!tendModo && kpi && <Chip size="small" label={`${(cambiosModo ? kpi.n_fin : kpi.n)?.toLocaleString()} combinaciones`} />}
         {!tendModo && kpi && ZONAS.map(z => <Chip key={z} size="small" label={`${ETQ[z]} ${(kpi[KEY[z] + (cambiosModo ? '_fin' : '')] ?? 0).toLocaleString()}`} sx={{ bgcolor: COLOR[z], color: '#fff' }} />)}
         {hayFiltros && <Chip size="small" variant="outlined" label="con filtros" />}</>}>
-      {!tendModo && <Box sx={{ display: 'grid', flexShrink: 0, gridTemplateColumns: { xs: 'repeat(2, 1fr)', md: 'repeat(7, 1fr)' }, gap: 1.5 }}>
+      {!tendModo && <Box sx={{ display: 'grid', flexShrink: 0, opacity: kpiCargando ? .5 : 1, transition: 'opacity .2s', gridTemplateColumns: { xs: 'repeat(2, 1fr)', md: 'repeat(7, 1fr)' }, gap: 1.5 }}>
         <Card variant="outlined" sx={{ borderLeft: '6px solid #6e8a37', flexShrink: 0 }}>
           <Box sx={{ p: 1.25 }}>
             <Typography variant="caption" color="text.secondary">Alcance actual</Typography>
@@ -391,7 +395,7 @@ export default function Control() {
           {f.q && <Chip size="small" color="primary" label={`Item “${f.q}”`} onDelete={() => quitar('q')} />}
         </Box>)}
       {tendModo && (
-        <Paper variant="outlined" sx={{ p: 1.5, flexShrink: 0 }}>
+        <Paper variant="outlined" sx={{ p: 1.5, flexShrink: 0, opacity: cargando ? .5 : 1, transition: 'opacity .2s', pointerEvents: cargando ? 'none' : 'auto' }}>
           <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>Semáforo en el tiempo (% de combinaciones con buffer por zona){serie.length ? ` · ${(serie[serie.length - 1].n - (serie[serie.length - 1].no_aplica ?? 0)).toLocaleString()} con buffer de ${serie[serie.length - 1].n.toLocaleString()}` : ''}</Typography>
           <Typography variant="caption" color="text.secondary">Cada día es la foto de la corrida del motor; la línea punteada es el % agotado (combinaciones con buffer e inventario 0), un indicador paralelo al semáforo: roja es riesgo de agotarse, agotado es estar en cero. Las «No aplica» (sin ventas y sin stock) no cuentan. Necesitas al menos 2 días de historia para ver la curva.</Typography>
           <ZonaShare serie={serie} />

@@ -25,7 +25,7 @@ function Dispersion({ puntos, minimo, objetivo, alto = 360 }: { puntos: Punto[];
   const { xe, ye, maxInv } = useMemo(() => {
     const xs = puntos.map(p => p.x).sort((a, b) => a - b), ys = puntos.map(p => p.y)
     const q95 = xs.length ? xs[Math.min(xs.length - 1, Math.floor(xs.length * .95))] : 1
-    return { xe: escala([0, Math.max(q95 * 1.1, 0.5)], { piso: 0 }), ye: escala(ys.length ? ys : [0, 50], { piso: Math.min(0, ...ys) }), maxInv: Math.max(...puntos.map(p => p.inv), 1) }
+    return { xe: escala([0, Math.max(q95 * 1.1, 0.5)], { piso: 0 }), ye: escala(ys.length ? ys.map(v => Math.max(v, -100)) : [0, 50], { piso: Math.max(-100, Math.min(0, ...ys)) }), maxInv: Math.max(...puntos.map(p => p.inv), 1) }
   }, [puntos])
   if (!puntos.length) return <Typography color="text.secondary" sx={{ p: 3 }}>Sin productos con venta e inventario para ubicar en el gráfico.</Typography>
   const x = (v: number) => M.l + (Math.min(Math.max(v, xe.lo), xe.hi) - xe.lo) / (xe.hi - xe.lo) * pw
@@ -121,6 +121,7 @@ export default function ReporteIndicadores() {
     { field: 'abc', headerName: 'ABC', width: 75, filter: true, headerTooltip: 'Clase ABC de la Clasificación (por margen) dentro de lo filtrado' },
     num('gmroi', 'GMROI', v => dec(v), 95, 'Margen anualizado ÷ inventario promedio a costo'),
     num('margen_pct', 'Margen %', v => dec(v, 1) + ' %', 100),
+    { headerName: 'Alerta', width: 250, filter: true, headerTooltip: 'Margen negativo = se vendió por debajo del costo. Casi siempre es un costo mal ingresado en Siesa (compra con valor o unidad equivocada): revísalo en la compra', valueGetter: (p: any) => p.data?.margen != null && p.data.margen < 0 ? '⚠ Margen negativo: revisa el costo en Siesa' : '', cellStyle: { color: '#c62828', fontWeight: 600 } },
     num('rot', 'Rotación', v => dec(v, 1) + '×', 100, 'Venta anual ÷ inventario promedio a costo'),
     num('meses_inv', 'Meses inv.', v => dec(v, 1), 105, 'Meses que dura el inventario promedio al ritmo de venta (a costo)'),
     num('inv_prom_costo', 'Inv. prom. a costo', pesos, 145, 'Promedio del periodo; si no hay historia de inventario, el de hoy'),
@@ -212,7 +213,7 @@ export default function ReporteIndicadores() {
               </Box>))}
           </Box>
         </Panel>
-        <Panel titulo="Margen % vs rotación" ayuda="Cada punto es un producto (los 800 con más capital) en el periodo. Pasa el cursor para ver el detalle.">
+        <Panel titulo="Margen % vs rotación" ayuda="Cada punto es un producto (los 800 con más capital) en el periodo. Pasa el cursor para ver el detalle. Los márgenes por debajo de −100 % (casi siempre un costo mal ingresado en Siesa) se dibujan en el borde inferior; en la tabla de productos salen con la alerta «Margen negativo».">
           <Dispersion puntos={d?.puntos ?? []} minimo={m?.minimo ?? 1} objetivo={m?.objetivo ?? 3.2} />
         </Panel>
       </Box>

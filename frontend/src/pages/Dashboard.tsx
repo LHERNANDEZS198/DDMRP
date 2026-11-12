@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import Tabla from '../Tabla'
+import Calculando from '../Calculando'
 import { ColDef } from 'ag-grid-community'
 import { Autocomplete, Box, Card, CardActionArea, Chip, MenuItem, Paper, TextField, Typography } from '@mui/material'
 import { api } from '../api'
@@ -70,6 +71,7 @@ export default function Dashboard() {
   const valores = opc.criterios.find((p: any) => p.plan_id === plan)?.valores ?? []
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 2 }}>
+      <Calculando activo={cargando} texto="Calculando el dashboard" />
       <Paper variant="outlined" sx={{ flexShrink: 0, p: 1.25, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
         <Autocomplete multiple size="small" limitTags={2} sx={{ minWidth: 230, flex: '2 1 230px' }} options={tiendasDeEmpresa(opc.tiendas, empresa).map((t: any) => t.bodega_id)} value={bodegas}
           getOptionLabel={(o: string) => nt(o) ? `${o} · ${nt(o)}` : o} onChange={(_, v) => setBodegas(v)} renderInput={p => <TextField {...p} label="Tienda" />} />
