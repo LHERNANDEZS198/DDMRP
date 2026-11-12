@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, Box, CircularProgress, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material'
+import { Alert, Box, Chip, CircularProgress, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material'
 import { ColDef } from 'ag-grid-community'
 import Tabla from '../Tabla'
 import { api } from '../api'
@@ -16,6 +16,7 @@ export default function ReporteVentas() {
   const [agrupar, setAgrupar] = useState<'producto' | 'mes'>('producto')
   const [vistaCanal, setVistaCanal] = useState<'general' | 'canal'>('general')     // «Por canal»: la tabla detalle sale por canal y producto y arriba un resumen por canal
   const [grafUnidad, setGrafUnidad] = useState<'valor' | 'cantidad'>('valor')     // la gráfica por mes: venta y costo en pesos, o solo las unidades
+  const [canalSel, setCanalSel] = useState<string | null>(null)     // canal clicado en el resumen: el detalle muestra solo ese
   const [cargando, setCargando] = useState(false)
   const [e2, setE2] = useState('')
   const cargar = () => {
@@ -24,6 +25,8 @@ export default function ReporteVentas() {
     api(`/compras/reportes/ventas-producto?${qs}&agrupar=${vistaCanal === 'canal' ? 'canal' : agrupar}`).then(setD).catch(e => setE2(String(e?.message || e))).finally(() => setCargando(false))
   }
   useEffect(cargar, [qs, agrupar, vistaCanal])
+  useEffect(() => { if (vistaCanal === 'general') setCanalSel(null) }, [vistaCanal])
+  useEffect(() => { setCanalSel(null) }, [qs])
 
   const num = (campo: string, titulo: string, fmt: (v: any) => string, ancho = 120, tip?: string): ColDef => ({ field: campo, headerName: titulo, type: 'numericColumn', width: ancho, filter: 'agNumberColumnFilter', headerTooltip: tip, valueFormatter: (p: any) => p.value == null ? '' : fmt(p.value) })
   const cols: ColDef[] = useMemo(() => [
@@ -63,6 +66,7 @@ export default function ReporteVentas() {
   ], [])
   const totalCanal = d ? [{ canal: 'Total', neta: d.kpis.neta, part: 1, margen: d.kpis.neta - d.kpis.costo, rent: d.kpis.rent, cantidad: d.kpis.cantidad, items: d.kpis.items,
     precio_unit: d.kpis.cantidad > 0 ? d.kpis.neta / d.kpis.cantidad : null, costo_unit: d.kpis.cantidad > 0 ? d.kpis.costo / d.kpis.cantidad : null, bruto: d.kpis.bruto, descuento: d.kpis.descuento, costo: d.kpis.costo }] : []
+  const filasDetalle = useMemo(() => (d?.filas || []).filter((r: any) => vistaCanal !== 'canal' || canalSel === null || (r.canal ?? '') === canalSel), [d, vistaCanal, canalSel])
   const total = d ? [{ descripcion: 'Total', cantidad: d.kpis.cantidad, costo: d.kpis.costo, neta: d.kpis.neta, bruto: d.kpis.bruto, descuento: d.kpis.descuento, rent: d.kpis.rent, margen: d.kpis.neta - d.kpis.costo }] : []
 
   if (err) return <Alert severity="error">{err}</Alert>
@@ -105,18 +109,22 @@ export default function ReporteVentas() {
         <ToggleButtonGroup size="small" exclusive value={agrupar} onChange={(_, v) => v && setAgrupar(v)} disabled={vistaCanal === 'canal'}>
           <ToggleButton value="producto">Por producto</ToggleButton><ToggleButton value="mes">Por mes y producto</ToggleButton>
         </ToggleButtonGroup>
+        {vistaCanal === 'canal' && canalSel !== null && <Chip size="small" color="primary" label={`Detalle solo de: ${canalSel || '(Sin canal)'}`} onDelete={() => setCanalSel(null)} />}
+        {vistaCanal === 'canal' && canalSel === null && !!d?.resumen_canal?.length && <Typography variant="caption" color="text.secondary">Haz clic en un canal del resumen para ver solo su detalle</Typography>}
         <Typography variant="caption" color="text.secondary">
-          {d ? `${ent(d.filas.length)} de ${ent(d.total_filas)} filas${d.recortado ? ' (afina los filtros para ver el resto)' : ''}` : ''} · Ctrl+A y Ctrl+C copian la tabla a Excel
+          {d ? `${ent(vistaCanal === 'canal' ? filasDetalle.length : d.filas.length)} de ${ent(d.total_filas)} filas${d.recortado ? ' (afina los filtros para ver el resto)' : ''}` : ''} · Ctrl+A y Ctrl+C copian la tabla a Excel
         </Typography>
       </Box>
       {vistaCanal === 'canal' && <Panel titulo="Resumen por canal" ayuda="Venta, margen y rentabilidad de cada canal (tipo de cliente) con los filtros de arriba. El filtro «Canal» de la barra deja solo los canales que elijas; sin elegir, salen todos.">
         <Box className="ag-theme-quartz">
           <Tabla memoria="rep_ventas_resumen_canal" cargando={cargando} textoCargando="Cargando…" vacio="Sin ventas con estos filtros" rowData={d?.resumen_canal || []} columnDefs={colsCanal}
-            pinnedBottomRowData={totalCanal} defaultColDef={{ resizable: true, sortable: true }} domLayout="autoHeight" />
+            pinnedBottomRowData={totalCanal} defaultColDef={{ resizable: true, sortable: true }} domLayout="autoHeight"
+            onRowClicked={(e: any) => setCanalSel(prev => { const c = e.data?.canal ?? ''; return prev === c ? null : c })}
+            getRowStyle={(p: any) => ({ cursor: 'pointer', ...(canalSel !== null && (p.data?.canal ?? '') === canalSel ? { background: '#e3f2fd', fontWeight: 600 } : {}) })} />
         </Box>
       </Panel>}
       <Box className="ag-theme-quartz">
-        <Tabla memoria={'rep_ventas_' + agrupar + (vistaCanal === 'canal' ? '_canal' : '')} cargando={cargando} textoCargando="Cargando ventas…" vacio="Sin ventas con estos filtros" rowData={d?.filas || []} columnDefs={cols}
+        <Tabla memoria={'rep_ventas_' + agrupar + (vistaCanal === 'canal' ? '_canal' : '')} cargando={cargando} textoCargando="Cargando ventas…" vacio="Sin ventas con estos filtros" rowData={filasDetalle} columnDefs={cols}
           pinnedBottomRowData={total} defaultColDef={{ resizable: true, sortable: true }} tooltipShowDelay={300}
           pagination paginationPageSize={100} paginationPageSizeSelector={[25, 50, 100, 200]} domLayout="autoHeight" />
       </Box>
