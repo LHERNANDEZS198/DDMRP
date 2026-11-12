@@ -17,6 +17,8 @@ from .control import _csv
 router = APIRouter(prefix="/clasificacion", tags=["clasificacion"], dependencies=[Depends(requiere("ver_control")), Depends(fijar_modo)])
 ULTIMA = "ANY (SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok' GROUP BY empresa)"   # la ultima corrida buena de CADA empresa (sus filas solo existen bajo su propia corrida)
 
+EXPLAIN = {"on": False}
+
 
 def _ventana(meses: int) -> tuple[str, date, int]:
     """(primer mes YYYYMM, primer dia, dias) de la ventana: los ultimos `meses` meses incluyendo el actual (igual que el ETL de ventas)."""
@@ -37,7 +39,7 @@ def _cortes_iv(c, empresa=None) -> tuple[float, float]:
         return 0.5, 0.8
 
 
-def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, labs=None, crit=None, q=None, hist: bool = True, planes=None, solo_con: bool = False, mes_hasta: str | None = None) -> list[dict]:
+def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, labs=None, crit=None, q=None, hist: bool = True, planes=None, solo_con: bool = False) -> list[dict]:
     """Una fila por tienda x item (REC ya sumado al original) con la venta de la ventana, el buffer de la ultima corrida y el costo."""
     w, p = filtro_sql_permisos(user, "k.bodega_id", "mi.categoria")
     cond = [w, solo_activos("k")]
@@ -92,20 +94,18 @@ def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, l
         p["f_ids"] = ids
         pre_h += " AND producto_id = ANY(:f_ids)"; pre_s += " AND producto_id = ANY(:f_ids)"; pre_v += " AND COALESCE(r.original_id, a.producto_id) = ANY(:f_ids)"
     p["mes_desde"] = mes_desde
-    if mes_hasta:
-        p["mes_hasta"] = mes_hasta
     # inventario promedio de la ventana: lo resume el orquestador por mes (inventario_mes) para no recorrer la historia diaria completa; sin el (clase global) no se usa
     sql = f"""
     WITH h AS (
       SELECT empresa, bodega_id, producto_id, SUM(inv_suma)::float8 AS inv_suma, SUM(dias)::int AS dias_hist, SUM(dias_cero)::int AS dias_cero
-      FROM ddmrp.inventario_mes WHERE mes >= :mes_desde{' AND mes <= :mes_hasta' if mes_hasta else ''} AND {'true' if hist else 'false'}{pre_h} GROUP BY 1, 2, 3),
+      FROM ddmrp.inventario_mes WHERE mes >= :mes_desde AND {'true' if hist else 'false'}{pre_h} GROUP BY 1, 2, 3),
     v AS (
       SELECT a.empresa, {v_bod} AS bodega_id, COALESCE(r.original_id, a.producto_id) AS producto_id,
              SUM(a.cantidad)::float8 AS cant, SUM(a.valor)::float8 AS valor,
              MIN(a.mes) FILTER (WHERE a.cantidad > 0) AS primer_mes
       {v_from}
       LEFT JOIN ddmrp.v_item_rec r ON r.empresa = a.empresa AND r.rec_id = a.producto_id
-      WHERE a.mes >= :mes_desde{' AND a.mes <= :mes_hasta' if mes_hasta else ''}{pre_v}
+      WHERE a.mes >= :mes_desde{pre_v}
         AND {v_sin_cedi}
       GROUP BY 1, 2, 3),
     s AS (
@@ -126,6 +126,8 @@ def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, l
     FROM k LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = k.empresa AND mi.producto_id = k.producto_id LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = k.bodega_id AND mb.empresa = k.empresa
     WHERE {' AND '.join(cond)}
       AND (COALESCE(k.cant, 0) > 0 OR COALESCE(k.valor, 0) > 0 OR COALESCE(k.inventario, 0) > 0)"""   # sin venta y sin inventario no es un D: no se lista
+    if EXPLAIN["on"]:      # solo lo usa app/diag_salud.py: devuelve el plan de ejecucion en vez de las filas
+        return [{"plan": r[0]} for r in c.execute(text("EXPLAIN (ANALYZE, BUFFERS) " + sql), p)]
     return [dict(r) for r in c.execute(text(sql), p).mappings()]
 
 
