@@ -183,27 +183,29 @@ def ventas_producto(empresa: str | None = None, desde: str | None = None, hasta:
                     acciones: str | None = None, un: str | None = None, q: str | None = None, crit: str | None = None, skus: str | None = None, canales: str | None = None, agrupar: str = "producto", limite: int = 3000,
                     user=Depends(requiere("ver_control_compras"))):
     """Ventas facturadas por producto (o por mes y producto con agrupar=mes) con inventario y rotacion, KPI del filtro y la serie mensual."""
-    if agrupar not in ("producto", "mes", "canal"):
-        raise HTTPException(400, "agrupar debe ser producto, mes o canal")
+    if agrupar not in ("producto", "mes", "canal", "un"):
+        raise HTTPException(400, "agrupar debe ser producto, mes, canal o un")
     f = Filtros(user, empresa, desde, hasta, labs, categorias, acciones, un, q, crit=crit, skus=skus, canales=canales)
     joins, w, p = f.base("ddmrp.rep_venta_mes", con_un=True)
     lim = min(max(int(limite), 10), TOPE_FILAS)
-    per = "x.periodo, " if agrupar == "mes" else "x.canal, " if agrupar == "canal" else ""
+    dim = "x.unidad_negocio" if agrupar == "un" else "x.canal"      # dimension del resumen y del detalle en las vistas «Por canal» / «Por UN»
+    per = "x.periodo, " if agrupar == "mes" else f"{dim}, " if agrupar in ("canal", "un") else ""
+    sel_g = f"{dim} AS grupo, " if agrupar in ("canal", "un") else ""
     with pg.connect() as c:
         kpi = _filas(c, f"""SELECT count(DISTINCT x.producto_id)::int AS items, COALESCE(SUM(x.cantidad), 0)::float8 AS cantidad, COALESCE(SUM(x.valor_bruto), 0)::float8 AS bruto,
                                    COALESCE(SUM(x.descuento), 0)::float8 AS descuento, COALESCE(SUM(x.costo), 0)::float8 AS costo {joins} WHERE {w}""", p)[0]
         serie = _filas(c, f"""SELECT x.periodo, SUM(x.cantidad)::float8 AS cantidad, SUM(x.valor_bruto - x.descuento)::float8 AS neta, SUM(x.costo)::float8 AS costo
                               {joins} WHERE {w} GROUP BY x.periodo ORDER BY x.periodo""", p)
-        filas = _filas(c, f"""SELECT {per}x.producto_id, mi.descripcion, COALESCE(mi.categoria || ' - ' || NULLIF(lb.nombre, ''), mi.categoria, '') AS laboratorio, COALESCE(cr1.nombre, ic1.criterio_id, '') AS categoria,
+        filas = _filas(c, f"""SELECT {sel_g}{'x.periodo, ' if agrupar == 'mes' else ''}x.producto_id, mi.descripcion, COALESCE(mi.categoria || ' - ' || NULLIF(lb.nombre, ''), mi.categoria, '') AS laboratorio, COALESCE(cr1.nombre, ic1.criterio_id, '') AS categoria,
                                      COALESCE(cr3.nombre, ic3.criterio_id, '') AS accion, SUM(x.cantidad)::float8 AS cantidad, SUM(x.valor_bruto)::float8 AS bruto,
                                      SUM(x.descuento)::float8 AS descuento, SUM(x.costo)::float8 AS costo
                               {joins} WHERE {w}
                               GROUP BY {per}x.producto_id, mi.descripcion, lb.nombre, mi.categoria, cr1.nombre, ic1.criterio_id, cr3.nombre, ic3.criterio_id
-                              ORDER BY {'x.periodo DESC, ' if agrupar == 'mes' else 'x.canal, ' if agrupar == 'canal' else ''}SUM(x.cantidad) DESC NULLS LAST, x.producto_id LIMIT :lim""", p | {"lim": lim})
+                              ORDER BY {'x.periodo DESC, ' if agrupar == 'mes' else f'{dim}, ' if agrupar in ('canal', 'un') else ''}SUM(x.cantidad) DESC NULLS LAST, x.producto_id LIMIT :lim""", p | {"lim": lim})
         total_filas = c.execute(text(f"SELECT count(*) FROM (SELECT 1 {joins} WHERE {w} GROUP BY {per}x.producto_id) t"), p).scalar() or 0
-        # resumen por canal de lo filtrado (siempre: es barato y la pantalla lo muestra al elegir «Por canal»)
-        resumen_canal = _filas(c, f"""SELECT x.canal, count(DISTINCT x.producto_id)::int AS items, SUM(x.cantidad)::float8 AS cantidad, SUM(x.valor_bruto)::float8 AS bruto,
-                                             SUM(x.descuento)::float8 AS descuento, SUM(x.costo)::float8 AS costo {joins} WHERE {w} GROUP BY x.canal ORDER BY SUM(x.valor_bruto - x.descuento) DESC NULLS LAST""", p)
+        # resumen por canal o por unidad de negocio (segun agrupar) de lo filtrado
+        resumen_canal = _filas(c, f"""SELECT {dim} AS grupo, count(DISTINCT x.producto_id)::int AS items, SUM(x.cantidad)::float8 AS cantidad, SUM(x.valor_bruto)::float8 AS bruto,
+                                             SUM(x.descuento)::float8 AS descuento, SUM(x.costo)::float8 AS costo {joins} WHERE {w} GROUP BY {dim} ORDER BY SUM(x.valor_bruto - x.descuento) DESC NULLS LAST""", p)
         ids = sorted({r["producto_id"] for r in filas})
         inv_cedi, inv_tiendas, adu = {}, {}, {}
         if ids:
@@ -230,7 +232,7 @@ def ventas_producto(empresa: str | None = None, desde: str | None = None, hasta:
                   precio_unit=(n / rc["cantidad"]) if rc["cantidad"] and rc["cantidad"] > 0 else None)
     for r in filas:
         r["margen"] = r["neta"] - r["costo"]
-    return {"kpis": kpi, "serie": serie, "resumen_canal": resumen_canal, "filas": filas, "total_filas": total_filas, "recortado": total_filas > len(filas), "actualizacion": act}
+    return {"kpis": kpi, "serie": serie, "resumen": resumen_canal, "filas": filas, "total_filas": total_filas, "recortado": total_filas > len(filas), "actualizacion": act}
 
 
 @router.get("/proveedor")
