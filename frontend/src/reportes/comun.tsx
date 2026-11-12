@@ -167,10 +167,10 @@ export function LineasAnio({ modo, periodos, series, ...r }: { modo: ModoVista }
 
 // ---------- filtros ----------
 export type CritSel = { plan: string; vals: string[] }
-export type Filtro = { desde: string; hasta: string; labs: string[]; cats: string[]; accs: string[]; un: string[]; q: string; crit: CritSel[]; skus?: string[] }
+export type Filtro = { desde: string; hasta: string; labs: string[]; cats: string[]; accs: string[]; un: string[]; q: string; crit: CritSel[]; skus?: string[]; canales?: string[] }
 type Op = { id: string; nombre: string; se_compra?: boolean }
 export type Criterio = { plan_id: string; nombre: string; valores: { id: string; nombre: string; items: number }[] }
-export type Opciones = { plan_categoria?: string; plan_accion?: string; labs: Op[]; categorias: Op[]; acciones: Op[]; unidades: string[]; periodo_min: string | null; periodo_max: string | null; actualizacion: any[]; criterios: Criterio[]; empresas_con_datos: string[] }
+export type Opciones = { plan_categoria?: string; plan_accion?: string; labs: Op[]; categorias: Op[]; acciones: Op[]; unidades: string[]; canales?: string[]; periodo_min: string | null; periodo_max: string | null; actualizacion: any[]; criterios: Criterio[]; empresas_con_datos: string[] }
 
 const restar = (p: string, m: number) => { const t = Number(p.slice(0, 4)) * 12 + Number(p.slice(4)) - 1 - m; return `${Math.floor(t / 12)}${String((t % 12) + 1).padStart(2, '0')}` }
 const rango = (a: string, b: string) => { const r: string[] = []; for (let p = a; p <= b && r.length < 400; p = restar(p, -1)) r.push(p); return r }
@@ -192,9 +192,9 @@ export function useFiltros(clave: string) {
       setF(prev => {
         if (prev && dueno.current === empKey) return prev
         dueno.current = empKey
-        try { const g = localStorage.getItem(LSK); if (g) return { crit: [], skus: [], ...JSON.parse(g), q: '' } } catch { /* sin almacenamiento */ }
+        try { const g = localStorage.getItem(LSK); if (g) return { crit: [], skus: [], canales: [], ...JSON.parse(g), q: '' } } catch { /* sin almacenamiento */ }
         const hasta = o.periodo_max || ''
-        return { desde: hasta ? restar(hasta, 11) : '', hasta, labs: [], cats: o.categorias.filter(c => c.se_compra).map(c => c.id), accs: [], un: [], q: '', crit: [], skus: [] }
+        return { desde: hasta ? restar(hasta, 11) : '', hasta, labs: [], cats: o.categorias.filter(c => c.se_compra).map(c => c.id), accs: [], un: [], q: '', crit: [], skus: [], canales: [] }
       })
     }).catch(e => setErr(String(e?.message || e)))
   }, [empKey, LSK])
@@ -211,6 +211,7 @@ export function useFiltros(clave: string) {
     if (crit.length) p.set('crit', crit.join(','))
     if (f.q.trim()) p.set('q', f.q.trim())
     if (f.skus?.length) p.set('skus', f.skus.join(','))
+    if (f.canales?.length) p.set('canales', f.canales.join(','))
     return p.toString()
   }, [f, empKey])
   return { op, f, setF, qs, err, recargarOpciones: cargarOpciones }
@@ -254,7 +255,7 @@ function Multi({ etiqueta, opciones, valor, onChange, ancho = 220 }: { etiqueta:
       renderInput={p => <TextField {...p} label={etiqueta} />} />)
 }
 
-export function BarraFiltros({ op, f, setF, conUn, extra, sinPeriodo }: { op: Opciones; f: Filtro; setF: (f: Filtro) => void; conUn?: boolean; extra?: ReactNode; sinPeriodo?: boolean }) {
+export function BarraFiltros({ op, f, setF, conUn, conCanal, extra, sinPeriodo }: { op: Opciones; f: Filtro; setF: (f: Filtro) => void; conUn?: boolean; conCanal?: boolean; extra?: ReactNode; sinPeriodo?: boolean }) {
   const periodos = op.periodo_min && op.periodo_max ? rango(op.periodo_min, op.periodo_max) : []
   const set = (k: Partial<Filtro>) => setF({ ...f, ...k })
   const crit: CritSel[] = f.crit?.length ? f.crit : [{ plan: '', vals: [] }]     // criterios de items elegidos: planes distintos se combinan (Y), valores del mismo plan (O)
@@ -273,6 +274,7 @@ export function BarraFiltros({ op, f, setF, conUn, extra, sinPeriodo }: { op: Op
       <Multi etiqueta="Categoría" opciones={op.categorias} valor={f.cats} onChange={cats => set({ cats })} />
       <Multi etiqueta="Acción" opciones={op.acciones} valor={f.accs} onChange={accs => set({ accs })} ancho={190} />
       {conUn && <Multi etiqueta="Unidad de negocio" opciones={op.unidades.map(u => ({ id: u, nombre: u }))} valor={f.un} onChange={un => set({ un })} />}
+      {conCanal && !!op.canales?.length && <Multi etiqueta="Canal" opciones={op.canales.map(c => ({ id: c, nombre: c }))} valor={f.canales ?? []} onChange={canales => set({ canales })} />}
       <SkuPicker valor={f.skus ?? []} onChange={skus => set({ skus })} />
       {op.criterios.length > 0 && <>
         {crit.map((c, i) => <Box key={i} sx={{ display: 'contents' }}>

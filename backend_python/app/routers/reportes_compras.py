@@ -47,7 +47,7 @@ def _labs_permitidos(user) -> list[str] | None:
 class Filtros:
     """Filtros comunes. `base()` arma el FROM y el WHERE de una tabla de hechos (alias x: empresa, periodo, producto_id) con los maestros de item unidos."""
 
-    def __init__(self, user, empresa=None, desde=None, hasta=None, labs=None, categorias=None, acciones=None, un=None, q=None, proveedores=None, crit=None, skus=None):
+    def __init__(self, user, empresa=None, desde=None, hasta=None, labs=None, categorias=None, acciones=None, un=None, q=None, proveedores=None, crit=None, skus=None, canales=None):
         cfg = cfg_rep()
         self.p: dict = {"plan_cat": _plan(cfg.get("rep_plan_categoria", 1)), "plan_acc": _plan(cfg.get("rep_plan_accion", 3))}
         self.emp = _csv(empresa)
@@ -57,6 +57,7 @@ class Filtros:
                 raise HTTPException(400, f"El periodo «{nombre}» debe ser AAAAMM (ej. 202601)")
         self.labs, self.cats, self.accs, self.un = _csv(labs), _csv(categorias), _csv(acciones), _csv(un)
         self.q, self.provs = (q or "").strip(), _csv(proveedores)
+        self.canales = _csv(canales)    # canal (tipo de cliente) de la venta; solo aplica a rep_venta_mes (con_un)
         self.skus = _csv(skus)      # SKU exactos elegidos (a diferencia de `q`, que busca por texto y trae tambien 2192970 al buscar 192970)
         self.crit: dict[str, list[str]] = {}     # criterios de items (cualquier plan de Siesa): «plan:valor,plan:valor»; valores del mismo plan = O, planes distintos = Y
         for x in _csv(crit):
@@ -95,6 +96,8 @@ class Filtros:
             p[f"cp{i}"] = pl; p[f"cc{i}"] = crs
         if con_un and self.un:
             w.append("x.unidad_negocio = ANY(:un)"); p["un"] = self.un
+        if con_un and self.canales:
+            w.append("x.canal = ANY(:canales)"); p["canales"] = self.canales
         if con_prov and self.provs:
             w.append("x.proveedor_id = ANY(:provs)"); p["provs"] = self.provs
         if self.perm is not None:
@@ -137,6 +140,7 @@ def opciones(empresa: str | None = None, user=Depends(requiere("ver_control_comp
         pe = {"emp": f.emp} if f.emp else {}
         fe = "AND empresa = ANY(:emp)" if f.emp else ""
         unidades = [r[0] for r in c.execute(text(f"SELECT DISTINCT unidad_negocio FROM ddmrp.rep_venta_mes WHERE unidad_negocio <> '' {fe} ORDER BY 1"), pe).all()]
+        canales = [r[0] for r in c.execute(text(f"SELECT DISTINCT canal FROM ddmrp.rep_venta_mes WHERE canal <> '' {fe} ORDER BY 1"), pe).all()]
         rango = c.execute(text(f"""SELECT min(periodo), max(periodo) FROM (SELECT periodo FROM ddmrp.rep_venta_mes WHERE TRUE {fe} UNION ALL
                                    SELECT periodo FROM ddmrp.rep_compra_mes WHERE TRUE {fe} UNION ALL
                                    SELECT mes FROM ddmrp.ventas_mensual WHERE TRUE {fe}) t"""), pe).one()
@@ -152,7 +156,7 @@ def opciones(empresa: str | None = None, user=Depends(requiere("ver_control_comp
         por_plan.setdefault(pid, {"plan_id": pid, "nombre": pnom, "valores": []})["valores"].append({"id": cid, "nombre": cnom, "items": n})
     # empresas con datos traidos: la pantalla avisa si la elegida en la barra aun no tiene
     con_datos = sorted({a["empresa"] for a in act if a.get("fecha") and not a.get("mensaje")})
-    return {"labs": labs, "categorias": cats, "acciones": accs, "unidades": unidades, "periodo_min": rango[0], "periodo_max": rango[1], "actualizacion": act,
+    return {"labs": labs, "categorias": cats, "acciones": accs, "unidades": unidades, "canales": canales, "periodo_min": rango[0], "periodo_max": rango[1], "actualizacion": act,
             "criterios": list(por_plan.values()), "empresas_con_datos": con_datos, "plan_categoria": f.p["plan_cat"], "plan_accion": f.p["plan_acc"]}
 
 
@@ -176,15 +180,15 @@ def buscar_skus(buscar: str = "", empresa: str | None = None, user=Depends(requi
 
 @router.get("/ventas-producto")
 def ventas_producto(empresa: str | None = None, desde: str | None = None, hasta: str | None = None, labs: str | None = None, categorias: str | None = None,
-                    acciones: str | None = None, un: str | None = None, q: str | None = None, crit: str | None = None, skus: str | None = None, agrupar: str = "producto", limite: int = 3000,
+                    acciones: str | None = None, un: str | None = None, q: str | None = None, crit: str | None = None, skus: str | None = None, canales: str | None = None, agrupar: str = "producto", limite: int = 3000,
                     user=Depends(requiere("ver_control_compras"))):
     """Ventas facturadas por producto (o por mes y producto con agrupar=mes) con inventario y rotacion, KPI del filtro y la serie mensual."""
-    if agrupar not in ("producto", "mes"):
-        raise HTTPException(400, "agrupar debe ser producto o mes")
-    f = Filtros(user, empresa, desde, hasta, labs, categorias, acciones, un, q, crit=crit, skus=skus)
+    if agrupar not in ("producto", "mes", "canal"):
+        raise HTTPException(400, "agrupar debe ser producto, mes o canal")
+    f = Filtros(user, empresa, desde, hasta, labs, categorias, acciones, un, q, crit=crit, skus=skus, canales=canales)
     joins, w, p = f.base("ddmrp.rep_venta_mes", con_un=True)
     lim = min(max(int(limite), 10), TOPE_FILAS)
-    per = "x.periodo, " if agrupar == "mes" else ""
+    per = "x.periodo, " if agrupar == "mes" else "x.canal, " if agrupar == "canal" else ""
     with pg.connect() as c:
         kpi = _filas(c, f"""SELECT count(DISTINCT x.producto_id)::int AS items, COALESCE(SUM(x.cantidad), 0)::float8 AS cantidad, COALESCE(SUM(x.valor_bruto), 0)::float8 AS bruto,
                                    COALESCE(SUM(x.descuento), 0)::float8 AS descuento, COALESCE(SUM(x.costo), 0)::float8 AS costo {joins} WHERE {w}""", p)[0]
@@ -195,8 +199,11 @@ def ventas_producto(empresa: str | None = None, desde: str | None = None, hasta:
                                      SUM(x.descuento)::float8 AS descuento, SUM(x.costo)::float8 AS costo
                               {joins} WHERE {w}
                               GROUP BY {per}x.producto_id, mi.descripcion, lb.nombre, mi.categoria, cr1.nombre, ic1.criterio_id, cr3.nombre, ic3.criterio_id
-                              ORDER BY {'x.periodo DESC, ' if agrupar == 'mes' else ''}SUM(x.cantidad) DESC NULLS LAST, x.producto_id LIMIT :lim""", p | {"lim": lim})
+                              ORDER BY {'x.periodo DESC, ' if agrupar == 'mes' else 'x.canal, ' if agrupar == 'canal' else ''}SUM(x.cantidad) DESC NULLS LAST, x.producto_id LIMIT :lim""", p | {"lim": lim})
         total_filas = c.execute(text(f"SELECT count(*) FROM (SELECT 1 {joins} WHERE {w} GROUP BY {per}x.producto_id) t"), p).scalar() or 0
+        # resumen por canal de lo filtrado (siempre: es barato y la pantalla lo muestra al elegir «Por canal»)
+        resumen_canal = _filas(c, f"""SELECT x.canal, count(DISTINCT x.producto_id)::int AS items, SUM(x.cantidad)::float8 AS cantidad, SUM(x.valor_bruto)::float8 AS bruto,
+                                             SUM(x.descuento)::float8 AS descuento, SUM(x.costo)::float8 AS costo {joins} WHERE {w} GROUP BY x.canal ORDER BY SUM(x.valor_bruto - x.descuento) DESC NULLS LAST""", p)
         ids = sorted({r["producto_id"] for r in filas})
         inv_cedi, inv_tiendas, adu = {}, {}, {}
         if ids:
@@ -216,7 +223,14 @@ def ventas_producto(empresa: str | None = None, desde: str | None = None, hasta:
         s["rent"] = _pct(s["neta"] - s["costo"], s["neta"])
     neta = kpi["bruto"] - kpi["descuento"]
     kpi.update(neta=neta, rent=_pct(neta - kpi["costo"], neta))
-    return {"kpis": kpi, "serie": serie, "filas": filas, "total_filas": total_filas, "recortado": total_filas > len(filas), "actualizacion": act}
+    for rc in resumen_canal:
+        n = rc["bruto"] - rc["descuento"]
+        rc.update(neta=n, margen=n - rc["costo"], rent=_pct(n - rc["costo"], n), part=_pct(n, neta),
+                  costo_unit=(rc["costo"] / rc["cantidad"]) if rc["cantidad"] and rc["cantidad"] > 0 else None,
+                  precio_unit=(n / rc["cantidad"]) if rc["cantidad"] and rc["cantidad"] > 0 else None)
+    for r in filas:
+        r["margen"] = r["neta"] - r["costo"]
+    return {"kpis": kpi, "serie": serie, "resumen_canal": resumen_canal, "filas": filas, "total_filas": total_filas, "recortado": total_filas > len(filas), "actualizacion": act}
 
 
 @router.get("/proveedor")

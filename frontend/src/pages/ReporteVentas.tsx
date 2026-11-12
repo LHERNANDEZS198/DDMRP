@@ -14,19 +14,21 @@ export default function ReporteVentas() {
   const [d, setD] = useState<any>(null)
   const [modo, setModo] = useModoVista()
   const [agrupar, setAgrupar] = useState<'producto' | 'mes'>('producto')
+  const [vistaCanal, setVistaCanal] = useState<'general' | 'canal'>('general')     // «Por canal»: la tabla detalle sale por canal y producto y arriba un resumen por canal
   const [grafUnidad, setGrafUnidad] = useState<'valor' | 'cantidad'>('valor')     // la gráfica por mes: venta y costo en pesos, o solo las unidades
   const [cargando, setCargando] = useState(false)
   const [e2, setE2] = useState('')
   const cargar = () => {
     if (!f) return
     setCargando(true); setE2('')
-    api(`/compras/reportes/ventas-producto?${qs}&agrupar=${agrupar}`).then(setD).catch(e => setE2(String(e?.message || e))).finally(() => setCargando(false))
+    api(`/compras/reportes/ventas-producto?${qs}&agrupar=${vistaCanal === 'canal' ? 'canal' : agrupar}`).then(setD).catch(e => setE2(String(e?.message || e))).finally(() => setCargando(false))
   }
-  useEffect(cargar, [qs, agrupar])
+  useEffect(cargar, [qs, agrupar, vistaCanal])
 
   const num = (campo: string, titulo: string, fmt: (v: any) => string, ancho = 120, tip?: string): ColDef => ({ field: campo, headerName: titulo, type: 'numericColumn', width: ancho, filter: 'agNumberColumnFilter', headerTooltip: tip, valueFormatter: (p: any) => p.value == null ? '' : fmt(p.value) })
   const cols: ColDef[] = useMemo(() => [
-    ...(agrupar === 'mes' ? [{ field: 'periodo', headerName: 'Periodo', width: 100, filter: true, valueFormatter: (p: any) => mesLargo(p.value) } as ColDef] : []),
+    ...(vistaCanal === 'canal' ? [{ field: 'canal', headerName: 'Canal', width: 150, filter: true, pinned: 'left', valueFormatter: (p: any) => p.value || '(Sin canal)' } as ColDef] : []),
+    ...(agrupar === 'mes' && vistaCanal === 'general' ? [{ field: 'periodo', headerName: 'Periodo', width: 100, filter: true, valueFormatter: (p: any) => mesLargo(p.value) } as ColDef] : []),
     { field: 'producto_id', headerName: 'SKU', width: 100, pinned: 'left', filter: true },
     { field: 'descripcion', headerName: 'Producto', width: 300, pinned: 'left', filter: true },
     { field: 'laboratorio', headerName: 'Laboratorio', width: 170, filter: true },
@@ -42,9 +44,26 @@ export default function ReporteVentas() {
     num('neta', 'Venta neta', pesos, 135, 'Valor bruto − descuento de línea'),
     num('bruto', 'Valor bruto', pesos, 135),
     num('descuento', 'Descuento', pesos, 125),
+    num('margen', 'Margen $', pesos, 130, 'Venta neta − costo'),
     num('rent', '% Rent', v => pct(v, 0), 95, '(Venta neta − costo) ÷ venta neta'),
-  ], [agrupar])
-  const total = d ? [{ descripcion: 'Total', cantidad: d.kpis.cantidad, costo: d.kpis.costo, neta: d.kpis.neta, bruto: d.kpis.bruto, descuento: d.kpis.descuento, rent: d.kpis.rent }] : []
+  ], [agrupar, vistaCanal])
+  const colsCanal: ColDef[] = useMemo(() => [
+    { field: 'canal', headerName: 'Canal', width: 170, pinned: 'left', filter: true, valueFormatter: (p: any) => p.value || '(Sin canal)' },
+    num('neta', 'Venta total (neta)', pesos, 160, 'Valor bruto − descuento de línea'),
+    num('part', '% del total', v => pct(v, 0), 105, 'Participación del canal en la venta neta de lo filtrado'),
+    num('margen', 'Margen $', pesos, 140, 'Venta neta − costo'),
+    num('rent', '% Rent', v => pct(v, 0), 95, '(Venta neta − costo) ÷ venta neta'),
+    num('cantidad', 'Unidades', ent, 115),
+    num('items', 'Productos', ent, 110, 'Productos distintos vendidos en el canal'),
+    num('precio_unit', 'Precio unit. venta', pesos2, 135),
+    num('costo_unit', 'Costo unitario', pesos2, 125),
+    num('bruto', 'Valor bruto', pesos, 135),
+    num('descuento', 'Descuento', pesos, 125),
+    num('costo', 'Costo total', pesos, 130),
+  ], [])
+  const totalCanal = d ? [{ canal: 'Total', neta: d.kpis.neta, part: 1, margen: d.kpis.neta - d.kpis.costo, rent: d.kpis.rent, cantidad: d.kpis.cantidad, items: d.kpis.items,
+    precio_unit: d.kpis.cantidad > 0 ? d.kpis.neta / d.kpis.cantidad : null, costo_unit: d.kpis.cantidad > 0 ? d.kpis.costo / d.kpis.cantidad : null, bruto: d.kpis.bruto, descuento: d.kpis.descuento, costo: d.kpis.costo }] : []
+  const total = d ? [{ descripcion: 'Total', cantidad: d.kpis.cantidad, costo: d.kpis.costo, neta: d.kpis.neta, bruto: d.kpis.bruto, descuento: d.kpis.descuento, rent: d.kpis.rent, margen: d.kpis.neta - d.kpis.costo }] : []
 
   if (err) return <Alert severity="error">{err}</Alert>
   if (!op || !f) return <Box sx={{ display: 'grid', placeItems: 'center', height: '40vh' }}><CircularProgress /></Box>
@@ -57,7 +76,7 @@ export default function ReporteVentas() {
         <Actualizacion op={op} alTerminar={() => { recargarOpciones(); cargar() }} />
         <Box sx={{ ml: 'auto' }}><SelectorVista modo={modo} setModo={setModo} /></Box>
       </Box>
-      <BarraFiltros op={op} f={f} setF={setF} conUn />
+      <BarraFiltros op={op} f={f} setF={setF} conUn conCanal />
       <AvisoEmpresa op={op} />
       {e2 && <Alert severity="error">{e2}</Alert>}
       {!!d && !d.filas.length && !cargando && <Alert severity="info">No hay ventas con estos filtros. Si es la primera vez, un usuario con permiso debe pulsar «Actualizar datos».</Alert>}
@@ -80,15 +99,24 @@ export default function ReporteVentas() {
               series={[{ nombre: 'Unidades vendidas', color: COLOR.azul, valores: d?.serie.map((s: any) => s.cantidad) ?? [] }]} />}
       </Panel>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
-        <ToggleButtonGroup size="small" exclusive value={agrupar} onChange={(_, v) => v && setAgrupar(v)}>
+        <ToggleButtonGroup size="small" exclusive value={vistaCanal} onChange={(_, v) => v && setVistaCanal(v)}>
+          <ToggleButton value="general">General</ToggleButton><ToggleButton value="canal">Por canal</ToggleButton>
+        </ToggleButtonGroup>
+        <ToggleButtonGroup size="small" exclusive value={agrupar} onChange={(_, v) => v && setAgrupar(v)} disabled={vistaCanal === 'canal'}>
           <ToggleButton value="producto">Por producto</ToggleButton><ToggleButton value="mes">Por mes y producto</ToggleButton>
         </ToggleButtonGroup>
         <Typography variant="caption" color="text.secondary">
           {d ? `${ent(d.filas.length)} de ${ent(d.total_filas)} filas${d.recortado ? ' (afina los filtros para ver el resto)' : ''}` : ''} · Ctrl+A y Ctrl+C copian la tabla a Excel
         </Typography>
       </Box>
+      {vistaCanal === 'canal' && <Panel titulo="Resumen por canal" ayuda="Venta, margen y rentabilidad de cada canal (tipo de cliente) con los filtros de arriba. El filtro «Canal» de la barra deja solo los canales que elijas; sin elegir, salen todos.">
+        <Box className="ag-theme-quartz">
+          <Tabla memoria="rep_ventas_resumen_canal" cargando={cargando} textoCargando="Cargando…" vacio="Sin ventas con estos filtros" rowData={d?.resumen_canal || []} columnDefs={colsCanal}
+            pinnedBottomRowData={totalCanal} defaultColDef={{ resizable: true, sortable: true }} domLayout="autoHeight" />
+        </Box>
+      </Panel>}
       <Box className="ag-theme-quartz">
-        <Tabla memoria={'rep_ventas_' + agrupar} cargando={cargando} textoCargando="Cargando ventas…" vacio="Sin ventas con estos filtros" rowData={d?.filas || []} columnDefs={cols}
+        <Tabla memoria={'rep_ventas_' + agrupar + (vistaCanal === 'canal' ? '_canal' : '')} cargando={cargando} textoCargando="Cargando ventas…" vacio="Sin ventas con estos filtros" rowData={d?.filas || []} columnDefs={cols}
           pinnedBottomRowData={total} defaultColDef={{ resizable: true, sortable: true }} tooltipShowDelay={300}
           pagination paginationPageSize={100} paginationPageSizeSelector={[25, 50, 100, 200]} domLayout="autoHeight" />
       </Box>
