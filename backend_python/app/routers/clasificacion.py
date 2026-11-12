@@ -47,7 +47,8 @@ def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, l
     # su buffer sale de sugerencias_cedi y no hay tiendas. Sin el modo: solo tiendas, como siempre (las ventas directas del CEDI no cuentan como tienda).
     cedi = solo_cedi()
     v_bod = "d.cedi" if cedi else "a.bodega_id"
-    v_from = ("FROM ddmrp.ventas_mensual a JOIN ddmrp.v_origen_cedi d ON d.empresa = a.empresa AND d.origen = a.bodega_id" if cedi
+    # v_origen_cedi (~200 filas) se materializa y se une por UNA llave de texto: con dos columnas el planner hacia merge join solo por empresa (41 M comparaciones)
+    v_from = ("FROM ddmrp.ventas_mensual a JOIN o d ON d.llave = a.empresa || '|' || a.bodega_id" if cedi
               else "FROM ddmrp.ventas_mensual a")
     v_sin_cedi = ("true" if cedi else "NOT EXISTS (SELECT 1 FROM ddmrp.maestro_cedi mc WHERE mc.empresa = a.empresa AND mc.bodega_id = a.bodega_id)   -- las ventas directas del CEDI no son una tienda")
     t_sug = "ddmrp.sugerencias_cedi" if cedi else "ddmrp.sugerencias_envio"
@@ -96,7 +97,7 @@ def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, l
     p["mes_desde"] = mes_desde
     # inventario promedio de la ventana: lo resume el orquestador por mes (inventario_mes) para no recorrer la historia diaria completa; sin el (clase global) no se usa
     sql = f"""
-    WITH h AS (
+    WITH {"o AS MATERIALIZED (SELECT empresa, cedi, empresa || '|' || origen AS llave FROM ddmrp.v_origen_cedi), " if cedi else ""}h AS (
       SELECT empresa, bodega_id, producto_id, SUM(inv_suma)::float8 AS inv_suma, SUM(dias)::int AS dias_hist, SUM(dias_cero)::int AS dias_cero
       FROM ddmrp.inventario_mes WHERE mes >= :mes_desde AND {'true' if hist else 'false'}{pre_h} GROUP BY 1, 2, 3),
     v AS (
@@ -126,9 +127,14 @@ def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, l
     FROM k LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = k.empresa AND mi.producto_id = k.producto_id LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = k.bodega_id AND mb.empresa = k.empresa
     WHERE {' AND '.join(cond)}
       AND (COALESCE(k.cant, 0) > 0 OR COALESCE(k.valor, 0) > 0 OR COALESCE(k.inventario, 0) > 0)"""   # sin venta y sin inventario no es un D: no se lista
-    if EXPLAIN["on"]:      # solo lo usa app/diag_salud.py: devuelve el plan de ejecucion en vez de las filas
-        return [{"plan": r[0]} for r in c.execute(text("EXPLAIN (ANALYZE, BUFFERS) " + sql), p)]
-    return [dict(r) for r in c.execute(text(sql), p).mappings()]
+    # el planner subestima k (FULL JOIN de v y s: calcula 1 fila, salen miles) y elegia nested loop re-agregando h por cada fila (213 M comparaciones, 90 s): sin nested loop usa hash join
+    c.execute(text("SET LOCAL enable_nestloop = off"))
+    try:
+        if EXPLAIN["on"]:      # solo lo usa app/diag_salud.py: devuelve el plan de ejecucion en vez de las filas
+            return [{"plan": r[0]} for r in c.execute(text(("EXPLAIN (ANALYZE, BUFFERS) " if EXPLAIN.get("analyze", True) else "EXPLAIN ") + sql), p)]
+        return [dict(r) for r in c.execute(text(sql), p).mappings()]
+    finally:
+        c.execute(text("SET LOCAL enable_nestloop = on"))
 
 
 _CACHE_GLOBAL: dict = {}      # clase de cada item contra TODO el universo visible: no depende de los filtros de pantalla, se reutiliza mientras no corra el motor

@@ -157,3 +157,473 @@ Execution Time: 1493.347 ms
 
 #### 2026-10-26 15:08:27.345083+00:00  /api/salud  total 50127 ms, SQL 50122 ms, filas None, extra {}
 params: {"crit": "001:0002", "limit": "5000", "meses": "12", "empresa": "05", "criterio": "margen", "solo_cedi": "true"}
+-- FALLO: (psycopg.errors.QueryCanceled) canceling statement due to statement timeout
+[SQL: EXPLAIN (ANALYZE, BUFFERS) 
+    WITH h AS (
+      SELECT empresa, bodega_id, producto_id, SUM(inv_suma)::float8 AS inv_suma, SUM(dias)::int AS dias_hist, SUM(dias_cero)::int AS dias_cero
+      FROM ddmrp.inventario_mes
+
+#### 2026-10-26 15:08:37.543885+00:00  /api/salud  total 50117 ms, SQL 50114 ms, filas None, extra {}
+params: {"crit": "001:0002,001:0003", "limit": "5000", "meses": "12", "empresa": "05", "criterio": "margen", "solo_cedi": "true"}
+-- FALLO: (psycopg.errors.QueryCanceled) canceling statement due to statement timeout
+[SQL: EXPLAIN (ANALYZE, BUFFERS) 
+    WITH h AS (
+      SELECT empresa, bodega_id, producto_id, SUM(inv_suma)::float8 AS inv_suma, SUM(dias)::int AS dias_hist, SUM(dias_cero)::int AS dias_cero
+      FROM ddmrp.inventario_mes
+
+#### 2026-11-10 18:47:22.930854+00:00  /api/clasificacion  total 37716 ms, SQL 37447 ms, filas 1010, extra {"nivel": "item", "filas_sql": 36259, "con_global": true, "cache_global": "miss"}
+params: {"limit": "5000", "meses": "12", "nivel": "item", "corte_a": "80", "corte_b": "95", "empresa": "21", "criterio": "margen"}
+-- tiempo con filtros (incluye resolver los items del filtro): 1.6 s
+Hash Left Join  (cost=20112.53..41776.60 rows=90 width=341) (actual time=1094.895..1639.440 rows=40333 loops=1)
+  Hash Cond: ((COALESCE(a.bodega_id, sugerencias_envio.bodega_id) = mb.bodega_id) AND (COALESCE(a.empresa, sugerencias_envio.empresa) = mb.empresa))
+  Buffers: shared hit=723709 read=36
+  InitPlan 7 (returns $20)
+    ->  Aggregate  (cost=1.56..1.57 rows=1 width=32) (actual time=0.011..0.013 rows=1 loops=1)
+          Buffers: shared hit=1
+          ->  Seq Scan on parametro  (cost=0.00..1.56 rows=1 width=4) (actual time=0.008..0.010 rows=1 loops=1)
+                Filter: (clave = 'solo_items_activos'::text)
+                Rows Removed by Filter: 44
+                Buffers: shared hit=1
+  ->  Nested Loop Left Join  (cost=20103.28..41538.96 rows=90 width=183) (actual time=1094.775..1428.768 rows=40333 loops=1)
+        Buffers: shared hit=602708 read=36
+        ->  Merge Left Join  (cost=20102.99..41509.04 rows=90 width=146) (actual time=1094.746..1282.047 rows=40333 loops=1)
+              Merge Cond: (((COALESCE(a.empresa, sugerencias_envio.empresa)) = inventario_mes.empresa) AND ((COALESCE(a.bodega_id, sugerencias_envio.bodega_id)) = inventario_mes.bodega_id) AND ((COALESCE((COALESCE(item_rec.original_id, a.producto_id)), sugerencias_envio.producto_id)) = inventario_mes.producto_id))
+              Buffers: shared hit=481709 read=36
+              ->  Sort  (cost=20102.57..20102.79 rows=90 width=130) (actual time=1094.604..1099.033 rows=40333 loops=1)
+                    Sort Key: (COALESCE(a.empresa, sugerencias_envio.empresa)), (COALESCE(a.bodega_id, sugerencias_envio.bodega_id)), (COALESCE((COALESCE(item_rec.original_id, a.producto_id)), sugerencias_envio.producto_id))
+                    Sort Method: quicksort  Memory: 6386kB
+                    Buffers: shared hit=387219 read=36
+                    ->  Hash Full Join  (cost=13916.17..20099.65 rows=90 width=130) (actual time=399.624..781.781 rows=40333 loops=1)
+                          Hash Cond: ((sugerencias_envio.empresa = a.empresa) AND (sugerencias_envio.bodega_id = a.bodega_id) AND (sugerencias_envio.producto_id = (COALESCE(item_rec.original_id, a.producto_id))))
+                          Filter: ((COALESCE(a.empresa, sugerencias_envio.empresa) = ANY ('{21}'::text[])) AND ((COALESCE(((sum(a.cantidad))::double precision), '0'::double precision) > '0'::double precision) OR (COALESCE(((sum(a.valor))::double precision), '0'::double precision) > '0'::double precision) OR (COALESCE((sugerencias_envio.inventario)::double precision, '0'::double precision) > '0'::double precision)) AND (($20 = '0'::numeric) OR (NOT (SubPlan 8))) AND ((NOT (hashed SubPlan 2)) OR (SubPlan 3) OR (SubPlan 5)))
+                          Rows Removed by Filter: 27
+                          Buffers: shared hit=387219 read=36
+                          ->  Nested Loop  (cost=1.91..6141.09 rows=5624 width=41) (actual time=0.098..24.344 rows=35542 loops=1)
+                                Buffers: shared hit=5924 read=1
+                                ->  Unique  (cost=1.48..1.48 rows=2 width=8) (actual time=0.069..0.078 rows=2 loops=1)
+                                      Buffers: shared hit=1
+                                      ->  Sort  (cost=1.48..1.48 rows=2 width=8) (actual time=0.068..0.072 rows=2 loops=1)
+                                            Sort Key: "ANY_subquery".max
+                                            Sort Method: quicksort  Memory: 25kB
+                                            Buffers: shared hit=1
+                                            ->  Subquery Scan on "ANY_subquery"  (cost=1.43..1.47 rows=2 width=8) (actual time=0.053..0.055 rows=2 loops=1)
+                                                  Buffers: shared hit=1
+                                                  ->  HashAggregate  (cost=1.43..1.45 rows=2 width=11) (actual time=0.052..0.053 rows=2 loops=1)
+                                                        Group Key: ejecucion_motor.empresa
+                                                        Batches: 1  Memory Usage: 24kB
+                                                        Buffers: shared hit=1
+                                                        ->  Seq Scan on ejecucion_motor  (cost=0.00..1.32 rows=20 width=11) (actual time=0.026..0.028 rows=20 loops=1)
+                                                              Filter: (estado = 'ok'::text)
+                                                              Rows Removed by Filter: 6
+                                                              Buffers: shared hit=1
+                                ->  Index Scan using sugerencias_envio_pkey on sugerencias_envio  (cost=0.43..3041.68 rows=2812 width=49) (actual time=0.048..7.010 rows=17771 loops=2)
+                                      Index Cond: ((ejecucion_id = "ANY_subquery".max) AND (empresa = ANY ('{21}'::text[])))
+                                      Buffers: shared hit=5923 read=1
+                          ->  Hash  (cost=12294.77..12294.77 rows=57984 width=89) (actual time=395.816..395.821 rows=36329 loops=1)
+                                Buckets: 65536  Batches: 1  Memory Usage: 3032kB
+                                Buffers: shared hit=179453
+                                ->  HashAggregate  (cost=11135.09..12294.77 rows=57984 width=89) (actual time=354.732..384.856 rows=36329 loops=1)
+                                      Group Key: a.empresa, a.bodega_id, COALESCE(item_rec.original_id, a.producto_id)
+                                      Batches: 1  Memory Usage: 30225kB
+                                      Buffers: shared hit=179453
+                                      InitPlan 10 (returns $27)
+                                        ->  Aggregate  (cost=1.56..1.57 rows=1 width=32) (actual time=0.013..0.014 rows=1 loops=1)
+                                              Buffers: shared hit=1
+                                              ->  Seq Scan on parametro parametro_1  (cost=0.00..1.56 rows=1 width=4) (actual time=0.009..0.011 rows=1 loops=1)
+                                                    Filter: (clave = 'rec_suma_original'::text)
+                                                    Rows Removed by Filter: 44
+                                                    Buffers: shared hit=1
+                                      ->  Hash Left Join  (cost=278.30..10118.79 rows=57984 width=58) (actual time=15.953..221.069 rows=164388 loops=1)
+                                            Hash Cond: ((a.empresa = item_rec.empresa) AND (a.producto_id = item_rec.rec_id))
+                                            Join Filter: (COALESCE($27, '1'::numeric) <> '0'::numeric)
+                                            Buffers: shared hit=179453
+                                            ->  Hash Anti Join  (cost=1.47..9537.47 rows=57984 width=33) (actual time=14.059..184.879 rows=164388 loops=1)
+                                                  Hash Cond: ((a.empresa = mc.empresa) AND (a.bodega_id = mc.bodega_id))
+                                                  Buffers: shared hit=179340
+                                                  ->  Index Scan using ventas_mensual_pkey on ventas_mensual a  (cost=0.42..8649.61 rows=58324 width=33) (actual time=14.038..153.108 rows=164411 loops=1)
+                                                        Index Cond: (empresa = ANY ('{21}'::text[]))
+                                                        Filter: ((mes)::text >= '202512'::text)
+                                                        Rows Removed by Filter: 14116
+                                                        Buffers: shared hit=179339
+                                                  ->  Hash  (cost=1.02..1.02 rows=2 width=9) (actual time=0.013..0.014 rows=2 loops=1)
+                                                        Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                                                        Buffers: shared hit=1
+                                                        ->  Seq Scan on maestro_cedi mc  (cost=0.00..1.02 rows=2 width=9) (actual time=0.008..0.009 rows=2 loops=1)
+                                                              Buffers: shared hit=1
+                                            ->  Hash  (cost=177.93..177.93 rows=6593 width=18) (actual time=1.884..1.884 rows=6593 loops=1)
+                                                  Buckets: 8192  Batches: 1  Memory Usage: 387kB
+                                                  Buffers: shared hit=112
+                                                  ->  Seq Scan on item_rec  (cost=0.00..177.93 rows=6593 width=18) (actual time=0.005..0.724 rows=6593 loops=1)
+                                                        Buffers: shared hit=112
+                          SubPlan 8
+                            ->  Index Scan using item_estado_pkey on item_estado ie_x  (cost=0.29..2.51 rows=1 width=0) (actual time=0.004..0.004 rows=0 loops=40333)
+                                  Index Cond: ((empresa = COALESCE(a.empresa, sugerencias_envio.empresa)) AND (producto_id = COALESCE((COALESCE(item_rec.original_id, a.producto_id)), sugerencias_envio.producto_id)))
+                                  Filter: (estado <> 1)
+                                  Rows Removed by Filter: 1
+                                  Buffers: shared hit=120964 read=35
+                          SubPlan 2
+                            ->  Unique  (cost=0.29..604.77 rows=2 width=3) (actual time=0.042..3.308 rows=2 loops=1)
+                                  Buffers: shared hit=210
+                                  ->  Index Only Scan using maestro_item_pkey on maestro_item mi_e  (cost=0.29..555.82 rows=19582 width=3) (actual time=0.042..2.329 rows=19582 loops=1)
+                                        Heap Fetches: 0
+                                        Buffers: shared hit=210
+                          SubPlan 3
+                            ->  Index Only Scan using maestro_item_pkey on maestro_item mi_m  (cost=0.29..1.41 rows=1 width=0) (actual time=0.003..0.003 rows=1 loops=40333)
+                                  Index Cond: ((empresa = COALESCE(a.empresa, sugerencias_envio.empresa)) AND (producto_id = COALESCE((COALESCE(item_rec.original_id, a.producto_id)), sugerencias_envio.producto_id)))
+                                  Heap Fetches: 0
+                                  Buffers: shared hit=80667
+                          SubPlan 5
+                            ->  Nested Loop  (cost=0.57..3.91 rows=1 width=0) (never executed)
+                                  ->  Index Scan using item_rec_pkey on item_rec ir_m  (cost=0.28..2.50 rows=1 width=10) (never executed)
+                                        Index Cond: ((empresa = COALESCE(a.empresa, sugerencias_envio.empresa)) AND (rec_id = COALESCE((COALESCE(item_rec.original_id, a.producto_id)), sugerencias_envio.producto_id)))
+                                  ->  Index Only Scan using maestro_item_pkey on maestro_item mo_m  (cost=0.29..1.41 rows=1 width=10) (never executed)
+                                        Index Cond: ((empresa = COALESCE(a.empresa, sugerencias_envio.empresa)) AND (producto_id = ir_m.original_id))
+                                        Heap Fetches: 0
+              ->  GroupAggregate  (cost=0.42..20408.69 rows=56964 width=32) (actual time=0.133..146.231 rows=63232 loops=1)
+                    Group Key: inventario_mes.empresa, inventario_mes.bodega_id, inventario_mes.producto_id
+                    Buffers: shared hit=94490
+                    ->  Index Scan using inventario_mes_pkey on inventario_mes  (cost=0.42..17977.55 rows=95618 width=28) (actual time=0.120..114.883 rows=93449 loops=1)
+                          Index Cond: ((empresa = ANY ('{21}'::text[])) AND (mes >= '202512'::text))
+                          Buffers: shared hit=94490
+        ->  Index Scan using maestro_item_pkey on maestro_item mi  (cost=0.29..0.33 rows=1 width=47) (actual time=0.003..0.003 rows=1 loops=40333)
+              Index Cond: ((empresa = COALESCE(a.empresa, sugerencias_envio.empresa)) AND (producto_id = COALESCE((COALESCE(item_rec.original_id, a.producto_id)), sugerencias_envio.producto_id)))
+              Buffers: shared hit=120999
+  ->  Hash  (cost=4.87..4.87 rows=187 width=28) (actual time=0.069..0.070 rows=187 loops=1)
+        Buckets: 1024  Batches: 1  Memory Usage: 20kB
+        Buffers: shared hit=3
+        ->  Seq Scan on maestro_bodega mb  (cost=0.00..4.87 rows=187 width=28) (actual time=0.012..0.034 rows=187 loops=1)
+              Buffers: shared hit=3
+  SubPlan 1
+    ->  Index Scan using costo_item_pkey on costo_item ci  (cost=0.29..2.51 rows=1 width=8) (actual time=0.003..0.004 rows=1 loops=40333)
+          Index Cond: ((empresa = COALESCE(a.empresa, sugerencias_envio.empresa)) AND (producto_id = COALESCE((COALESCE(item_rec.original_id, a.producto_id)), sugerencias_envio.producto_id)))
+          Buffers: shared hit=120998
+Planning:
+  Buffers: shared hit=23
+Planning Time: 3.180 ms
+Execution Time: 1642.213 ms
+
+#### 2026-10-22 21:25:51.205503+00:00  /alertas/resumen  total 10992 ms   params: {"crit": "001:0003", "empresa": "05"}
+GroupAggregate  (cost=1275195.07..1275195.14 rows=1 width=56) (actual time=4169.261..4172.796 rows=4 loops=1)
+  Group Key: ((sugerencias_envio.zona)::text)
+  Buffers: shared hit=789130 read=11481
+  InitPlan 6 (returns $12)
+    ->  Aggregate  (cost=1.56..1.57 rows=1 width=32) (actual time=0.025..0.026 rows=1 loops=1)
+          Buffers: shared hit=1
+          ->  Seq Scan on parametro  (cost=0.00..1.56 rows=1 width=4) (actual time=0.017..0.019 rows=1 loops=1)
+                Filter: (clave = 'solo_items_activos'::text)
+                Rows Removed by Filter: 44
+                Buffers: shared hit=1
+  ->  Sort  (cost=1275193.50..1275193.50 rows=1 width=50) (actual time=4168.947..4169.384 rows=8586 loops=1)
+        Sort Key: ((sugerencias_envio.zona)::text)
+        Sort Method: quicksort  Memory: 852kB
+        Buffers: shared hit=789130 read=11481
+        ->  Nested Loop Left Join  (cost=608.37..1275193.49 rows=1 width=50) (actual time=1003.162..4163.545 rows=8586 loops=1)
+              Buffers: shared hit=789130 read=11481
+              ->  Nested Loop Semi Join  (cost=608.09..1275193.17 rows=1 width=21) (actual time=1003.144..4118.795 rows=8586 loops=1)
+                    Join Filter: (sugerencias_envio.ejecucion_id = "ANY_subquery".max)
+                    Rows Removed by Join Filter: 170710
+                    Buffers: shared hit=763372 read=11481
+                    ->  Nested Loop  (cost=606.66..1275190.56 rows=38 width=29) (actual time=1003.044..4078.767 rows=93941 loops=1)
+                          Buffers: shared hit=763371 read=11481
+                          ->  Index Scan using item_criterio_pkey on item_criterio ic0  (cost=0.42..4634.48 rows=137 width=10) (actual time=738.692..860.234 rows=700 loops=1)
+                                Index Cond: (plan_id = '001'::text)
+                                Filter: (criterio_id = ANY ('{0003}'::text[]))
+                                Rows Removed by Filter: 18882
+                                Buffers: shared hit=19826 read=977
+                          ->  Memoize  (cost=606.24..9340.56 rows=100 width=29) (actual time=1.267..4.572 rows=134 loops=700)
+                                Cache Key: ic0.empresa, ic0.producto_id
+                                Cache Mode: logical
+                                Hits: 0  Misses: 700  Evictions: 0  Overflows: 0  Memory Usage: 6111kB
+                                Buffers: shared hit=743545 read=10504
+                                ->  Append  (cost=606.23..9340.55 rows=100 width=29) (actual time=1.265..4.494 rows=134 loops=700)
+                                      Buffers: shared hit=743545 read=10504
+                                      ->  Index Scan using idx_sug_producto_bodega on sugerencias_envio  (cost=606.23..8384.53 rows=99 width=29) (actual time=0.175..3.072 rows=134 loops=700)
+                                            Index Cond: (producto_id = ic0.producto_id)
+                                            Filter: ((empresa = ANY ('{05}'::text[])) AND (ic0.empresa = empresa) AND (NOT (hashed SubPlan 9)) AND (($12 = '0'::numeric) OR (NOT (SubPlan 7))) AND ((NOT (hashed SubPlan 1)) OR (SubPlan 2) OR (SubPlan 4)))
+                                            Rows Removed by Filter: 67
+                                            Buffers: shared hit=603030 read=10254
+                                            SubPlan 9
+                                              ->  Seq Scan on maestro_cedi mc_m  (cost=0.00..1.02 rows=2 width=9) (actual time=15.793..15.798 rows=2 loops=2)
+                                                    Buffers: shared hit=2
+                                            SubPlan 7
+                                              ->  Index Scan using item_estado_pkey on item_estado ie_x  (cost=0.29..2.51 rows=1 width=0) (actual time=0.004..0.004 rows=0 loops=93941)
+                                                    Index Cond: ((empresa = sugerencias_envio.empresa) AND (producto_id = sugerencias_envio.producto_id))
+                                                    Filter: (estado <> 1)
+                                                    Rows Removed by Filter: 1
+                                                    Buffers: shared hit=281822 read=1
+                                            SubPlan 1
+                                              ->  Unique  (cost=0.29..604.77 rows=2 width=3) (actual time=20.240..22.430 rows=2 loops=1)
+                                                    Buffers: shared hit=210
+                                                    ->  Index Only Scan using maestro_item_pkey on maestro_item mi_e  (cost=0.29..555.82 rows=19582 width=3) (actual time=20.237..21.708 rows=19582 loops=1)
+                                                          Heap Fetches: 0
+                                                          Buffers: shared hit=210
+                                            SubPlan 2
+                                              ->  Index Only Scan using maestro_item_pkey on maestro_item mi_m  (cost=0.29..1.41 rows=1 width=0) (actual time=0.003..0.003 rows=1 loops=93941)
+                                                    Index Cond: ((empresa = sugerencias_envio.empresa) AND (producto_id = sugerencias_envio.producto_id))
+                                                    Heap Fetches: 0
+                                                    Buffers: shared hit=187883
+                                            SubPlan 4
+                                              ->  Nested Loop  (cost=0.57..3.91 rows=1 width=0) (never executed)
+                                                    ->  Index Scan using item_rec_pkey on item_rec ir_m  (cost=0.28..2.50 rows=1 width=10) (never executed)
+                                                          Index Cond: ((empresa = sugerencias_envio.empresa) AND (rec_id = sugerencias_envio.producto_id))
+                                                    ->  Index Only Scan using maestro_item_pkey on maestro_item mo_m  (cost=0.29..1.41 rows=1 width=10) (never executed)
+                                                          Index Cond: ((empresa = sugerencias_envio.empresa) AND (producto_id = ir_m.original_id))
+                                                          Heap Fetches: 0
+                                      ->  Index Scan using uq_sug_cedi on sugerencias_cedi  (cost=606.09..955.52 rows=1 width=30) (actual time=1.401..1.401 rows=0 loops=700)
+                                            Index Cond: ((empresa = ic0.empresa) AND (producto_id = ic0.producto_id))
+                                            Filter: ((empresa = ANY ('{05}'::text[])) AND (NOT (hashed SubPlan 9)) AND (($12 = '0'::numeric) OR (NOT (SubPlan 7))) AND ((NOT (hashed SubPlan 1)) OR (SubPlan 2) OR (SubPlan 4)))
+                                            Rows Removed by Filter: 2
+                                            Buffers: shared hit=140515 read=250
+                    ->  Materialize  (cost=1.43..1.48 rows=2 width=8) (actual time=0.000..0.000 rows=2 loops=93941)
+                          Buffers: shared hit=1
+                          ->  Subquery Scan on "ANY_subquery"  (cost=1.43..1.47 rows=2 width=8) (actual time=0.027..0.029 rows=2 loops=1)
+                                Buffers: shared hit=1
+                                ->  HashAggregate  (cost=1.43..1.45 rows=2 width=11) (actual time=0.026..0.027 rows=2 loops=1)
+                                      Group Key: ejecucion_motor.empresa
+                                      Batches: 1  Memory Usage: 24kB
+                                      Buffers: shared hit=1
+                                      ->  Seq Scan on ejecucion_motor  (cost=0.00..1.32 rows=20 width=11) (actual time=0.012..0.014 rows=20 loops=1)
+                                            Filter: (estado = 'ok'::text)
+                                            Rows Removed by Filter: 6
+                                            Buffers: shared hit=1
+              ->  Index Scan using costo_item_pkey on costo_item ci  (cost=0.29..0.31 rows=1 width=17) (actual time=0.004..0.004 rows=1 loops=8586)
+                    Index Cond: ((empresa = sugerencias_envio.empresa) AND (producto_id = sugerencias_envio.producto_id))
+                    Buffers: shared hit=25758
+Planning:
+  Buffers: shared hit=56
+Planning Time: 2.787 ms
+JIT:
+  Functions: 140
+  Options: Inlining true, Optimization true, Expressions true, Deforming true
+  Timing: Generation 5.920 ms, Inlining 93.971 ms, Optimization 459.060 ms, Emission 269.799 ms, Total 828.751 ms
+Execution Time: 4178.842 ms
+-- tiempo: 4.2 s
+
+#### 2026-10-26 14:16:23.355905+00:00  /alertas/resumen  total 4391 ms   params: {"crit": "001:0002", "empresa": "05"}
+GroupAggregate  (cost=4804544.01..4804544.43 rows=6 width=56) (actual time=4098.319..4187.918 rows=4 loops=1)
+  Group Key: ((sugerencias_envio.zona)::text)
+  Buffers: shared hit=2108639
+  InitPlan 6 (returns $12)
+    ->  Aggregate  (cost=1.56..1.57 rows=1 width=32) (actual time=0.022..0.024 rows=1 loops=1)
+          Buffers: shared hit=1
+          ->  Seq Scan on parametro  (cost=0.00..1.56 rows=1 width=4) (actual time=0.015..0.017 rows=1 loops=1)
+                Filter: (clave = 'solo_items_activos'::text)
+                Rows Removed by Filter: 44
+                Buffers: shared hit=1
+  ->  Sort  (cost=4804542.43..4804542.45 rows=6 width=50) (actual time=4096.613..4108.723 rows=261080 loops=1)
+        Sort Key: ((sugerencias_envio.zona)::text)
+        Sort Method: quicksort  Memory: 20117kB
+        Buffers: shared hit=2108639
+        ->  Nested Loop Left Join  (cost=608.41..4804542.35 rows=6 width=50) (actual time=848.869..4005.456 rows=261080 loops=1)
+              Buffers: shared hit=2108639
+              ->  Nested Loop  (cost=608.13..4804540.47 rows=6 width=21) (actual time=848.852..3026.285 rows=261080 loops=1)
+                    Buffers: shared hit=1327184
+                    ->  Nested Loop  (cost=607.71..4801015.63 rows=7865 width=21) (actual time=848.820..1338.915 rows=326052 loops=1)
+                          Buffers: shared hit=22976
+                          ->  Unique  (cost=1.48..1.48 rows=2 width=8) (actual time=755.911..755.927 rows=2 loops=1)
+                                Buffers: shared hit=1
+                                ->  Sort  (cost=1.48..1.48 rows=2 width=8) (actual time=755.909..755.921 rows=2 loops=1)
+                                      Sort Key: "ANY_subquery".max
+                                      Sort Method: quicksort  Memory: 25kB
+                                      Buffers: shared hit=1
+                                      ->  Subquery Scan on "ANY_subquery"  (cost=1.43..1.47 rows=2 width=8) (actual time=755.903..755.905 rows=2 loops=1)
+                                            Buffers: shared hit=1
+                                            ->  HashAggregate  (cost=1.43..1.45 rows=2 width=11) (actual time=755.901..755.902 rows=2 loops=1)
+                                                  Group Key: ejecucion_motor.empresa
+                                                  Batches: 1  Memory Usage: 24kB
+                                                  Buffers: shared hit=1
+                                                  ->  Seq Scan on ejecucion_motor  (cost=0.00..1.32 rows=20 width=11) (actual time=755.865..755.869 rows=20 loops=1)
+                                                        Filter: (estado = 'ok'::text)
+                                                        Rows Removed by Filter: 6
+                                                        Buffers: shared hit=1
+                          ->  Append  (cost=606.23..2399853.20 rows=65387 width=29) (actual time=46.450..277.079 rows=163026 loops=2)
+                                Buffers: shared hit=22975
+                                ->  Index Scan using sugerencias_envio_pkey on sugerencias_envio  (cost=606.23..2390026.96 rows=65154 width=29) (actual time=46.441..242.429 rows=163026 loops=2)
+                                      Index Cond: ((ejecucion_id = "ANY_subquery".max) AND (empresa = ANY ('{05}'::text[])))
+                                      Filter: ((NOT (hashed SubPlan 9)) AND (($12 = '0'::numeric) OR (NOT (hashed SubPlan 8))) AND ((NOT (hashed SubPlan 1)) OR (hashed SubPlan 3) OR (hashed SubPlan 5)))
+                                      Buffers: shared hit=19053
+                                      SubPlan 9
+                                        ->  Seq Scan on maestro_cedi mc_m  (cost=0.00..1.02 rows=2 width=9) (actual time=12.890..12.894 rows=2 loops=2)
+                                              Buffers: shared hit=2
+                                      SubPlan 8
+                                        ->  Seq Scan on item_estado ie_x  (cost=0.00..532.76 rows=668 width=10) (actual time=22.032..23.612 rows=668 loops=1)
+                                              Filter: (estado <> 1)
+                                              Rows Removed by Filter: 26753
+                                              Buffers: shared hit=190
+                                      SubPlan 1
+                                        ->  Unique  (cost=0.29..604.77 rows=2 width=3) (actual time=18.121..20.385 rows=2 loops=1)
+                                              Buffers: shared hit=210
+                                              ->  Index Only Scan using maestro_item_pkey on maestro_item mi_e  (cost=0.29..555.82 rows=19582 width=3) (actual time=18.118..19.652 rows=19582 loops=1)
+                                                    Heap Fetches: 0
+                                                    Buffers: shared hit=210
+                                      SubPlan 3
+                                        ->  Index Only Scan using maestro_item_pkey on maestro_item mi_m  (cost=0.29..555.82 rows=19582 width=10) (actual time=0.011..1.630 rows=19582 loops=1)
+                                              Heap Fetches: 0
+                                              Buffers: shared hit=210
+                                      SubPlan 5
+                                        ->  Nested Loop  (cost=0.30..1054.77 rows=4315 width=11) (never executed)
+                                              ->  Seq Scan on item_rec ir_m  (cost=0.00..177.93 rows=6593 width=18) (never executed)
+                                              ->  Memoize  (cost=0.30..0.36 rows=1 width=10) (never executed)
+                                                    Cache Key: ir_m.empresa, ir_m.original_id
+                                                    Cache Mode: logical
+                                                    ->  Index Only Scan using maestro_item_pkey on maestro_item mo_m  (cost=0.29..0.35 rows=1 width=10) (never executed)
+                                                          Index Cond: ((empresa = ir_m.empresa) AND (producto_id = ir_m.original_id))
+                                                          Heap Fetches: 0
+                                ->  Index Scan using uq_sug_cedi on sugerencias_cedi  (cost=606.09..9499.31 rows=233 width=30) (actual time=22.491..22.492 rows=0 loops=2)
+                                      Index Cond: ((ejecucion_id = "ANY_subquery".max) AND (empresa = ANY ('{05}'::text[])))
+                                      Filter: ((NOT (hashed SubPlan 9)) AND (($12 = '0'::numeric) OR (NOT (hashed SubPlan 8))) AND ((NOT (hashed SubPlan 1)) OR (hashed SubPlan 3) OR (hashed SubPlan 5)))
+                                      Rows Removed by Filter: 978
+                                      Buffers: shared hit=3922
+                    ->  Index Scan using item_criterio_pkey on item_criterio ic0  (cost=0.42..0.45 rows=1 width=10) (actual time=0.005..0.005 rows=1 loops=326052)
+                          Index Cond: ((empresa = sugerencias_envio.empresa) AND (producto_id = sugerencias_envio.producto_id) AND (plan_id = '001'::text))
+                          Filter: (criterio_id = ANY ('{0002}'::text[]))
+                          Rows Removed by Filter: 0
+                          Buffers: shared hit=1304208
+              ->  Index Scan using costo_item_pkey on costo_item ci  (cost=0.29..0.31 rows=1 width=17) (actual time=0.003..0.003 rows=1 loops=261080)
+                    Index Cond: ((empresa = sugerencias_envio.empresa) AND (producto_id = sugerencias_envio.producto_id))
+                    Buffers: shared hit=781455
+Planning Time: 2.392 ms
+JIT:
+  Functions: 151
+  Options: Inlining true, Optimization true, Expressions true, Deforming true
+  Timing: Generation 5.935 ms, Inlining 50.303 ms, Optimization 513.243 ms, Emission 315.948 ms, Total 885.430 ms
+Execution Time: 4195.338 ms
+-- tiempo: 4.2 s
+
+#### UNIVERSO (sin filtros: lo que calcula la 'clase global' cuando hay filtros y no esta en cache)
+-- tiempo: 3.0 s
+Hash Left Join  (cost=31947.48..637779.99 rows=185136 width=341) (actual time=2142.332..2958.955 rows=99461 loops=1)
+  Hash Cond: ((COALESCE(a.bodega_id, sugerencias_envio.bodega_id) = mb.bodega_id) AND (COALESCE(a.empresa, sugerencias_envio.empresa) = mb.empresa))
+  Buffers: shared hit=317805
+  InitPlan 7 (returns $20)
+    ->  Aggregate  (cost=1.56..1.57 rows=1 width=32) (actual time=0.018..0.019 rows=1 loops=1)
+          Buffers: shared hit=1
+          ->  Seq Scan on parametro  (cost=0.00..1.56 rows=1 width=4) (actual time=0.010..0.012 rows=1 loops=1)
+                Filter: (clave = 'solo_items_activos'::text)
+                Rows Removed by Filter: 44
+                Buffers: shared hit=1
+  ->  Hash Left Join  (cost=31938.23..167941.79 rows=185136 width=183) (actual time=2142.111..2530.417 rows=99461 loops=1)
+        Hash Cond: ((COALESCE(a.empresa, sugerencias_envio.empresa) = mi.empresa) AND (COALESCE((COALESCE(item_rec.original_id, a.producto_id)), sugerencias_envio.producto_id) = mi.producto_id))
+        Buffers: shared hit=19430
+        ->  Hash Left Join  (cost=30921.68..165953.28 rows=185136 width=146) (actual time=2133.308..2494.082 rows=99461 loops=1)
+              Hash Cond: ((COALESCE(a.empresa, sugerencias_envio.empresa) = h.empresa) AND (COALESCE(a.bodega_id, sugerencias_envio.bodega_id) = h.bodega_id) AND (COALESCE((COALESCE(item_rec.original_id, a.producto_id)), sugerencias_envio.producto_id) = h.producto_id))
+              Buffers: shared hit=18903
+              ->  Hash Full Join  (cost=30921.63..164495.29 rows=185136 width=130) (actual time=2133.278..2476.317 rows=99461 loops=1)
+                    Hash Cond: ((sugerencias_envio.empresa = a.empresa) AND (sugerencias_envio.bodega_id = a.bodega_id) AND (sugerencias_envio.producto_id = (COALESCE(item_rec.original_id, a.producto_id))))
+                    Filter: (((COALESCE(((sum(a.cantidad))::double precision), '0'::double precision) > '0'::double precision) OR (COALESCE(((sum(a.valor))::double precision), '0'::double precision) > '0'::double precision) OR (COALESCE((sugerencias_envio.inventario)::double precision, '0'::double precision) > '0'::double precision)) AND (($20 = '0'::numeric) OR (NOT (hashed SubPlan 9))) AND ((NOT (hashed SubPlan 2)) OR (hashed SubPlan 4) OR (hashed SubPlan 6)))
+                    Rows Removed by Filter: 273923
+                    Buffers: shared hit=18903
+                    ->  Nested Loop  (cost=5039.73..133901.35 rows=598353 width=41) (actual time=1.360..120.052 rows=361594 loops=1)
+                          Buffers: shared hit=13000
+                          ->  Unique  (cost=1.48..1.48 rows=2 width=8) (actual time=0.098..0.137 rows=2 loops=1)
+                                Buffers: shared hit=1
+                                ->  Sort  (cost=1.48..1.48 rows=2 width=8) (actual time=0.098..0.103 rows=2 loops=1)
+                                      Sort Key: "ANY_subquery".max
+                                      Sort Method: quicksort  Memory: 25kB
+                                      Buffers: shared hit=1
+                                      ->  Subquery Scan on "ANY_subquery"  (cost=1.43..1.47 rows=2 width=8) (actual time=0.085..0.086 rows=2 loops=1)
+                                            Buffers: shared hit=1
+                                            ->  HashAggregate  (cost=1.43..1.45 rows=2 width=11) (actual time=0.082..0.083 rows=2 loops=1)
+                                                  Group Key: ejecucion_motor.empresa
+                                                  Batches: 1  Memory Usage: 24kB
+                                                  Buffers: shared hit=1
+                                                  ->  Seq Scan on ejecucion_motor  (cost=0.00..1.32 rows=20 width=11) (actual time=0.066..0.068 rows=20 loops=1)
+                                                        Filter: (estado = 'ok'::text)
+                                                        Rows Removed by Filter: 6
+                                                        Buffers: shared hit=1
+                          ->  Bitmap Heap Scan on sugerencias_envio  (cost=5038.25..63958.16 rows=299177 width=49) (actual time=7.506..27.369 rows=180797 loops=2)
+                                Recheck Cond: (ejecucion_id = "ANY_subquery".max)
+                                Heap Blocks: exact=9132
+                                Buffers: shared hit=12999
+                                ->  Bitmap Index Scan on sugerencias_envio_pkey  (cost=0.00..4963.46 rows=299177 width=0) (actual time=6.873..6.873 rows=180797 loops=2)
+                                      Index Cond: (ejecucion_id = "ANY_subquery".max)
+                                      Buffers: shared hit=3867
+                    ->  Hash  (cost=22406.13..22406.13 rows=164057 width=89) (actual time=2053.912..2053.918 rows=92166 loops=1)
+                          Buckets: 262144  Batches: 1  Memory Usage: 8443kB
+                          Buffers: shared hit=5292
+                          ->  HashAggregate  (cost=19124.99..22406.13 rows=164057 width=89) (actual time=1931.005..2015.691 rows=92166 loops=1)
+                                Group Key: a.empresa, a.bodega_id, COALESCE(item_rec.original_id, a.producto_id)
+                                Batches: 1  Memory Usage: 75793kB
+                                Buffers: shared hit=5292
+                                InitPlan 10 (returns $27)
+                                  ->  Aggregate  (cost=1.56..1.57 rows=1 width=32) (actual time=0.015..0.016 rows=1 loops=1)
+                                        Buffers: shared hit=1
+                                        ->  Seq Scan on parametro parametro_1  (cost=0.00..1.56 rows=1 width=4) (actual time=0.008..0.010 rows=1 loops=1)
+                                              Filter: (clave = 'rec_suma_original'::text)
+                                              Rows Removed by Filter: 44
+                                              Buffers: shared hit=1
+                                ->  Hash Left Join  (cost=277.88..16252.42 rows=164057 width=58) (actual time=1093.392..1413.852 rows=452386 loops=1)
+                                      Hash Cond: ((a.empresa = item_rec.empresa) AND (a.producto_id = item_rec.rec_id))
+                                      Join Filter: (COALESCE($27, '1'::numeric) <> '0'::numeric)
+                                      Buffers: shared hit=5292
+                                      ->  Hash Anti Join  (cost=1.05..15114.04 rows=164057 width=33) (actual time=1091.911..1327.424 rows=452386 loops=1)
+                                            Hash Cond: ((a.empresa = mc.empresa) AND (a.bodega_id = mc.bodega_id))
+                                            Buffers: shared hit=5179
+                                            ->  Seq Scan on ventas_mensual a  (cost=0.00..12603.90 rows=165020 width=33) (actual time=1091.855..1248.424 rows=455121 loops=1)
+                                                  Filter: ((mes)::text >= '202512'::text)
+                                                  Rows Removed by Filter: 39939
+                                                  Buffers: shared hit=5178
+                                            ->  Hash  (cost=1.02..1.02 rows=2 width=9) (actual time=0.030..0.031 rows=2 loops=1)
+                                                  Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                                                  Buffers: shared hit=1
+                                                  ->  Seq Scan on maestro_cedi mc  (cost=0.00..1.02 rows=2 width=9) (actual time=0.023..0.024 rows=2 loops=1)
+                                                        Buffers: shared hit=1
+                                      ->  Hash  (cost=177.93..177.93 rows=6593 width=18) (actual time=1.466..1.467 rows=6593 loops=1)
+                                            Buckets: 8192  Batches: 1  Memory Usage: 387kB
+                                            Buffers: shared hit=112
+                                            ->  Seq Scan on item_rec  (cost=0.00..177.93 rows=6593 width=18) (actual time=0.005..0.514 rows=6593 loops=1)
+                                                  Buffers: shared hit=112
+                    SubPlan 9
+                      ->  Seq Scan on item_estado ie_x  (cost=0.00..532.76 rows=668 width=10) (actual time=22.277..23.335 rows=668 loops=1)
+                            Filter: (estado <> 1)
+                            Rows Removed by Filter: 26753
+                            Buffers: shared hit=190
+                    SubPlan 2
+                      ->  Unique  (cost=0.29..604.77 rows=2 width=3) (actual time=20.592..23.781 rows=2 loops=1)
+                            Buffers: shared hit=210
+                            ->  Index Only Scan using maestro_item_pkey on maestro_item mi_e  (cost=0.29..555.82 rows=19582 width=3) (actual time=20.588..22.733 rows=19582 loops=1)
+                                  Heap Fetches: 0
+                                  Buffers: shared hit=210
+                    SubPlan 4
+                      ->  Index Only Scan using maestro_item_pkey on maestro_item mi_m  (cost=0.29..555.82 rows=19582 width=10) (actual time=0.015..2.026 rows=19582 loops=1)
+                            Heap Fetches: 0
+                            Buffers: shared hit=210
+                    SubPlan 6
+                      ->  Nested Loop  (cost=0.30..1054.77 rows=4315 width=11) (never executed)
+                            ->  Seq Scan on item_rec ir_m  (cost=0.00..177.93 rows=6593 width=18) (never executed)
+                            ->  Memoize  (cost=0.30..0.36 rows=1 width=10) (never executed)
+                                  Cache Key: ir_m.empresa, ir_m.original_id
+                                  Cache Mode: logical
+                                  ->  Index Only Scan using maestro_item_pkey on maestro_item mo_m  (cost=0.29..0.35 rows=1 width=10) (never executed)
+                                        Index Cond: ((empresa = ir_m.empresa) AND (producto_id = ir_m.original_id))
+                                        Heap Fetches: 0
+              ->  Hash  (cost=0.03..0.03 rows=1 width=112) (actual time=0.006..0.007 rows=0 loops=1)
+                    Buckets: 1024  Batches: 1  Memory Usage: 8kB
+                    ->  Subquery Scan on h  (cost=0.00..0.03 rows=1 width=112) (actual time=0.006..0.006 rows=0 loops=1)
+                          ->  HashAggregate  (cost=0.00..0.02 rows=1 width=112) (actual time=0.005..0.005 rows=0 loops=1)
+                                Group Key: empresa, bodega_id, producto_id
+                                Batches: 1  Memory Usage: 24kB
+                                ->  Result  (cost=0.00..0.00 rows=0 width=0) (actual time=0.002..0.002 rows=0 loops=1)
+                                      One-Time Filter: false
+        ->  Hash  (cost=722.82..722.82 rows=19582 width=47) (actual time=8.525..8.525 rows=19582 loops=1)
+              Buckets: 32768  Batches: 1  Memory Usage: 1779kB
+              Buffers: shared hit=527
+              ->  Seq Scan on maestro_item mi  (cost=0.00..722.82 rows=19582 width=47) (actual time=0.015..2.857 rows=19582 loops=1)
+                    Buffers: shared hit=527
+  ->  Hash  (cost=4.87..4.87 rows=187 width=28) (actual time=0.132..0.133 rows=187 loops=1)
+        Buckets: 1024  Batches: 1  Memory Usage: 20kB
+        Buffers: shared hit=3
+        ->  Seq Scan on maestro_bodega mb  (cost=0.00..4.87 rows=187 width=28) (actual time=0.021..0.054 rows=187 loops=1)
+              Buffers: shared hit=3
+  SubPlan 1
+    ->  Index Scan using costo_item_pkey on costo_item ci  (cost=0.29..2.51 rows=1 width=8) (actual time=0.003..0.003 rows=1 loops=99461)
+          Index Cond: ((empresa = COALESCE(a.empresa, sugerencias_envio.empresa)) AND (producto_id = COALESCE((COALESCE(item_rec.original_id, a.producto_id)), sugerencias_envio.producto_id)))
+          Buffers: shared hit=298372
+Planning:
+  Buffers: shared hit=14
+Planning Time: 2.790 ms
+JIT:
+  Functions: 165
+  Options: Inlining true, Optimization true, Expressions true, Deforming true
+  Timing: Generation 6.670 ms, Inlining 59.614 ms, Optimization 637.667 ms, Emission 458.671 ms, Total 1162.622 ms
+Execution Time: 2974.606 ms

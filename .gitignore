@@ -14,3 +14,8 @@ exports/
 *.xlsb
 ~$*
 docs/sql/ddmrp.dump
+docs/sql/plan_salud.txt
+docs/sql/plan_salud2.txt
+docs/sql/plan_salud3.txt
+docs/sql/plan_salud.txt
+docs/sql/plan_salud.txt
