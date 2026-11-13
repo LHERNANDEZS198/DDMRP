@@ -345,27 +345,35 @@ def _mapa_datos(c, user, bodegas, labs, q, zonas, dia, empresa, crit, desde, has
     f_fin = fechas_[-1]
     t1 = time.perf_counter()
     cond, p = _filtros(user, bodegas, labs, q, zonas, dia, empresa, a="h", zona_expr="h.zona::text", crit=crit)
-    cond.append("h.fecha = :f_fin"); p["f_fin"] = f_fin
+    p["f_fin"] = f_fin
+    # los filtros baratos y muy selectivos (fecha, empresa, tienda y criterio) se aplican PRIMERO, dentro de un CTE materializado; los costosos (items activos, permisos, modo CEDI)
+    # corren despues solo sobre esas filas. Antes el planner recorria la historia item por item y evaluaba todo por fila: 7 s en el conteo y 7 s en la lista.
+    previos = ("(h.empresa, h.producto_id) IN (", "h.empresa = ANY(:f_emp)", "h.bodega_id = ANY(:f_bod)")
+    pre = ["h.fecha = :f_fin"] + [x for x in cond if x.startswith(previos)]
+    cond = [x for x in cond if not x.startswith(previos)]
+    cte = f"WITH hh AS MATERIALIZED (SELECT h.* FROM ddmrp.buffer_historia h WHERE {' AND '.join(pre)})"
+    # ultima corrida de cada empresa, unida UNA vez (antes eran dos subconsultas por fila: el filtro de vacios y la ADU)
+    sv = f"""LEFT JOIN (SELECT empresa, bodega_id, producto_id, adu FROM ddmrp.v_sugerencias_informe WHERE ejecucion_id = {ULTIMA}) sv
+                ON sv.empresa = h.empresa AND sv.bodega_id = h.bodega_id AND sv.producto_id = h.producto_id"""
     if ignorar_vacios:   # mucho ruido: combinaciones sin inventario en la ultima fecha del mapa Y con venta diaria (ADU) en 0 en la ultima corrida
-        cond.append(f"""(COALESCE(h.inventario, 0) <> 0 OR EXISTS (SELECT 1 FROM ddmrp.v_sugerencias_informe sv WHERE sv.ejecucion_id = {ULTIMA}
-                          AND sv.empresa = h.empresa AND sv.bodega_id = h.bodega_id AND sv.producto_id = h.producto_id AND sv.adu > 0))""")
-    w = " AND ".join(cond)
-    base = """FROM ddmrp.buffer_historia h
+        cond.append("(COALESCE(h.inventario, 0) <> 0 OR sv.adu > 0)")
+    w = " AND ".join(cond) or "TRUE"
+    base = f"""FROM hh h
               LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = h.empresa AND mi.producto_id = h.producto_id
               LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = h.bodega_id AND mb.empresa = h.empresa
-              LEFT JOIN ddmrp.laboratorio lb ON lb.empresa = mi.empresa AND lb.codigo = mi.categoria"""
+              LEFT JOIN ddmrp.laboratorio lb ON lb.empresa = mi.empresa AND lb.codigo = mi.categoria
+              {sv}"""
     ORDEN = {"critico": "h.pct_buffer NULLS FIRST, h.bodega_id, h.producto_id",
              "item": "h.producto_id, h.bodega_id", "tienda": "h.bodega_id, h.producto_id"}
     if orden not in ORDEN:
         raise HTTPException(400, f"orden debe ser uno de {list(ORDEN)}")
     t2 = time.perf_counter()
-    _plan_mapa(c, "conteo", f"SELECT count(*) {base} WHERE {w}", p)
-    total = c.execute(text(f"SELECT count(*) {base} WHERE {w}"), p).scalar()
+    _plan_mapa(c, "conteo", f"{cte} SELECT count(*) {base} WHERE {w}", p)
+    total = c.execute(text(f"{cte} SELECT count(*) {base} WHERE {w}"), p).scalar()
     t3 = time.perf_counter()
-    sql = f"""SELECT h.empresa, h.bodega_id, mb.descripcion AS bodega_nombre, h.producto_id, mi.descripcion,
+    sql = f"""{cte} SELECT h.empresa, h.bodega_id, mb.descripcion AS bodega_nombre, h.producto_id, mi.descripcion,
                      COALESCE(mi.categoria, '(sin laboratorio)') AS laboratorio, h.zona::text AS zona, h.pct_buffer,
-                     (SELECT s.adu::float8 FROM ddmrp.v_sugerencias_informe s WHERE s.ejecucion_id = {ULTIMA}
-                        AND s.empresa = h.empresa AND s.bodega_id = h.bodega_id AND s.producto_id = h.producto_id) AS adu,
+                     sv.adu::float8 AS adu,
                      (SELECT ci.costo::float8 FROM ddmrp.costo_item ci WHERE ci.empresa = h.empresa AND ci.producto_id = h.producto_id) AS costo
               {base} WHERE {w} ORDER BY {ORDEN[orden]} LIMIT :lim"""
     _plan_mapa(c, "combinaciones", sql, {**p, "lim": limit})
