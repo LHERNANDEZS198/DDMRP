@@ -43,10 +43,19 @@ def _filtros(user, bodegas, labs, q, zonas, dia, empresa, a="s", zona_expr="s.zo
     for x in _csv(crit):                       # plan:criterio  (varios criterios del mismo plan = o, planes distintos = y)
         if ":" in x:
             pl, cr = x.split(":", 1); por_plan.setdefault(pl, []).append(cr)
-    for i, (pl, crs) in enumerate(por_plan.items()):
-        cond.append(f"EXISTS (SELECT 1 FROM ddmrp.item_criterio ic{i} WHERE ic{i}.empresa = {a}.empresa AND ic{i}.producto_id = {a}.producto_id "
-                    f"AND ic{i}.plan_id = :cp{i} AND ic{i}.criterio_id = ANY(:cc{i}))")
-        p[f"cp{i}"] = pl; p[f"cc{i}"] = crs
+    if por_plan:
+        # los items del criterio se resuelven UNA vez y se unen como lista fija: con EXISTS por fila el planner a veces recorria la historia una vez por item (7 s en el mapa)
+        pares: set | None = None
+        with pg.connect() as cc:
+            for pl, crs in por_plan.items():
+                conj = {(e, pr) for e, pr in cc.execute(text("SELECT empresa, producto_id FROM ddmrp.item_criterio WHERE plan_id = :p AND criterio_id = ANY(:c)"), {"p": pl, "c": crs})}
+                pares = conj if pares is None else pares & conj
+        if pares:
+            lista = sorted(pares)
+            cond.append(f"({a}.empresa, {a}.producto_id) IN (SELECT u.e, u.pr FROM unnest(CAST(:cr_e AS text[]), CAST(:cr_p AS text[])) AS u(e, pr))")
+            p["cr_e"] = [x[0] for x in lista]; p["cr_p"] = [x[1] for x in lista]
+        else:
+            cond.append("FALSE")
     if _csv(empresa):
         cond.append(f"{a}.empresa = ANY(:f_emp)"); p["f_emp"] = _csv(empresa)
     if dia:
