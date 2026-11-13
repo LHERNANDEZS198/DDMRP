@@ -320,6 +320,15 @@ def tendencia(desde: date | None = None, hasta: date | None = None, bodegas: str
 
 
 # ===================== Vista 4: mapa de calor item x tienda x fecha =====================
+EXPLAIN_MAPA = {"on": False}      # solo lo usa app/diag_mapa.py: imprime el plan de las dos consultas grandes del mapa
+
+
+def _plan_mapa(c, nombre, sql, p) -> None:
+    if EXPLAIN_MAPA["on"]:
+        print(f"\n-- PLAN {nombre}")
+        print("\n".join(r[0] for r in c.execute(text("EXPLAIN (ANALYZE, BUFFERS) " + sql), p)))
+
+
 def _mapa_datos(c, user, bodegas, labs, q, zonas, dia, empresa, crit, desde, hasta, paso, metrica, orden, limit, ignorar_vacios: bool = True):
     """Una fila por tienda/item (las combinaciones que existen en la ultima foto del periodo) y una columna por fecha con foto.
     `zonas` filtra por la zona de la ultima foto. Devuelve (fechas, filas, total, periodo)."""
@@ -350,6 +359,7 @@ def _mapa_datos(c, user, bodegas, labs, q, zonas, dia, empresa, crit, desde, has
     if orden not in ORDEN:
         raise HTTPException(400, f"orden debe ser uno de {list(ORDEN)}")
     t2 = time.perf_counter()
+    _plan_mapa(c, "conteo", f"SELECT count(*) {base} WHERE {w}", p)
     total = c.execute(text(f"SELECT count(*) {base} WHERE {w}"), p).scalar()
     t3 = time.perf_counter()
     sql = f"""SELECT h.empresa, h.bodega_id, mb.descripcion AS bodega_nombre, h.producto_id, mi.descripcion,
@@ -358,6 +368,7 @@ def _mapa_datos(c, user, bodegas, labs, q, zonas, dia, empresa, crit, desde, has
                         AND s.empresa = h.empresa AND s.bodega_id = h.bodega_id AND s.producto_id = h.producto_id) AS adu,
                      (SELECT ci.costo::float8 FROM ddmrp.costo_item ci WHERE ci.empresa = h.empresa AND ci.producto_id = h.producto_id) AS costo
               {base} WHERE {w} ORDER BY {ORDEN[orden]} LIMIT :lim"""
+    _plan_mapa(c, "combinaciones", sql, {**p, "lim": limit})
     combos = [dict(r) for r in c.execute(text(sql), {**p, "lim": limit}).mappings()]
     llaves = [(r["empresa"], r["bodega_id"], r["producto_id"]) for r in combos]
     t4 = time.perf_counter()
