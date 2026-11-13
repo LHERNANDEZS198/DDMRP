@@ -178,11 +178,15 @@ def _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, 
     nuevo = cl.mes_nuevo(date.today(), 3) if meses >= 6 else None     # con ventanas cortas todo seria 'nuevo'
     t_ini = time.perf_counter()
     with pg.connect() as c:
+        t_a = time.perf_counter()
         cortes = _cortes_iv(c, empresa)
         c.execute(text("SET LOCAL statement_timeout = 50000"))
-        meses_datos = [r[0] for r in c.execute(text("SELECT DISTINCT mes FROM ddmrp.ventas_mensual WHERE mes >= :m ORDER BY 1"), {"m": mes_desde})]     # menos que el timeout de nginx (60 s): falla con mensaje en vez de dejar consultas colgadas
+        t_b = time.perf_counter()
+        meses_datos = [r[0] for r in c.execute(text("SELECT DISTINCT mes FROM ddmrp.ventas_mensual WHERE mes >= :m ORDER BY 1"), {"m": mes_desde})]
+        t_c = time.perf_counter()     # menos que el timeout de nginx (60 s): falla con mensaje en vez de dejar consultas colgadas
         try:
             filas = _filas(c, user, mes_desde, True, empresa, bodegas, labs, crit, q, planes=planes, solo_con=solo_con)
+            t_d = time.perf_counter()
             hay_filtro = bool(_csv(empresa) or _csv(bodegas) or _csv(labs) or _csv(crit) or (q and q.strip()) or (solo_con and _csv(planes)))
             g = _clase_global(c, user, mes_desde, nivel, criterio, corte_a, corte_b, nuevo, cortes, dias, metodo, corte_i) if (con_global and hay_filtro) else None
         except DBAPIError as e:
@@ -191,6 +195,7 @@ def _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, 
                 raise HTTPException(503, "El informe tardo demasiado. Acota con una tienda o un laboratorio, o avisa a sistemas (estadisticas de la base).")
             raise
     t_sql = time.perf_counter()
+    anotar(ms_cortes=int((t_b - t_a) * 1000), ms_meses=int((t_c - t_b) * 1000), ms_filas=int((t_d - t_c) * 1000), ms_global=int((t_sql - t_d) * 1000))   # donde se va el tiempo de SQL
     items = cl.agregar(filas, nivel); cl.calcular(items, dias); cl.clasificar(items, criterio, corte_a, corte_b, nuevo, cortes, metodo, corte_i)
     anotar(ms_sql=int((t_sql - t_ini) * 1000), ms_calc=int((time.perf_counter() - t_sql) * 1000), filas=len(items), filas_sql=len(filas), nivel=nivel, con_global=g is not None)
     if g is not None:       # clase de cada item contra TODO el universo que el usuario puede ver (sin los filtros de pantalla)

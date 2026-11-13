@@ -1,5 +1,5 @@
 """Diagnostico de lentitud de Salud / Clasificacion: repite las consultas mas lentas del registro (ddmrp.consulta_log) y muestra el plan de ejecucion real.
-Uso (en el servidor o en local):  docker compose exec -T backend python -m app.diag_salud > plan_salud.txt
+Uso (en el servidor o en local):  docker compose exec -T backend python -m app.diag_salud > plan_salud.txt   (o con 'recientes' al final para repetir las ULTIMAS lentas en vez de las mas lentas de siempre)
 Solo lee; no cambia nada. Cada consulta se corta a los 90 s; si se corta, se muestra el plan SIN ejecutar (EXPLAIN) para ver por que es lenta."""
 import json, sys, time
 from datetime import date
@@ -9,15 +9,15 @@ from . import modo
 from .routers import clasificacion as cl_r, control as ct_r, alertas as al_r
 
 
-def main(n: int = 3) -> None:
+def main(n: int = 3, recientes: bool = False) -> None:
     cl_r.filtro_sql_permisos = lambda user, *a, **k: ("TRUE", {})      # como administrador: sin recorte por permisos
     ct_r.filtro_sql_permisos = cl_r.filtro_sql_permisos
     cl_r.EXPLAIN["on"] = True
     with pg.connect() as c:
         c.execute(text("SET LOCAL statement_timeout = 90000"))
         casos = c.execute(text("""SELECT ts, ruta, params, ms, ms_sql, filas, extra FROM ddmrp.consulta_log
-                                  WHERE ruta ~ '/(salud|clasificacion)$' AND ts > now() - interval '30 days' AND ms_sql IS NOT NULL
-                                  ORDER BY ms_sql DESC LIMIT :n"""), {"n": n}).mappings().all()
+                                  WHERE ruta ~ '/(salud|clasificacion)$' AND ts > now() - interval '30 days' AND ms_sql IS NOT NULL AND (NOT :rec OR ms_sql > 3000)
+                                  ORDER BY """ + ("ts DESC" if recientes else "ms_sql DESC") + """ LIMIT :n"""), {"n": n, "rec": recientes}).mappings().all()
         print(f"== {len(casos)} consultas mas lentas del registro (de /salud y /clasificacion) ==")
         for k in casos:
             print(f"\n#### {k['ts']}  {k['ruta']}  total {k['ms']} ms, SQL {k['ms_sql']} ms, filas {k['filas']}, extra {json.dumps(k['extra'], default=str)}")
@@ -65,4 +65,4 @@ def main(n: int = 3) -> None:
 
 
 if __name__ == "__main__":
-    main(int(sys.argv[1]) if len(sys.argv) > 1 else 3)
+    main(int(sys.argv[1]) if len(sys.argv) > 1 else 3, len(sys.argv) > 2 and sys.argv[2] == "recientes")
