@@ -11,7 +11,7 @@ from ..activos import solo_activos
 from ..consultas import anotar
 from ..db import pg
 from ..security import usuario_actual, filtro_sql_permisos, requiere
-from ..modo import fijar_modo, cond_cedi
+from ..modo import fijar_modo, cond_cedi, _MODO
 
 router = APIRouter(prefix="/control", tags=["control"], dependencies=[Depends(requiere("ver_control")), Depends(fijar_modo)])
 ULTIMA = "ANY (SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok' GROUP BY empresa)"   # la ultima corrida buena de CADA empresa (sus filas solo existen bajo su propia corrida)
@@ -27,6 +27,27 @@ def _csv(v: str | None) -> list[str]:
     return [x.strip() for x in (v or "").split(",") if x.strip()]
 
 
+def _cond_crit(a: str, crit, p: dict) -> str | None:
+    """Condicion de los criterios (plan:criterio) sobre `a`.(empresa, producto_id); None si no hay criterios. Agrega sus parametros a `p`."""
+    por_plan: dict[str, list[str]] = {}
+    for x in _csv(crit):                       # plan:criterio  (varios criterios del mismo plan = o, planes distintos = y)
+        if ":" in x:
+            pl, cr = x.split(":", 1); por_plan.setdefault(pl, []).append(cr)
+    if not por_plan:
+        return None
+    # los items del criterio se resuelven UNA vez y se unen como lista fija: con EXISTS por fila el planner a veces recorria la historia una vez por item (7 s en el mapa)
+    pares: set | None = None
+    with pg.connect() as cc:
+        for pl, crs in por_plan.items():
+            conj = {(e, pr) for e, pr in cc.execute(text("SELECT empresa, producto_id FROM ddmrp.item_criterio WHERE plan_id = :p AND criterio_id = ANY(:c)"), {"p": pl, "c": crs})}
+            pares = conj if pares is None else pares & conj
+    if not pares:
+        return "FALSE"
+    lista = sorted(pares)
+    p["cr_e"] = [x[0] for x in lista]; p["cr_p"] = [x[1] for x in lista]
+    return f"({a}.empresa, {a}.producto_id) IN (SELECT u.e, u.pr FROM unnest(CAST(:cr_e AS text[]), CAST(:cr_p AS text[])) AS u(e, pr))"
+
+
 def _filtros(user, bodegas, labs, q, zonas, dia, empresa, a="s", zona_expr="s.zona::text", crit=None) -> tuple[list[str], dict]:
     w, p = filtro_sql_permisos(user, f"{a}.bodega_id", "mi.categoria")
     cond = [w, solo_activos(a), cond_cedi(a)]   # solo items activos de Siesa (regla solo_items_activos), tambien en la historia; tiendas o, con «Ver solo CEDI», el CEDI
@@ -39,23 +60,9 @@ def _filtros(user, bodegas, labs, q, zonas, dia, empresa, a="s", zona_expr="s.zo
     z = [x for x in _csv(zonas) if x in ZONAS]
     if z:
         cond.append(f"{zona_expr} = ANY(:f_z)"); p["f_z"] = z
-    por_plan: dict[str, list[str]] = {}
-    for x in _csv(crit):                       # plan:criterio  (varios criterios del mismo plan = o, planes distintos = y)
-        if ":" in x:
-            pl, cr = x.split(":", 1); por_plan.setdefault(pl, []).append(cr)
-    if por_plan:
-        # los items del criterio se resuelven UNA vez y se unen como lista fija: con EXISTS por fila el planner a veces recorria la historia una vez por item (7 s en el mapa)
-        pares: set | None = None
-        with pg.connect() as cc:
-            for pl, crs in por_plan.items():
-                conj = {(e, pr) for e, pr in cc.execute(text("SELECT empresa, producto_id FROM ddmrp.item_criterio WHERE plan_id = :p AND criterio_id = ANY(:c)"), {"p": pl, "c": crs})}
-                pares = conj if pares is None else pares & conj
-        if pares:
-            lista = sorted(pares)
-            cond.append(f"({a}.empresa, {a}.producto_id) IN (SELECT u.e, u.pr FROM unnest(CAST(:cr_e AS text[]), CAST(:cr_p AS text[])) AS u(e, pr))")
-            p["cr_e"] = [x[0] for x in lista]; p["cr_p"] = [x[1] for x in lista]
-        else:
-            cond.append("FALSE")
+    cc_ = _cond_crit(a, crit, p)
+    if cc_:
+        cond.append(cc_)
     if _csv(empresa):
         cond.append(f"{a}.empresa = ANY(:f_emp)"); p["f_emp"] = _csv(empresa)
     if dia:
@@ -296,6 +303,17 @@ def cambios_detalle(desde: date | None = None, hasta: date | None = None, mov: s
 
 
 # ===================== Vista 3: tendencia en el tiempo =====================
+_CACHE_TEND: dict = {}         # series de tendencia ya calculadas: la pantalla repite la misma consulta al cambiar de pestana / recargar
+_CACHE_TEND_TTL = 900
+_SERIE_SQL = """SELECT h.fecha, count(*) AS n, sum(h.tor) AS tor, sum(h.toy_aj) AS toy_aj, sum(h.tog_aj) AS tog_aj,
+                     sum(h.inventario) AS inventario, sum(h.flujo_neto) AS flujo_neto,
+                     count(*) FILTER (WHERE h.inventario > 0) AS con_stock,
+                     count(*) FILTER (WHERE h.zona = 'ROJA') AS roja, count(*) FILTER (WHERE h.zona = 'AMARILLA') AS amarilla,
+                     count(*) FILTER (WHERE h.zona = 'VERDE') AS verde, count(*) FILTER (WHERE h.zona = 'EXCESO') AS exceso,
+                     count(*) FILTER (WHERE h.zona = 'NO_APLICA') AS no_aplica,
+                     count(*) FILTER (WHERE h.zona::text <> 'NO_APLICA' AND COALESCE(h.inventario, 0) <= 0) AS agotado"""
+
+
 @router.get("/tendencia")
 def tendencia(desde: date | None = None, hasta: date | None = None, bodegas: str | None = None, labs: str | None = None,
               q: str | None = None, dia: int | None = None, empresa: str | None = None, crit: str | None = None, user=Depends(usuario_actual)):
@@ -303,24 +321,63 @@ def tendencia(desde: date | None = None, hasta: date | None = None, bodegas: str
     items/tiendas) y cuantas combinaciones hay en cada zona. Con tienda e item exactos es la curva de una sola combinacion."""
     hasta = hasta or date.today()
     desde = desde or (hasta - timedelta(days=90))
-    cond, p = _filtros(user, bodegas, labs, q, None, dia, empresa, a="h", crit=crit)
-    cond.append("h.fecha BETWEEN :d AND :h")
-    sql = f"""SELECT h.fecha, count(*) AS n, sum(h.tor) AS tor, sum(h.toy_aj) AS toy_aj, sum(h.tog_aj) AS tog_aj,
-                     sum(h.inventario) AS inventario, sum(h.flujo_neto) AS flujo_neto,
-                     count(*) FILTER (WHERE h.inventario > 0) AS con_stock,
-                     count(*) FILTER (WHERE h.zona = 'ROJA') AS roja, count(*) FILTER (WHERE h.zona = 'AMARILLA') AS amarilla,
-                     count(*) FILTER (WHERE h.zona = 'VERDE') AS verde, count(*) FILTER (WHERE h.zona = 'EXCESO') AS exceso,
-                     count(*) FILTER (WHERE h.zona = 'NO_APLICA') AS no_aplica,
-                     count(*) FILTER (WHERE h.zona::text <> 'NO_APLICA' AND COALESCE(h.inventario, 0) <= 0) AS agotado
-              FROM ddmrp.buffer_historia h
-              LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = h.empresa AND mi.producto_id = h.producto_id
-              WHERE {' AND '.join(cond)} GROUP BY h.fecha ORDER BY h.fecha"""
+    t0 = time.perf_counter()
     with pg.connect() as c:
-        filas = [dict(r) for r in c.execute(text(sql), {**p, "d": desde, "h": hasta}).mappings()]
+        ej = c.execute(text("SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado = 'ok'")).scalar()
+    clave = (user.get("id"), desde, hasta, bodegas, labs, q, dia, empresa, crit, _MODO.get(), ej)
+    hit = _CACHE_TEND.get(clave)
+    if hit and time.time() - hit[0] < _CACHE_TEND_TTL:
+        anotar(cache_tend=1, ms_total=int((time.perf_counter() - t0) * 1000))
+        return hit[1]
+    p: dict = {"d": desde, "h": hasta}
+    with pg.connect() as c:
+        # camino rapido: los items validos (maestro, activos, q, laboratorio, criterio) se resuelven UNA vez en una tabla temporal chica y la historia se une contra ella;
+        # antes el filtro de activos/maestro (varios EXISTS) se evaluaba por cada una de los ~29 millones de filas (13 s sin q, 60 s con q)
+        emps = {r[0] for r in c.execute(text("SELECT DISTINCT empresa FROM ddmrp.maestro_item"))}
+        pedidas = set(_csv(empresa)) or {r[0] for r in c.execute(text("SELECT DISTINCT empresa FROM ddmrp.ejecucion_motor WHERE estado = 'ok'"))}
+        if pedidas and pedidas <= emps:
+            ic: list[str] = [solo_activos("x")]
+            if _csv(labs):
+                ic.append("COALESCE(mi.categoria, '') = ANY(:f_lab)"); p["f_lab"] = [("" if v == "(sin laboratorio)" else v) for v in _csv(labs)]
+            if q and q.strip():
+                ic.append("(x.producto_id ILIKE :f_q OR mi.descripcion ILIKE :f_q)"); p["f_q"] = f"%{q.strip()}%"
+            cc_ = _cond_crit("x", crit, p)
+            if cc_:
+                ic.append(cc_)
+            c.execute(text(f"""CREATE TEMP TABLE _ti ON COMMIT DROP AS
+                SELECT x.empresa, x.producto_id, mi.categoria
+                FROM (SELECT empresa, producto_id FROM ddmrp.maestro_item UNION SELECT empresa, rec_id FROM ddmrp.item_rec) x
+                LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = x.empresa AND mi.producto_id = x.producto_id
+                WHERE {' AND '.join(ic)}"""), p)
+            c.execute(text("ANALYZE _ti"))
+            t1 = time.perf_counter()
+            w, pp = filtro_sql_permisos(user, "h.bodega_id", "t.categoria")
+            cond = ["h.fecha BETWEEN :d AND :h", w, cond_cedi("h")]
+            if _csv(bodegas):
+                cond.append("h.bodega_id = ANY(:f_bod)"); pp["f_bod"] = _csv(bodegas)
+            if _csv(empresa):
+                cond.append("h.empresa = ANY(:f_emp)"); pp["f_emp"] = _csv(empresa)
+            if dia:
+                cond.append("(h.empresa, h.bodega_id) IN (SELECT empresa, bodega_id FROM ddmrp.bodega_dia WHERE dia = :f_dia)"); pp["f_dia"] = dia
+            sql = f"""{_SERIE_SQL} FROM ddmrp.buffer_historia h JOIN _ti t ON t.empresa = h.empresa AND t.producto_id = h.producto_id
+                      WHERE {' AND '.join(cond)} GROUP BY h.fecha ORDER BY h.fecha"""
+            filas = [dict(r) for r in c.execute(text(sql), {**pp, "d": desde, "h": hasta}).mappings()]
+            anotar(ms_items=int((t1 - t0) * 1000), ms_serie=int((time.perf_counter() - t1) * 1000), items_validos=c.execute(text("SELECT count(*) FROM _ti")).scalar())
+        else:      # una empresa sin maestro cargado no filtra por maestro: se mantiene la consulta de siempre
+            cond, p2 = _filtros(user, bodegas, labs, q, None, dia, empresa, a="h", crit=crit)
+            cond.append("h.fecha BETWEEN :d AND :h")
+            sql = f"""{_SERIE_SQL} FROM ddmrp.buffer_historia h
+                      LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = h.empresa AND mi.producto_id = h.producto_id
+                      WHERE {' AND '.join(cond)} GROUP BY h.fecha ORDER BY h.fecha"""
+            filas = [dict(r) for r in c.execute(text(sql), {**p2, "d": desde, "h": hasta}).mappings()]
     for f in filas:
         for k in ("tor", "toy_aj", "tog_aj", "inventario", "flujo_neto"):
             f[k] = round(float(f[k] or 0), 1)
-    return {"desde": desde, "hasta": hasta, "serie": filas, "combinaciones": max((f["n"] for f in filas), default=0)}
+    res = {"desde": desde, "hasta": hasta, "serie": filas, "combinaciones": max((f["n"] for f in filas), default=0)}
+    if len(_CACHE_TEND) >= 48:
+        _CACHE_TEND.pop(next(iter(_CACHE_TEND)))
+    _CACHE_TEND[clave] = (time.time(), res)
+    return res
 
 
 # ===================== Vista 4: mapa de calor item x tienda x fecha =====================
