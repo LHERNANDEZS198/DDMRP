@@ -137,6 +137,69 @@ def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, l
         c.execute(text("SET LOCAL enable_nestloop = on"))
 
 
+_CACHE_UNI: dict = {}         # filas del universo completo (tienda x item, con historia de inventario) por corrida del motor y permisos: los filtros de pantalla se aplican en memoria
+_UNI_TTL = 1800
+
+
+def _universo(c, user, mes_desde) -> list[dict]:
+    """Todas las filas que el usuario puede ver (sin filtros de pantalla). Es UNA consulta pesada (~4 s en prod); se guarda 30 min por (corrida del motor, modo, permisos, ventana).
+    Antes cada cambio de filtro repetia la consulta filtrada y ademas la del universo para la clase global."""
+    import time
+    w, p = filtro_sql_permisos(user, "k.bodega_id", "mi.categoria")
+    ej = c.execute(text(f"SELECT string_agg(id::text, ',' ORDER BY id) FROM ddmrp.ejecucion_motor WHERE id = {ULTIMA}")).scalar()
+    clave = (ej, solo_cedi(), w, tuple(sorted((k, str(v)) for k, v in p.items())), mes_desde)
+    hit = _CACHE_UNI.get(clave)
+    if hit and time.time() - hit[0] < _UNI_TTL:
+        anotar(cache_universo="hit")
+        return hit[1]
+    anotar(cache_universo="miss")
+    rows = _filas(c, user, mes_desde, False, hist=True)
+    if len(_CACHE_UNI) >= 3:
+        _CACHE_UNI.pop(next(iter(_CACHE_UNI)))
+    _CACHE_UNI[clave] = (time.time(), rows)
+    return rows
+
+
+def _filtrar(c, rows: list[dict], empresa, bodegas, labs, crit, q, planes=None, solo_con: bool = False) -> list[dict]:
+    """Los mismos filtros de _filas(filtrar=True), aplicados en memoria sobre el universo."""
+    import re
+    emp = set(_csv(empresa)); bod = set(_csv(bodegas))
+    lab = {("" if x == "(sin laboratorio)" else x) for x in _csv(labs)}
+    rx = None
+    if q and q.strip():     # ILIKE '%q%' (con % y _ como comodines, igual que en SQL)
+        pat = "".join(".*" if ch == "%" else "." if ch == "_" else re.escape(ch) for ch in q.strip())
+        rx = re.compile(pat, re.IGNORECASE | re.DOTALL)
+    permitidos = None       # (empresa, producto) que cumplen TODOS los criterios elegidos (planes distintos = y, criterios del mismo plan = o) y, con solo_con, tienen valor en los planes
+    def _y(conj):
+        nonlocal permitidos
+        permitidos = conj if permitidos is None else permitidos & conj
+    por_plan: dict[str, list[str]] = {}
+    for x in _csv(crit):
+        if ":" in x:
+            pl, cr = x.split(":", 1); por_plan.setdefault(pl, []).append(cr)
+    for pl, crs in por_plan.items():
+        _y({(e, pr) for e, pr in c.execute(text("SELECT empresa, producto_id FROM ddmrp.item_criterio WHERE plan_id = :p AND criterio_id = ANY(:c)"), {"p": pl, "c": crs})})
+    if solo_con:
+        for pl in dict.fromkeys(_csv(planes)):
+            _y({(e, pr) for e, pr in c.execute(text("SELECT empresa, producto_id FROM ddmrp.item_criterio WHERE plan_id = :p"), {"p": pl})})
+    if not (emp or bod or lab or rx or permitidos is not None):
+        return rows
+    out = []
+    for r in rows:
+        if emp and r["empresa"] not in emp:
+            continue
+        if bod and r["bodega_id"] not in bod:
+            continue
+        if lab and ("" if r["laboratorio"] == "(sin laboratorio)" else r["laboratorio"]) not in lab:
+            continue
+        if rx and not (rx.search(r["producto_id"] or "") or rx.search(r["descripcion"] or "")):
+            continue
+        if permitidos is not None and (r["empresa"], r["producto_id"]) not in permitidos:
+            continue
+        out.append(r)
+    return out
+
+
 _CACHE_GLOBAL: dict = {}      # clase de cada item contra TODO el universo visible: no depende de los filtros de pantalla, se reutiliza mientras no corra el motor
 _CACHE_TTL = 600
 
@@ -153,7 +216,7 @@ def _clase_global(c, user, mes_desde, nivel, criterio, corte_a, corte_b, nuevo, 
         anotar(cache_global="hit")
         return hit[1]
     anotar(cache_global="miss")
-    filas_g = _filas(c, user, mes_desde, False, hist=False)
+    filas_g = [{**r, "inv_suma": None, "dias_hist": None, "dias_cero": None} for r in _universo(c, user, mes_desde)]    # la clase global no usa la historia de inventario
     glob = cl.agregar(filas_g, nivel); cl.calcular(glob, dias); cl.clasificar(glob, criterio, corte_a, corte_b, nuevo, cortes, metodo, corte_i)
     clave = (lambda x: (x["empresa"], x["bodega_id"], x["producto_id"])) if nivel == "tienda_item" else (lambda x: (x["empresa"], x["producto_id"]))
     g = {clave(x): x["clase"] for x in glob}
@@ -185,7 +248,8 @@ def _calcular(user, nivel, criterio, meses, corte_a, corte_b, empresa, bodegas, 
         meses_datos = [r[0] for r in c.execute(text("SELECT DISTINCT mes FROM ddmrp.ventas_mensual WHERE mes >= :m ORDER BY 1"), {"m": mes_desde})]
         t_c = time.perf_counter()     # menos que el timeout de nginx (60 s): falla con mensaje en vez de dejar consultas colgadas
         try:
-            filas = _filas(c, user, mes_desde, True, empresa, bodegas, labs, crit, q, planes=planes, solo_con=solo_con)
+            uni = _universo(c, user, mes_desde)
+            filas = _filtrar(c, uni, empresa, bodegas, labs, crit, q, planes=planes, solo_con=solo_con)
             t_d = time.perf_counter()
             hay_filtro = bool(_csv(empresa) or _csv(bodegas) or _csv(labs) or _csv(crit) or (q and q.strip()) or (solo_con and _csv(planes)))
             g = _clase_global(c, user, mes_desde, nivel, criterio, corte_a, corte_b, nuevo, cortes, dias, metodo, corte_i) if (con_global and hay_filtro) else None
