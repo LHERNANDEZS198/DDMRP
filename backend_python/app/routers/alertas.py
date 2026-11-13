@@ -50,7 +50,7 @@ def resumen(bodegas: str | None = None, labs: str | None = None, q: str | None =
     return res
 
 
-ZONAS = ("ROJA", "AMARILLA", "VERDE", "EXCESO")
+ZONAS = ("ROJA", "AMARILLA", "VERDE", "EXCESO", "NO_APLICA")
 
 
 @router.get("/zona-roja")
