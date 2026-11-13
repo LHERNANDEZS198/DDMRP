@@ -39,9 +39,9 @@ def _cortes_iv(c, empresa=None) -> tuple[float, float]:
         return 0.5, 0.8
 
 
-def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, labs=None, crit=None, q=None, hist: bool = True, planes=None, solo_con: bool = False) -> list[dict]:
+def _filas(c, user, mes_desde: str, filtrar: bool, empresa=None, bodegas=None, labs=None, crit=None, q=None, hist: bool = True, planes=None, solo_con: bool = False, permiso=None) -> list[dict]:
     """Una fila por tienda x item (REC ya sumado al original) con la venta de la ventana, el buffer de la ultima corrida y el costo."""
-    w, p = filtro_sql_permisos(user, "k.bodega_id", "mi.categoria")
+    w, p = permiso or filtro_sql_permisos(user, "k.bodega_id", "mi.categoria")
     cond = [w, solo_activos("k")]
     # «Ver solo CEDI»: la fila es (CEDI, item); su rotacion = venta directa del CEDI + la de TODAS las tiendas que abastece (lo que sale a las tiendas),
     # su buffer sale de sugerencias_cedi y no hay tiendas. Sin el modo: solo tiendas, como siempre (las ventas directas del CEDI no cuentan como tienda).
@@ -141,11 +141,11 @@ _CACHE_UNI: dict = {}         # filas del universo completo (tienda x item, con 
 _UNI_TTL = 1800
 
 
-def _universo(c, user, mes_desde) -> list[dict]:
+def _universo(c, user, mes_desde, permiso=None) -> list[dict]:
     """Todas las filas que el usuario puede ver (sin filtros de pantalla). Es UNA consulta pesada (~4 s en prod); se guarda 30 min por (corrida del motor, modo, permisos, ventana).
     Antes cada cambio de filtro repetia la consulta filtrada y ademas la del universo para la clase global."""
     import time
-    w, p = filtro_sql_permisos(user, "k.bodega_id", "mi.categoria")
+    w, p = permiso or filtro_sql_permisos(user, "k.bodega_id", "mi.categoria")
     ej = c.execute(text(f"SELECT string_agg(id::text, ',' ORDER BY id) FROM ddmrp.ejecucion_motor WHERE id = {ULTIMA}")).scalar()
     clave = (ej, solo_cedi(), w, tuple(sorted((k, str(v)) for k, v in p.items())), mes_desde)
     hit = _CACHE_UNI.get(clave)
@@ -153,11 +153,29 @@ def _universo(c, user, mes_desde) -> list[dict]:
         anotar(cache_universo="hit")
         return hit[1]
     anotar(cache_universo="miss")
-    rows = _filas(c, user, mes_desde, False, hist=True)
-    if len(_CACHE_UNI) >= 3:
+    rows = _filas(c, user, mes_desde, False, hist=True, permiso=(w, p))
+    if len(_CACHE_UNI) >= 6:
         _CACHE_UNI.pop(next(iter(_CACHE_UNI)))
     _CACHE_UNI[clave] = (time.time(), rows)
     return rows
+
+
+def precalentar(meses: int = 12) -> None:
+    """Deja en cache el universo del administrador (sin recorte de permisos) en modo tiendas y en modo CEDI, para que la primera pantalla tras correr el motor no pague
+    la lectura completa (7-9 s en prod). Se llama al terminar el motor, en un hilo aparte; los usuarios con permisos recortados lo arman en su primera consulta."""
+    import logging
+    from .. import modo as _modo
+    log = logging.getLogger("ddmrp.precalentar")
+    mes_desde, _, _ = _ventana(meses)
+    for m in ("tiendas", "cedi"):
+        try:
+            _modo._MODO.set(m)
+            with pg.connect() as c:
+                c.execute(text("SET LOCAL statement_timeout = 120000"))
+                _universo(c, {"id": "precalentar"}, mes_desde, permiso=("TRUE", {}))
+            log.info("universo precalentado (%s)", m)
+        except Exception:      # noqa: BLE001  - es solo un acelerador
+            log.exception("no se pudo precalentar el universo (%s)", m)
 
 
 def _filtrar(c, rows: list[dict], empresa, bodegas, labs, crit, q, planes=None, solo_con: bool = False) -> list[dict]:

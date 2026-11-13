@@ -8,6 +8,7 @@ from fastapi.responses import Response
 from sqlalchemy import text
 from .. import excel, mapa_calor
 from ..activos import solo_activos
+from ..consultas import anotar
 from ..db import pg
 from ..security import usuario_actual, filtro_sql_permisos, requiere
 from ..modo import fijar_modo, cond_cedi
@@ -319,10 +320,12 @@ def _mapa_datos(c, user, bodegas, labs, q, zonas, dia, empresa, crit, desde, has
     desde = desde or (hasta - timedelta(days=30))
     if desde > hasta:
         desde, hasta = hasta, desde
+    t0 = time.perf_counter()
     f_fin = _snapshot(c, hasta)
     disp = [r[0] for r in c.execute(text("SELECT DISTINCT fecha FROM ddmrp.buffer_historia WHERE fecha BETWEEN :d AND :h"), {"d": desde, "h": f_fin})]
     fechas_ = mapa_calor.elegir_fechas(disp or [f_fin], paso)
     f_fin = fechas_[-1]
+    t1 = time.perf_counter()
     cond, p = _filtros(user, bodegas, labs, q, zonas, dia, empresa, a="h", zona_expr="h.zona::text", crit=crit)
     cond.append("h.fecha = :f_fin"); p["f_fin"] = f_fin
     if ignorar_vacios:   # mucho ruido: combinaciones sin inventario en la ultima fecha del mapa Y con venta diaria (ADU) en 0 en la ultima corrida
@@ -337,7 +340,9 @@ def _mapa_datos(c, user, bodegas, labs, q, zonas, dia, empresa, crit, desde, has
              "item": "h.producto_id, h.bodega_id", "tienda": "h.bodega_id, h.producto_id"}
     if orden not in ORDEN:
         raise HTTPException(400, f"orden debe ser uno de {list(ORDEN)}")
+    t2 = time.perf_counter()
     total = c.execute(text(f"SELECT count(*) {base} WHERE {w}"), p).scalar()
+    t3 = time.perf_counter()
     sql = f"""SELECT h.empresa, h.bodega_id, mb.descripcion AS bodega_nombre, h.producto_id, mi.descripcion,
                      COALESCE(mi.categoria, '(sin laboratorio)') AS laboratorio, h.zona::text AS zona, h.pct_buffer,
                      (SELECT s.adu::float8 FROM ddmrp.v_sugerencias_informe s WHERE s.ejecucion_id = {ULTIMA}
@@ -346,6 +351,7 @@ def _mapa_datos(c, user, bodegas, labs, q, zonas, dia, empresa, crit, desde, has
               {base} WHERE {w} ORDER BY {ORDEN[orden]} LIMIT :lim"""
     combos = [dict(r) for r in c.execute(text(sql), {**p, "lim": limit}).mappings()]
     llaves = [(r["empresa"], r["bodega_id"], r["producto_id"]) for r in combos]
+    t4 = time.perf_counter()
     hist = []
     if llaves:
         hist = c.execute(text("""SELECT h.empresa, h.bodega_id, h.producto_id, h.fecha, h.zona::text, h.inventario, h.flujo_neto, h.pct_buffer
@@ -353,12 +359,15 @@ def _mapa_datos(c, user, bodegas, labs, q, zonas, dia, empresa, crit, desde, has
                                  JOIN unnest(CAST(:ke AS text[]), CAST(:kb AS text[]), CAST(:kp AS text[])) AS k(e, b, pr) ON k.e = h.empresa AND k.b = h.bodega_id AND k.pr = h.producto_id
                                  WHERE h.fecha = ANY(:fechas)"""),
                          {"ke": [k[0] for k in llaves], "kb": [k[1] for k in llaves], "kp": [k[2] for k in llaves], "fechas": fechas_}).all()
+    t5 = time.perf_counter()
     piv = mapa_calor.pivotear(fechas_, llaves, hist, metrica)
     from .clasificacion import datos_clase      # import tardio: clasificacion importa de este modulo
     try:
         cls = datos_clase(user, empresa, bodegas, labs, crit, q) if llaves else {}
     except Exception:                            # la clasificacion es un extra: el mapa no debe caerse por ella
         cls = {}
+    t6 = time.perf_counter()
+    anotar(mp_fechas=int((t1 - t0) * 1000), mp_count=int((t3 - t2) * 1000), mp_combos=int((t4 - t3) * 1000), mp_hist=int((t5 - t4) * 1000), mp_clase=int((t6 - t5) * 1000))   # donde se va el tiempo del mapa
     filas = []
     for r, k in zip(combos, llaves):
         v, z = piv[k]

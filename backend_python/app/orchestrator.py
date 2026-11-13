@@ -14,16 +14,6 @@ log = logging.getLogger("orq")
 EMPRESAS = ("05", "21")   # Funat y Stores: cada una tiene su propia corrida del motor (ejecucion_motor.empresa) y su propia ultima corrida
 
 
-def _abast_desde(c) -> date | None:
-    """Regla rep_abast_desde (AAAAMMDD, 0 = sin corte): primer dia de la foto diaria que cuenta para el % de abastecimiento (dias con zona y en zona roja)."""
-    v = c.execute(text("SELECT valor::bigint FROM ddmrp.compras_config WHERE clave = 'rep_abast_desde'")).scalar()
-    try:
-        s = str(int(v or 0))
-        return date(int(s[:4]), int(s[4:6]), int(s[6:8])) if len(s) == 8 else None
-    except ValueError:
-        return None
-
-
 def resumir_inventario_mensual(c, fecha):
     """Resume por mes (suma de inventario, dias y dias en cero de cada tienda x item) la foto diaria: es la base del inventario promedio del GMROI.
     Cada corrida rehace el mes de `fecha` (la historia diaria de un mes en curso siempre esta completa); la primera vez rehace todos los meses
@@ -32,36 +22,11 @@ def resumir_inventario_mensual(c, fecha):
     desde = c.execute(text("SELECT date_trunc('month', min(fecha))::date FROM ddmrp.buffer_historia")).scalar() if primera else None
     desde = desde or fecha.replace(day=1)
     c.execute(text("DELETE FROM ddmrp.inventario_mes WHERE mes >= to_char(CAST(:d AS date), 'YYYYMM')"), {"d": desde})
-    c.execute(text("""INSERT INTO ddmrp.inventario_mes (mes, empresa, bodega_id, producto_id, inv_suma, dias, dias_cero, dias_z, dias_roja, dias_ag)
+    c.execute(text("""INSERT INTO ddmrp.inventario_mes (mes, empresa, bodega_id, producto_id, inv_suma, dias, dias_cero)
                       SELECT to_char(fecha, 'YYYYMM'), empresa, bodega_id, producto_id, SUM(GREATEST(inventario, 0)), COUNT(*),
-                             COUNT(*) FILTER (WHERE COALESCE(inventario, 0) <= 0), COUNT(*) FILTER (WHERE zona::text <> 'NO_APLICA' AND fecha >= CAST(:zd AS date)), COUNT(*) FILTER (WHERE zona = 'ROJA' AND fecha >= CAST(:zd AS date)),
-                             COUNT(*) FILTER (WHERE zona::text <> 'NO_APLICA' AND COALESCE(inventario, 0) <= 0 AND fecha >= CAST(:zd AS date))
-                      FROM ddmrp.buffer_historia WHERE fecha >= :d GROUP BY 1, 2, 3, 4"""), {"d": desde, "zd": _abast_desde(c) or date(1900, 1, 1)})
-    completar_dias_zona(c)
+                             COUNT(*) FILTER (WHERE COALESCE(inventario, 0) <= 0)
+                      FROM ddmrp.buffer_historia WHERE fecha >= :d GROUP BY 1, 2, 3, 4"""), {"d": desde})
     c.execute(text("DELETE FROM ddmrp.inventario_mes WHERE mes < to_char(current_date - interval '13 months', 'YYYYMM')"))
-
-
-def completar_dias_zona(c, rehacer: bool = False):
-    """Dias con zona, en zona roja y AGOTADOS (con buffer e inventario 0) de cada mes (base del % de abastecimiento y del % agotado): solo cuentan las combinaciones CON buffer (la zona NO_APLICA no es ni disponible ni faltante).
-    Sin `rehacer` (el motor): se completan SOLO los meses que quedaron en NULL con lo que aun conserva la foto diaria; los meses ya purgados quedan sin dato.
-    Con `rehacer` (el calculo de Indicadores de compras): los meses con foto diaria se rehacen siempre, asi corregir la zona o la regla rep_abast_desde se ve al recalcular;
-    con esa regla, los meses anteriores a la fecha de corte no cuentan (0 dias) y en los demas solo se cuentan los dias desde ella."""
-    por_mes = """FROM (SELECT to_char(fecha, 'YYYYMM') AS mes, empresa, bodega_id, producto_id, COUNT(*) FILTER (WHERE zona::text <> 'NO_APLICA') AS dz, COUNT(*) FILTER (WHERE zona = 'ROJA') AS dr,
-                       COUNT(*) FILTER (WHERE zona::text <> 'NO_APLICA' AND COALESCE(inventario, 0) <= 0) AS da
-                       FROM ddmrp.buffer_historia {w} GROUP BY 1, 2, 3, 4) x"""
-    if rehacer:
-        zd = _abast_desde(c)
-        if zd:
-            c.execute(text("UPDATE ddmrp.inventario_mes SET dias_z = 0, dias_roja = 0, dias_ag = 0 WHERE mes < to_char(CAST(:zd AS date), 'YYYYMM')"), {"zd": zd})
-        zd = zd or date(1900, 1, 1)
-        c.execute(text("""UPDATE ddmrp.inventario_mes SET dias_z = 0, dias_roja = 0, dias_ag = 0
-                          WHERE mes >= to_char(CAST(:zd AS date), 'YYYYMM') AND mes >= (SELECT to_char(min(fecha), 'YYYYMM') FROM ddmrp.buffer_historia)"""), {"zd": zd})
-        c.execute(text(f"""UPDATE ddmrp.inventario_mes im SET dias_z = x.dz, dias_roja = x.dr, dias_ag = x.da {por_mes.format(w="WHERE fecha >= CAST(:zd AS date)")}
-                           WHERE im.mes = x.mes AND im.empresa = x.empresa AND im.bodega_id = x.bodega_id AND im.producto_id = x.producto_id"""), {"zd": zd})
-        return
-    if c.execute(text("""SELECT EXISTS (SELECT 1 FROM ddmrp.inventario_mes WHERE dias_z IS NULL AND mes >= (SELECT to_char(min(fecha), 'YYYYMM') FROM ddmrp.buffer_historia))""")).scalar():
-        c.execute(text(f"""UPDATE ddmrp.inventario_mes im SET dias_z = x.dz, dias_roja = x.dr, dias_ag = x.da {por_mes.format(w="")}
-                           WHERE im.dias_z IS NULL AND im.mes = x.mes AND im.empresa = x.empresa AND im.bodega_id = x.bodega_id AND im.producto_id = x.producto_id"""))
 
 
 def guardar_historia(eid: int):
@@ -211,6 +176,12 @@ def _ejecutar_motor(fecha: date | None = None, empresa: str = "05") -> dict:
             guardar_historia(eid)
         except Exception:
             log.exception("No se pudo guardar la historia del buffer")
+        try:    # deja listo el universo de los informes (Salud, Clasificacion, Mapa) para que nadie espere la primera carga
+            import threading
+            from .routers.clasificacion import precalentar
+            threading.Thread(target=precalentar, daemon=True, name="precalentar").start()
+        except Exception:
+            log.exception("No se pudo lanzar el precalentamiento de los informes")
         return {"ejecucion_id": eid, **res, "cedi": cedi, "cedi_motor": cedi_motor, "reparto": reparto}
     except Exception as e:
         detalle = getattr(e, "stderr", None) or str(e)
