@@ -1,5 +1,6 @@
 """Alertas: resumen por zona y lista de zona roja de la ultima corrida. Mismos filtros que Control DDMRP (empresa, tienda, laboratorio,
 criterio de items, item), resueltos en el servidor y siempre limitados a lo que el usuario puede leer."""
+import time
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
 from ..db import pg
@@ -16,6 +17,9 @@ BASE_C = BASE + " LEFT JOIN ddmrp.costo_item ci ON ci.empresa = s.empresa AND ci
 SOBRAN = "CASE WHEN s.zona::text = 'EXCESO' THEN GREATEST(s.flujo_neto - GREATEST(s.tog_aj, 0), 0) ELSE 0 END"
 FALTAN = "CASE WHEN s.zona::text <> 'EXCESO' THEN GREATEST(s.tog_aj - s.flujo_neto, 0) ELSE 0 END"
 
+_CACHE: dict = {}      # resumen por (corrida del motor, permisos y filtros): el calculo recorre todo el buffer (3-5 s); se reutiliza 5 min
+_CACHE_TTL = 300
+
 
 def _donde(user, bodegas, labs, q, empresa, crit) -> tuple[str, dict]:
     cond, p = _filtros(user, bodegas, labs, q, None, None, empresa, crit=crit)   # permisos + solo items activos + filtros elegidos
@@ -27,7 +31,12 @@ def resumen(bodegas: str | None = None, labs: str | None = None, q: str | None =
             user=Depends(usuario_actual)):
     w, p = _donde(user, bodegas, labs, q, empresa, crit)
     with pg.connect() as c:
-        return [dict(r) for r in c.execute(text(f"""
+        ej = c.execute(text(f"SELECT string_agg(id::text, ',' ORDER BY id) FROM ddmrp.ejecucion_motor WHERE id = {ULTIMA}")).scalar()   # cambia si corre el motor de cualquier empresa
+        clave = (ej, w, repr(sorted((k, repr(v)) for k, v in p.items())))
+        hit = _CACHE.get(clave)
+        if hit and time.time() - hit[0] < _CACHE_TTL:
+            return hit[1]
+        res = [dict(r) for r in c.execute(text(f"""
             SELECT s.zona::text AS zona, count(*) n,
                    COALESCE(sum({SOBRAN}) FILTER (WHERE NOT s.condenado), 0)::float8 AS sobran,
                    COALESCE(sum({FALTAN}) FILTER (WHERE NOT s.condenado), 0)::float8 AS faltan,
@@ -35,9 +44,13 @@ def resumen(bodegas: str | None = None, labs: str | None = None, q: str | None =
                    COALESCE(sum({FALTAN} * ci.costo) FILTER (WHERE NOT s.condenado), 0)::float8 AS faltan_costo,
                    count(*) FILTER (WHERE NOT s.condenado AND ci.costo IS NULL AND ({SOBRAN} + {FALTAN}) > 0) AS sin_costo
             {BASE_C} WHERE {w} GROUP BY 1"""), p).mappings()]
+    if len(_CACHE) >= 64:
+        _CACHE.pop(next(iter(_CACHE)))
+    _CACHE[clave] = (time.time(), res)
+    return res
 
 
-ZONAS = ("ROJA", "AMARILLA", "VERDE", "EXCESO", "NO_APLICA")
+ZONAS = ("ROJA", "AMARILLA", "VERDE", "EXCESO")
 
 
 @router.get("/zona-roja")

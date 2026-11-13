@@ -1,7 +1,8 @@
 from sqlalchemy import create_engine
 from .config import settings
 
-pg = create_engine(settings.pg_url, pool_size=10, pool_pre_ping=True)
+# jit=off: los informes son consultas con nested loops/indices; el JIT de Postgres gastaba 0.8-1.1 s compilando en cada una (el planner subestima y cree que vale la pena)
+pg = create_engine(settings.pg_url, pool_size=10, pool_pre_ping=True, connect_args={"options": "-c jit=off"})
 _siesa: dict[str, object] = {}
 _mysql = None
 
