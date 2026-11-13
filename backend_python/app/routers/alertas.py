@@ -64,21 +64,25 @@ def zona_roja(bodegas: str | None = None, labs: str | None = None, q: str | None
     w, p = _donde(user, bodegas, labs, q, empresa, crit)
     w += " AND s.zona::text = :zona AND NOT s.condenado"; p["zona"] = zona
     with pg.connect() as c:
-        total = c.execute(text(f"SELECT count(*) {BASE} WHERE {w}"), p).scalar()
-        filas = [dict(r) for r in c.execute(text(f"""
+        # el informe se recorre UNA vez a una tabla temporal y de ahi salen el conteo, las filas y los totales (antes eran 3 recorridos completos: 17 s en prod)
+        c.execute(text(f"""CREATE TEMP TABLE _zr ON COMMIT DROP AS
             SELECT s.empresa, s.producto_id, mi.descripcion, s.bodega_id, s.inventario, s.en_transito, s.flujo_neto, s.tor, s.tog_aj, s.pct_buffer, s.cantidad_sugerida,
-                   s.stock_cedi::float8 AS stock_cedi, s.adu::float8 AS rotacion,
+                   s.stock_cedi::float8 AS stock_cedi, s.adu::float8 AS rotacion, s.adu,
                    {SOBRAN}::float8 AS sobran, {FALTAN}::float8 AS faltan, ci.costo::float8 AS costo,
                    ({SOBRAN} * ci.costo)::float8 AS sobran_costo, ({FALTAN} * ci.costo)::float8 AS faltan_costo
-            {BASE_C} WHERE {w} ORDER BY s.pct_buffer LIMIT :lim"""), {**p, "lim": limit}).mappings()]
+            {BASE_C} WHERE {w}"""), p)
+        total = c.execute(text("SELECT count(*) FROM _zr")).scalar()
+        filas = [dict(r) for r in c.execute(text("""
+            SELECT empresa, producto_id, descripcion, bodega_id, inventario, en_transito, flujo_neto, tor, tog_aj, pct_buffer, cantidad_sugerida, stock_cedi, rotacion,
+                   sobran, faltan, costo, sobran_costo, faltan_costo FROM _zr ORDER BY pct_buffer LIMIT :lim"""), {"lim": limit}).mappings()]
         # totales de TODA la lista con estos filtros (no solo de las filas que se alcanzan a mostrar)
-        totales = dict(c.execute(text(f"""
-            SELECT COALESCE(sum(s.inventario), 0)::float8 AS inventario, COALESCE(sum(s.en_transito), 0)::float8 AS en_transito, COALESCE(sum(s.flujo_neto), 0)::float8 AS flujo_neto,
-                   COALESCE(sum(s.cantidad_sugerida), 0)::float8 AS cantidad_sugerida, COALESCE(sum(s.adu), 0)::float8 AS rotacion,
-                   COALESCE(sum({SOBRAN}), 0)::float8 AS sobran, COALESCE(sum({FALTAN}), 0)::float8 AS faltan,
-                   COALESCE(sum({SOBRAN} * ci.costo), 0)::float8 AS sobran_costo, COALESCE(sum({FALTAN} * ci.costo), 0)::float8 AS faltan_costo,
-                   count(*) FILTER (WHERE ci.costo IS NULL AND ({SOBRAN} + {FALTAN}) > 0) AS sin_costo
-            {BASE_C} WHERE {w}"""), p).mappings().one())
+        totales = dict(c.execute(text("""
+            SELECT COALESCE(sum(inventario), 0)::float8 AS inventario, COALESCE(sum(en_transito), 0)::float8 AS en_transito, COALESCE(sum(flujo_neto), 0)::float8 AS flujo_neto,
+                   COALESCE(sum(cantidad_sugerida), 0)::float8 AS cantidad_sugerida, COALESCE(sum(adu), 0)::float8 AS rotacion,
+                   COALESCE(sum(sobran), 0)::float8 AS sobran, COALESCE(sum(faltan), 0)::float8 AS faltan,
+                   COALESCE(sum(sobran_costo), 0)::float8 AS sobran_costo, COALESCE(sum(faltan_costo), 0)::float8 AS faltan_costo,
+                   count(*) FILTER (WHERE costo IS NULL AND (sobran + faltan) > 0) AS sin_costo
+            FROM _zr""")).mappings().one())
         if filas:   # lo que se reparte de cada item entre TODAS las tiendas de la empresa (no solo las filtradas), calculado aparte
             tot = {(e, pr): v for e, pr, v in c.execute(text(
                 f"SELECT empresa, producto_id, SUM(cantidad_sugerida)::float8 FROM ddmrp.sugerencias_envio WHERE ejecucion_id = {ULTIMA} AND NOT condenado "

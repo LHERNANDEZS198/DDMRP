@@ -1,5 +1,6 @@
 """Vista de control DDMRP: indicadores por tienda / laboratorio / item con las zonas del buffer (rojo, amarillo, verde, exceso).
 Siempre sobre la ultima ejecucion correcta del motor y limitado a lo que el usuario puede leer."""
+import time
 from datetime import date, timedelta
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -13,7 +14,7 @@ from ..modo import fijar_modo, cond_cedi
 
 router = APIRouter(prefix="/control", tags=["control"], dependencies=[Depends(requiere("ver_control")), Depends(fijar_modo)])
 ULTIMA = "ANY (SELECT max(id) FROM ddmrp.ejecucion_motor WHERE estado='ok' GROUP BY empresa)"   # la ultima corrida buena de CADA empresa (sus filas solo existen bajo su propia corrida)
-ZONAS = ("ROJA", "AMARILLA", "VERDE", "EXCESO", "NO_APLICA")
+ZONAS = ("ROJA", "AMARILLA", "VERDE", "EXCESO")
 FROM = """FROM ddmrp.v_sugerencias_informe s
           LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = s.empresa AND mi.producto_id = s.producto_id
           LEFT JOIN ddmrp.maestro_bodega mb ON mb.bodega_id = s.bodega_id AND mb.empresa = s.empresa
@@ -56,6 +57,9 @@ def _donde(user, bodegas, labs, q, zonas, dia, empresa=None, crit=None) -> tuple
     cond, p = _filtros(user, bodegas, labs, q, zonas, dia, empresa, crit=crit)
     return " AND ".join([f"s.ejecucion_id = {ULTIMA}"] + cond), p
 
+_CACHE_FILTROS: dict = {}      # opciones de los filtros por (corrida, permisos): recorren todo el informe y la pantalla las pide en cada carga
+_CACHE_TTL = 300
+
 
 @router.get("/filtros")
 def filtros(user=Depends(usuario_actual)):
@@ -63,11 +67,17 @@ def filtros(user=Depends(usuario_actual)):
     base = f"{FROM} WHERE s.ejecucion_id = {ULTIMA} AND {w} AND {solo_activos('s')} AND {cond_cedi('s')}"
     with pg.connect() as c:
         ej = c.execute(text(f"SELECT id, fecha_calculo, fin FROM ddmrp.ejecucion_motor WHERE id = {ULTIMA} ORDER BY id LIMIT 1")).mappings().first()
+        clave = (ej["id"] if ej else None, str(ej["fin"]) if ej else None, base, repr(sorted((k, repr(v)) for k, v in p.items())))
+        hit = _CACHE_FILTROS.get(clave)
+        if hit and time.time() - hit[0] < _CACHE_TTL:
+            return hit[1]
+        # el informe completo se recorre UNA vez (tabla temporal chica) y de ahi salen tiendas, laboratorios y empresas; antes eran 3 recorridos de 1-3 s cada uno
+        c.execute(text(f"""CREATE TEMP TABLE _flt ON COMMIT DROP AS
+            SELECT DISTINCT s.bodega_id, mb.descripcion AS bnombre, s.empresa, tc.clase, COALESCE(mi.categoria, '') AS cat, lb.nombre AS lnombre {base}"""), p)
         tiendas = [dict(r) for r in c.execute(text(
-            f"SELECT s.bodega_id, string_agg(DISTINCT mb.descripcion, ' / ') AS nombre, string_agg(DISTINCT s.empresa, ',') AS empresa, max(tc.clase) AS clase {base} GROUP BY s.bodega_id ORDER BY 1"), p).mappings()]
-        labs = [dict(r) for r in c.execute(text(
-            f"SELECT COALESCE(mi.categoria, '') AS codigo, min(lb.nombre) AS nombre {base} GROUP BY 1 ORDER BY 1"), p).mappings()]
-        empresas = [r[0] for r in c.execute(text(f"SELECT DISTINCT s.empresa {base} ORDER BY 1"), p)]
+            "SELECT bodega_id, string_agg(DISTINCT bnombre, ' / ') AS nombre, string_agg(DISTINCT empresa, ',') AS empresa, max(clase) AS clase FROM _flt GROUP BY bodega_id ORDER BY 1")).mappings()]
+        labs = [dict(r) for r in c.execute(text("SELECT cat AS codigo, min(lnombre) AS nombre FROM _flt GROUP BY 1 ORDER BY 1")).mappings()]
+        empresas = [r[0] for r in c.execute(text("SELECT DISTINCT empresa FROM _flt ORDER BY 1"))]
         dias = [r[0] for r in c.execute(text("SELECT DISTINCT dia FROM ddmrp.bodega_dia ORDER BY 1"))]
         crit_rows = c.execute(text("""SELECT ic.plan_id, COALESCE(p.nombre, ic.plan_id) AS plan_nombre, ic.criterio_id, COALESCE(cr.nombre, ic.criterio_id) AS nombre, count(*) AS n
                                       FROM ddmrp.item_criterio ic LEFT JOIN ddmrp.criterio_plan p ON p.empresa = ic.empresa AND p.plan_id = ic.plan_id
@@ -80,8 +90,12 @@ def filtros(user=Depends(usuario_actual)):
     criterios: dict[str, dict] = {}
     for pid, pnom, cid, cnom, n in crit_rows:
         criterios.setdefault(pid, {"plan_id": pid, "nombre": pnom, "valores": []})["valores"].append({"id": cid, "nombre": cnom, "items": n})
-    return {"ejecucion": dict(ej) if ej else None, "tiendas": tiendas, "laboratorios": labs, "dias": dias, "empresas": empresas,
-            "criterios": list(criterios.values())}
+    res = {"ejecucion": dict(ej) if ej else None, "tiendas": tiendas, "laboratorios": labs, "dias": dias, "empresas": empresas,
+           "criterios": list(criterios.values())}
+    if len(_CACHE_FILTROS) >= 32:
+        _CACHE_FILTROS.pop(next(iter(_CACHE_FILTROS)))
+    _CACHE_FILTROS[clave] = (time.time(), res)
+    return res
 
 
 CRIT_JOIN = """ LEFT JOIN ddmrp.item_criterio ic ON ic.empresa = {a}.empresa AND ic.producto_id = {a}.producto_id AND ic.plan_id = :g_plan
@@ -108,8 +122,7 @@ def resumen(agrupar: str = "bodega", bodegas: str | None = None, labs: str | Non
         frm = FROM + CRIT_JOIN.format(a="s"); p["g_plan"] = plan or ""
     sql = f"""SELECT {clave} AS clave, MAX({nombre}) AS nombre, MAX(tc.clase) AS clase_tienda, count(*) AS n,
                      count(*) FILTER (WHERE s.zona = 'ROJA') AS roja, count(*) FILTER (WHERE s.zona = 'AMARILLA') AS amarilla,
-                     count(*) FILTER (WHERE s.zona = 'VERDE') AS verde, count(*) FILTER (WHERE s.zona = 'EXCESO') AS exceso, count(*) FILTER (WHERE s.zona = 'NO_APLICA') AS no_aplica,
-                     count(*) FILTER (WHERE s.zona::text <> 'NO_APLICA' AND COALESCE(s.inventario, 0) <= 0) AS agotado,
+                     count(*) FILTER (WHERE s.zona = 'VERDE') AS verde, count(*) FILTER (WHERE s.zona = 'EXCESO') AS exceso,
                      round(avg(LEAST(COALESCE(s.pct_buffer, 0), 200)), 1) AS pct_prom,
                      count(*) FILTER (WHERE s.cantidad_sugerida > 0) AS a_pedir,
                      COALESCE(sum(s.cantidad_sugerida), 0) AS unidades,
@@ -117,8 +130,7 @@ def resumen(agrupar: str = "bodega", bodegas: str | None = None, labs: str | Non
                      COALESCE(sum(s.flujo_neto), 0) AS flujo_neto, COALESCE(sum(s.tog_aj), 0) AS tog_aj
               {frm} WHERE {w} GROUP BY 1{", s.empresa" if agrupar in ("bodega", "item") else ""} ORDER BY (count(*) FILTER (WHERE s.zona = 'ROJA'))::float / count(*) DESC, 1 LIMIT :lim"""
     tot = f"""SELECT count(*) AS n, count(*) FILTER (WHERE s.zona = 'ROJA') AS roja, count(*) FILTER (WHERE s.zona = 'AMARILLA') AS amarilla,
-                     count(*) FILTER (WHERE s.zona = 'VERDE') AS verde, count(*) FILTER (WHERE s.zona = 'EXCESO') AS exceso, count(*) FILTER (WHERE s.zona = 'NO_APLICA') AS no_aplica,
-                     count(*) FILTER (WHERE s.zona::text <> 'NO_APLICA' AND COALESCE(s.inventario, 0) <= 0) AS agotado,
+                     count(*) FILTER (WHERE s.zona = 'VERDE') AS verde, count(*) FILTER (WHERE s.zona = 'EXCESO') AS exceso,
                      round(avg(LEAST(COALESCE(s.pct_buffer, 0), 200)), 1) AS pct_prom,
                      COALESCE(sum(s.cantidad_sugerida), 0) AS unidades,
                      COALESCE(sum(s.inventario), 0) AS inventario, COALESCE(sum(s.en_transito), 0) AS en_transito,
@@ -152,7 +164,7 @@ def detalle(bodegas: str | None = None, labs: str | None = None, q: str | None =
 
 
 # ===================== Vista 2: cambios en un periodo =====================
-RANGO = "(CASE {z} WHEN 'ROJA' THEN 0 WHEN 'AMARILLA' THEN 1 WHEN 'VERDE' THEN 2 WHEN 'EXCESO' THEN 2 WHEN 'NO_APLICA' THEN 2 END)"
+RANGO = "(CASE {z} WHEN 'ROJA' THEN 0 WHEN 'AMARILLA' THEN 1 WHEN 'VERDE' THEN 2 WHEN 'EXCESO' THEN 2 END)"
 MOV = {   # nombre -> condicion sobre x (zi/zf = zona inicial/final, ri/rf = rango de riesgo 0 rojo .. 2 verde/exceso)
     "entraron_rojo": "x.zf = 'ROJA' AND x.zi IS NOT NULL AND x.zi <> 'ROJA'",
     "salieron_rojo": "x.zi = 'ROJA' AND x.zf IS NOT NULL AND x.zf <> 'ROJA'",
@@ -222,7 +234,7 @@ def cambios(agrupar: str = "bodega", desde: date | None = None, hasta: date | No
     sel = ", ".join([
         f"{cnt('x.zi IS NOT NULL')} AS n_ini", f"{cnt('x.zf IS NOT NULL')} AS n_fin",
         *[f"{cnt(f'x.zi = {chr(39)}{z}{chr(39)}')} AS {k}_ini, {cnt(f'x.zf = {chr(39)}{z}{chr(39)}')} AS {k}_fin"
-          for z, k in (("ROJA", "roja"), ("AMARILLA", "amarilla"), ("VERDE", "verde"), ("EXCESO", "exceso"), ("NO_APLICA", "no_aplica"))],
+          for z, k in (("ROJA", "roja"), ("AMARILLA", "amarilla"), ("VERDE", "verde"), ("EXCESO", "exceso"))],
         "round((avg(LEAST(COALESCE(x.pi, 0), 200)) FILTER (WHERE x.zi IS NOT NULL))::numeric, 1) AS pct_ini",
         "round((avg(LEAST(COALESCE(x.pf, 0), 200)) FILTER (WHERE x.zf IS NOT NULL))::numeric, 1) AS pct_fin",
         *[f"{cnt(MOV[m])} AS {m}" for m in ("entraron_rojo", "salieron_rojo", "entraron_exceso", "salieron_exceso", "empeoraron", "mejoraron")],
@@ -285,9 +297,7 @@ def tendencia(desde: date | None = None, hasta: date | None = None, bodegas: str
                      sum(h.inventario) AS inventario, sum(h.flujo_neto) AS flujo_neto,
                      count(*) FILTER (WHERE h.inventario > 0) AS con_stock,
                      count(*) FILTER (WHERE h.zona = 'ROJA') AS roja, count(*) FILTER (WHERE h.zona = 'AMARILLA') AS amarilla,
-                     count(*) FILTER (WHERE h.zona = 'VERDE') AS verde, count(*) FILTER (WHERE h.zona = 'EXCESO') AS exceso,
-                     count(*) FILTER (WHERE h.zona = 'NO_APLICA') AS no_aplica,
-                     count(*) FILTER (WHERE h.zona::text <> 'NO_APLICA' AND COALESCE(h.inventario, 0) <= 0) AS agotado
+                     count(*) FILTER (WHERE h.zona = 'VERDE') AS verde, count(*) FILTER (WHERE h.zona = 'EXCESO') AS exceso
               FROM ddmrp.buffer_historia h
               LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = h.empresa AND mi.producto_id = h.producto_id
               WHERE {' AND '.join(cond)} GROUP BY h.fecha ORDER BY h.fecha"""
@@ -383,7 +393,7 @@ def _dic_filtros(bodegas, labs, q, zonas, dia, empresa, crit):
 
 COLS_GRUPO = [{"t": "Clave", "k": "clave", "w": 16}, {"t": "Nombre", "k": "nombre", "w": 32}, {"t": "Clase tienda", "k": "clase_tienda", "w": 8}, {"t": "Combinaciones", "k": "n", "f": "int"},
               {"t": "Rojo", "k": "roja", "f": "int"}, {"t": "Amarillo", "k": "amarilla", "f": "int"}, {"t": "Verde", "k": "verde", "f": "int"},
-              {"t": "Exceso", "k": "exceso", "f": "int"}, {"t": "No aplica", "k": "no_aplica", "f": "int"}, {"t": "Agotado (inv. 0)", "k": "agotado", "f": "int"}, {"t": "% buffer prom", "k": "pct_prom", "f": "dec1"},
+              {"t": "Exceso", "k": "exceso", "f": "int"}, {"t": "% buffer prom", "k": "pct_prom", "f": "dec1"},
               {"t": "A pedir", "k": "a_pedir", "f": "int"}, {"t": "Unidades sugeridas", "k": "unidades", "f": "int"},
               {"t": "Inventario", "k": "inventario", "f": "int"}, {"t": "En transito", "k": "en_transito", "f": "int"},
               {"t": "Flujo neto", "k": "flujo_neto", "f": "int"}, {"t": "TOG ajustado", "k": "tog_aj", "f": "int"}]
@@ -408,7 +418,7 @@ COLS_DETALLE = [{"t": "Tienda", "k": "bodega_id", "w": 10}, {"t": "Nombre tienda
                 {"t": "Condenado", "k": "condenado", "w": 10}, {"t": "Costo", "k": "costo", "f": "cop"}]
 COLS_CAMBIOS_G = [{"t": "Clave", "k": "clave", "w": 16}, {"t": "Nombre", "k": "nombre", "w": 32},
                   {"t": "Combin. inicio", "k": "n_ini", "f": "int"}, {"t": "Combin. fin", "k": "n_fin", "f": "int"},
-                  *[{"t": f"{t} {s}", "k": f"{k}_{s2}", "f": "int"} for k, t in (("roja", "Rojo"), ("amarilla", "Amarillo"), ("verde", "Verde"), ("exceso", "Exceso"), ("no_aplica", "No aplica"))
+                  *[{"t": f"{t} {s}", "k": f"{k}_{s2}", "f": "int"} for k, t in (("roja", "Rojo"), ("amarilla", "Amarillo"), ("verde", "Verde"), ("exceso", "Exceso"))
                     for s, s2 in (("inicio", "ini"), ("fin", "fin"))],
                   {"t": "% buffer inicio", "k": "pct_ini", "f": "dec1"}, {"t": "% buffer fin", "k": "pct_fin", "f": "dec1"},
                   {"t": "Entraron a rojo", "k": "entraron_rojo", "f": "int"}, {"t": "Salieron de rojo", "k": "salieron_rojo", "f": "int"},
@@ -423,7 +433,7 @@ COLS_TEND = [{"t": "Fecha", "k": "fecha", "w": 12}, {"t": "Combinaciones", "k": 
              {"t": "TOY ajustado", "k": "toy_aj", "f": "int"}, {"t": "TOG ajustado", "k": "tog_aj", "f": "int"},
              {"t": "Inventario", "k": "inventario", "f": "int"}, {"t": "Flujo neto", "k": "flujo_neto", "f": "int"},
              {"t": "Con stock", "k": "con_stock", "f": "int"}, {"t": "Rojo", "k": "roja", "f": "int"}, {"t": "Amarillo", "k": "amarilla", "f": "int"},
-             {"t": "Verde", "k": "verde", "f": "int"}, {"t": "Exceso", "k": "exceso", "f": "int"}, {"t": "No aplica", "k": "no_aplica", "f": "int"}]
+             {"t": "Verde", "k": "verde", "f": "int"}, {"t": "Exceso", "k": "exceso", "f": "int"}]
 
 
 def _stream(c, sql, params):
