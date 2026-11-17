@@ -119,7 +119,12 @@ export default function Despacho() {
     return rows.filter(r => (!t || `${r.producto_id} ${r.descripcion ?? ''} ${r.bodega_id}`.toLowerCase().includes(t)) && (!fLab || r.categoria === fLab) && (!fTienda || r.bodega_id === fTienda)
       && (!fZona || r.zona === fZona) && (!fLim || r.limitado) && (fCero || fSin || fLim || unidades(r) > 0))   // 'solo limitadas' muestra tambien las de 0: son justo las que el CEDI no alcanzo a cubrir
   }, [rows, fTexto, fLab, fTienda, fZona, fLim, fCero])
-  const necesarioTot = useMemo(() => vista.reduce((s: number, r: any) => s + (Number(r.cantidad_necesaria) || 0), 0), [vista])   // suma de 'Necesario' de lo que se ve
+  // 'uds sugeridas' = lo que pedia el buffer (Necesario), INCLUYENDO las filas con 0 a enviar (justo las que el CEDI no pudo cubrir y estan ocultas): con los mismos filtros, menos el de "enviar en 0"
+  const necesarioTot = useMemo(() => {
+    const t = fTexto.trim().toLowerCase()
+    return rows.reduce((s: number, r: any) => (!t || `${r.producto_id} ${r.descripcion ?? ''} ${r.bodega_id}`.toLowerCase().includes(t)) && (!fLab || r.categoria === fLab) && (!fTienda || r.bodega_id === fTienda)
+      && (!fZona || r.zona === fZona) && (!fLim || r.limitado) ? s + (Number(r.cantidad_necesaria) || 0) : s, 0)
+  }, [rows, fTexto, fLab, fTienda, fZona, fLim])
   const hayFiltro = !!(fTexto || fLab || fTienda || fZona || fLim)
   // totales de lo que se ve: unidades y costo, en total y por tienda
   const tot = useMemo(() => {
