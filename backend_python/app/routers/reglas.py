@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text
+from .. import conexiones
 from ..db import pg
 from ..security import usuario_actual, requiere
 from .maestros import _puede_global
@@ -275,6 +276,59 @@ def listar_compras(empresa: str | None = None, user=Depends(requiere("ver_compra
         else:
             vals = {k: (v, False) for k, v in c.execute(text("SELECT clave, valor::float8 FROM ddmrp.compras_config")).all()}
     return [{**r, "valor": vals.get(r["clave"], (None, False))[0], "propio": bool(e) and vals.get(r["clave"], (None, False))[1], "global": es_global_compras(r["clave"])} for r in REGLAS_COMPRAS]
+
+
+class WsIn(BaseModel):
+    url: str | None = None
+    usuario: str | None = None
+    clave: str | None = None           # None o vacio = no tocar; la clave nunca se devuelve
+    conexion: str | None = None
+    cia: str | None = None
+
+
+class ConexionIn(BaseModel):
+    bpm_url: str | None = None
+    bpm_secret: str | None = None      # None o vacio = no tocar; el secreto nunca se devuelve
+    ws: dict[str, WsIn] | None = None  # web service de Siesa por empresa ('05', '21'): vacio = vuelve a regir el .env
+
+
+@router.get("/conexiones")
+def ver_conexiones(user=Depends(requiere("ver_compras", "cargar_maestros_compras", "editar_reglas_compras"))):
+    """Conexion con el BPM (URL y secreto): de la UI y, si esta vacia, del .env. El secreto no se devuelve."""
+    return conexiones.estado()
+
+
+@router.put("/conexiones")
+def cambiar_conexiones(body: ConexionIn, user=Depends(requiere("editar_reglas_compras"))):
+    cambios = {}
+    if body.bpm_url is not None:
+        u = body.bpm_url.strip().rstrip("/")
+        if u and not u.lower().startswith(("http://", "https://")):
+            raise HTTPException(400, "La URL debe empezar por http:// o https://")
+        cambios["bpm_url"] = u
+    if body.bpm_secret and body.bpm_secret.strip():
+        cambios["bpm_secret"] = body.bpm_secret.strip()
+    for emp, w in (body.ws or {}).items():
+        if emp not in EMPRESAS:
+            raise HTTPException(400, "Empresa desconocida")
+        for campo in ("url", "usuario", "conexion", "cia"):
+            v = getattr(w, campo)
+            if v is not None:
+                v = v.strip()
+                if campo == "url" and v and not v.lower().startswith(("http://", "https://")):
+                    raise HTTPException(400, "La URL del web service debe empezar por http:// o https://")
+                cambios[f"siesa_ws_{campo}_{emp}"] = v
+        if w.clave and w.clave.strip():
+            cambios[f"siesa_ws_clave_{emp}"] = w.clave.strip()
+    if not cambios:
+        raise HTTPException(400, "No llego nada para guardar")
+    with pg.begin() as c:
+        for k, v in cambios.items():
+            c.execute(text("INSERT INTO ddmrp.conexion (clave, valor, actualizado_por) VALUES (:k, :v, :u) ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado_por = EXCLUDED.actualizado_por, actualizado = now()"),
+                      {"k": k, "v": v, "u": user["nombre"]})
+            c.execute(text("INSERT INTO ddmrp.config_audit (tabla, llave, campo, valor_anterior, valor_nuevo, usuario) VALUES ('conexion', :k, 'valor', NULL, :n, :u)"),
+                      {"k": k, "n": "(secreto cambiado)" if ("secret" in k or "clave" in k) else v, "u": user["nombre"]})
+    return conexiones.estado()
 
 
 @router.put("/compras/{clave}")

@@ -13,6 +13,7 @@ import urllib.error
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import text
+from . import conexiones
 from .config import settings
 from .db import siesa_engine
 
@@ -86,7 +87,7 @@ def referencia(oc_id: int) -> str:
 
 
 def cia_ws(empresa: str) -> str:
-    return (settings.siesa_ws_cia_s or settings.siesa_ws_cia) if empresa == "21" else settings.siesa_ws_cia
+    return conexiones.ws_cia(empresa)
 
 
 def bodega_oc(empresa: str) -> str:
@@ -139,13 +140,12 @@ class SiesaNoDisponible(Exception):
 
 
 def ws_config(empresa: str) -> dict:
-    s = settings
-    st = empresa == "21"
-    c = {"URL": (s.siesa_ws_url_s if st else "") or s.siesa_ws_url, "USUARIO": (s.siesa_ws_user_s if st else "") or s.siesa_ws_user,
-         "CLAVE": (s.siesa_ws_password_s if st else "") or s.siesa_ws_password, "NOMBRE_CONEXION": s.siesa_ws_conexion_s if st else s.siesa_ws_conexion, "CIA": cia_ws(empresa)}
+    """Datos del web service (Reglas de compras > Conexiones; si estan vacios, el .env). Lanza ValueError si falta alguno."""
+    v = conexiones.ws_valores(empresa)
+    c = {"URL": v["url"], "USUARIO": v["usuario"], "CLAVE": v["clave"], "NOMBRE_CONEXION": v["conexion"], "CIA": v["cia"]}
     falta = [k for k in ("URL", "USUARIO", "CLAVE", "NOMBRE_CONEXION", "CIA") if not str(c[k]).strip()]
     if falta:
-        raise ValueError(f"Falta configurar el web service de Siesa para la empresa {empresa} (.env SIESA_WS_*): {', '.join(falta)}")
+        raise ValueError(f"Falta configurar el web service de Siesa para la empresa {empresa} (Reglas de compras > Conexiones): {', '.join(falta)}")
     return c
 
 

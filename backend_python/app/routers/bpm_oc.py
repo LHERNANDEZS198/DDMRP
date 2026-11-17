@@ -9,7 +9,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text
-from .. import siesa_oc
+from .. import conexiones, siesa_oc
 from ..bitacora import evento
 from ..config import settings
 from ..db import pg
@@ -18,7 +18,7 @@ from .oc import _al_dia, _cerrar_creada, _cfg_revision, _lineas_de, _oc_dict, _m
 
 
 def _secreto(x_oc_secret: str | None = Header(default=None)) -> None:
-    esperado = settings.bpm_secret
+    esperado = conexiones.bpm_secret()
     if not esperado or not x_oc_secret or not hmac.compare_digest(esperado.encode(), x_oc_secret.encode()):
         raise HTTPException(401, "No autorizado")
 

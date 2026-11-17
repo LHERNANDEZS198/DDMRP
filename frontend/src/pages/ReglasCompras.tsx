@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Box, Card, CardContent, CardHeader, Chip, MenuItem, Stack, TextField, Typography } from '@mui/material'
+import { Box, Button, Card, CardContent, CardHeader, Chip, MenuItem, Stack, TextField, Typography } from '@mui/material'
 import { api } from '../api'
 import Aviso from '../Aviso'
 import { useYo } from '../Yo'
@@ -13,6 +13,18 @@ export default function ReglasCompras() {
   const { puede } = useYo(); const editar = puede('cargar_maestros_compras', 'editar_reglas_compras')
   const [reglas, setReglas] = useState<Regla[]>([])
   const [msg, setMsg] = useState('')
+  // conexión con el BPM (no es por empresa): URL y secreto; lo vacío cae al .env del servidor. El secreto nunca vuelve a la pantalla.
+  const [cx, setCx] = useState<any>(null); const [cxUrl, setCxUrl] = useState(''); const [cxSec, setCxSec] = useState('')
+  const [ws, setWs] = useState<Record<string, string>>({})     // web service de Siesa de la empresa elegida (envío directo, contingencia)
+  const cargarCx = () => api('/reglas/conexiones').then(x => { setCx(x); setCxUrl(x.bpm_url ?? ''); setWs({}) }).catch(() => {})
+  useEffect(() => { cargarCx() }, [])
+  useEffect(() => { setWs({}) }, [emp])
+  const wsE = cx?.ws?.[emp] ?? {}
+  const wsVal = (k: string) => ws[k] ?? wsE[k] ?? ''
+  const guardarCx = async () => {
+    try { await api('/reglas/conexiones', { method: 'PUT', body: JSON.stringify({ bpm_url: cxUrl, bpm_secret: cxSec, ws: Object.keys(ws).length ? { [emp]: ws } : undefined }) }); setCxSec(''); setMsg('Conexión con el BPM guardada.'); cargarCx() }
+    catch (e: any) { setMsg('Error: ' + e.message) }
+  }
   const er = useEmpresaReglas(); const emp = er.emp
   const cargar = () => api('/reglas/compras?empresa=' + emp).then(setReglas).catch(e => setMsg('Error: ' + e.message))
   useEffect(() => { setReglas([]); cargar() }, [emp])
@@ -32,6 +44,26 @@ export default function ReglasCompras() {
       <Typography variant="body2" color="text.secondary">
         Cada empresa tiene sus reglas (las marcadas «Todas las empresas» son del sistema). Cómo se calculan y se revisan las compras. Los cambios se aplican de inmediato (no hace falta correr el motor).{!editar && ' Tu perfil solo puede verlas.'}
       </Typography>
+      {cx && <Card variant="outlined">
+        <CardHeader title="Conexión con el BPM" slotProps={{ title: { variant: 'subtitle1', fontWeight: 700 } }} sx={{ bgcolor: '#eef2e3', py: 1 }} />
+        <CardContent sx={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 1.5 }}>
+          <Typography variant="body2" color="text.secondary">A dónde se entregan las OC cuando el envío es «Al BPM». Lo que dejes vacío usa lo que tenga el servidor en su .env. Aplica a todas las empresas. El secreto debe ser el mismo del BPM (Admin → Conexiones).</Typography>
+          <TextField size="small" label="URL del BPM" placeholder="https://bpm.funat.com.co" disabled={!editar} value={cxUrl} onChange={e => setCxUrl(e.target.value)}
+            helperText={`Origen: ${cx.bpm_url_origen}`} />
+          <TextField size="small" type="password" label="Secreto compartido" autoComplete="new-password" disabled={!editar} value={cxSec} onChange={e => setCxSec(e.target.value)}
+            placeholder={cx.bpm_secret_configurado ? '•••••••• (configurado; escribe uno nuevo para cambiarlo)' : 'sin configurar'} helperText={`Origen: ${cx.bpm_secret_origen}`} />
+          <Typography variant="subtitle2" sx={{ fontWeight: 700, mt: 1 }}>Envío directo a Siesa (contingencia) · {NOMBRE_EMPRESA[emp] ?? emp} ({emp})</Typography>
+          <Typography variant="body2" color="text.secondary">Solo se usa cuando el envío de la empresa es «Directo a Siesa». Si no está completo (aquí o en el .env) no pasa nada: ese envío simplemente no se hace. Stores usa la URL, usuario, clave y compañía de Funat si no tiene los suyos; el nombre de conexión sí es propio.</Typography>
+          {(['url', 'usuario', 'conexion', 'cia'] as const).map(k => (
+            <TextField key={k} size="small" disabled={!editar} value={wsVal(k)} onChange={e => setWs({ ...ws, [k]: e.target.value })}
+              label={{ url: 'URL del web service', usuario: 'Usuario', conexion: 'Nombre de la conexión', cia: 'Compañía (IdCia)' }[k]}
+              placeholder={k === 'url' ? 'https://ws.funat.com.co:9160/WSUNOEE/WSUNOEE.asmx' : ''} helperText={`Origen: ${wsE[k + '_origen'] ?? '—'}`} />))}
+          <TextField size="small" type="password" label="Clave" autoComplete="new-password" disabled={!editar} value={ws.clave ?? ''} onChange={e => setWs({ ...ws, clave: e.target.value })}
+            placeholder={wsE.clave_configurada ? '•••••••• (configurada; escribe una nueva para cambiarla)' : 'sin configurar'} helperText={`Origen: ${wsE.clave_origen ?? '—'}`} />
+          <Chip size="small" sx={{ alignSelf: 'start' }} color={wsE.listo ? 'success' : 'default'} label={wsE.listo ? 'Envío directo listo' : 'Envío directo sin configurar (no hace nada)'} />
+          <Box><Button variant="contained" disabled={!editar || (cxUrl === (cx.bpm_url ?? '') && !cxSec && !Object.keys(ws).length)} onClick={guardarCx}>Guardar conexión</Button></Box>
+        </CardContent>
+      </Card>}
       {grupos.map(g => (
         <Card key={g} variant="outlined">
           <CardHeader title={g} slotProps={{ title: { variant: 'subtitle1', fontWeight: 700 } }} sx={{ bgcolor: '#eef2e3', py: 1 }} />

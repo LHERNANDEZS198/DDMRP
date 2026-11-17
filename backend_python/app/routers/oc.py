@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text
-from .. import siesa_oc
+from .. import conexiones, siesa_oc
 from ..bitacora import evento, usuario_de
 from ..config import settings
 from ..db import pg
@@ -150,7 +150,7 @@ def _exigir_envio_activo(empresa: str | None = None) -> None:
 
 def _cfg_revision(empresa: str | None = None) -> dict:
     """Reglas de revision de la empresa desde Configuracion de compras (compras_config, con lo propio de la empresa encima), no del .env. Los defectos aplican si la fila no existe o esta vacia."""
-    cfg = {"oc_umbral_total": 0.0, "oc_desvio_cant_pct": 30.0, "oc_desvio_cant_min": 15.0, "oc_desvio_costo_pct": 30.0, "oc_exigir_entiendo": 1.0, "oc_listado_dias": 30.0, "oc_exigir_email": 0.0, "oc_email_proveedor": 0.0}
+    cfg = {"oc_umbral_total": 0.0, "oc_desvio_cant_pct": 30.0, "oc_desvio_cant_min": 15.0, "oc_desvio_costo_pct": 30.0, "oc_exigir_entiendo": 1.0, "oc_listado_dias": 30.0, "oc_exigir_email": 1.0, "oc_email_proveedor": 0.0}
     try:
         with pg.connect() as c:
             for k, v in todas_compras(c, empresa).items():
@@ -233,6 +233,9 @@ def _cerrar_creada(oc_id: int, empresa: str, ref: str, mensaje: str, usuario: st
     return {"estado": "creada", "consecutivo": cons, "mensaje": mensaje}
 
 
+SIN_WS = "El envío directo a Siesa no está configurado (Reglas de compras > Conexiones): no se envió nada."
+
+
 def _enviar(oc_id: int, usuario: str | None) -> dict:
     _al_dia(oc_id)
     with pg.connect() as c:
@@ -240,6 +243,8 @@ def _enviar(oc_id: int, usuario: str | None) -> dict:
         if not r:
             raise HTTPException(404, "No existe esa OC")
         lineas = _lineas_de(c, oc_id)
+    if not conexiones.ws_listo(r["empresa"]):     # envio directo sin configurar: no se hace nada (la OC queda como esta)
+        return {"estado": "no_enviada", "mensaje": SIN_WS}
     oc = _oc_dict(dict(r) | {"fecha": siesa_oc.hoy()})
     ref = r["referencia"]
     try:   # 1) ¿ya existe en Siesa? (duplicados). Si no se puede consultar, NO se envia.
@@ -272,8 +277,9 @@ def _enviar(oc_id: int, usuario: str | None) -> dict:
 def _enviar_bpm(oc_id: int, usuario: str | None) -> dict:
     """Modo 'bpm': DDMRP arma el plano y lo ENTREGA al BPM (202). Desde ahi el BPM aprueba, crea en Siesa, genera PDF y correo, y avisa por callback
     (/api/bpm/oc/{id}/estado). El BPM es idempotente por referencia: reenviar la misma OC no crea otra instancia."""
-    if not (settings.bpm_url and settings.bpm_secret):
-        msg = "Falta configurar el BPM (.env BPM_URL y BPM_SECRET)"
+    bpm_u, bpm_s = conexiones.bpm_url(), conexiones.bpm_secret()
+    if not (bpm_u and bpm_s):
+        msg = "Falta configurar el BPM (Reglas de compras > Conexión con el BPM: URL y secreto)"
         _marcar(oc_id, "error", msg); return {"estado": "error", "mensaje": msg}
     _al_dia(oc_id)
     with pg.connect() as c:
@@ -294,8 +300,8 @@ def _enviar_bpm(oc_id: int, usuario: str | None) -> dict:
              "proveedor_nombre": r["proveedor_nombre"], "cond_pago": r["cond_pago"], "comprador": r["comprador"], "creado_por": r["creado_por"], "valor": float(r["valor"] or 0),
              "iva": float(r["iva"] or 0), "total": float(r["total"] or 0), "items": r["items"], "requiere_revision": revision, "motivo_revision": "\n".join(x for x in (*("• " + t for t in (r["motivo_revision"] or "").split("; ") if t.strip()), ("\nJustificación de compras: " + r["justificacion"]) if r.get("justificacion") else "") if x) or None, "justificacion": r.get("justificacion"), "emails_proveedor": emails_proveedor, "email_comprador": r.get("creado_por_email") or "",
              "lineas": [{"producto_id": l["producto_id"], "descripcion": l["descripcion"], "cantidad": l["cantidad"], "costo": l["costo"], "fecha_entrega": str(l["fecha_entrega"])} for l in lineas]}
-    req = urllib.request.Request(settings.bpm_url.rstrip("/") + "/api/internal/oc", data=json.dumps(carga).encode(), method="POST",
-                                 headers={"Content-Type": "application/json", "X-OC-Secret": settings.bpm_secret})
+    req = urllib.request.Request(bpm_u.rstrip("/") + "/api/internal/oc", data=json.dumps(carga).encode(), method="POST",
+                                 headers={"Content-Type": "application/json", "X-OC-Secret": bpm_s})
     try:
         with urllib.request.urlopen(req, timeout=settings.bpm_timeout) as resp:
             ans = json.loads(resp.read().decode() or "{}")
@@ -366,6 +372,8 @@ def enviar(b: EnviarIn, user=Depends(requiere("gestionar_compras"))):
             except ValueError as ex:
                 salida.append(res | {"estado": "no_enviada", "mensaje": str(ex)})
             continue
+        if _destino(g["empresa"]) != "bpm" and not conexiones.ws_listo(g["empresa"]):
+            salida.append(res | {"estado": "no_enviada", "mensaje": SIN_WS}); continue
         with pg.begin() as c:
             oc_id = c.execute(text("""INSERT INTO ddmrp.orden_compra (empresa, proveedor_id, sucursal, proveedor_nombre, cond_pago, comprador, bodega, referencia, valor, iva, total, items, unidades, creado_por, creado_por_email, requiere_revision, motivo_revision, consignacion, justificacion)
                                       VALUES (:e, :p, :s, :n, :cp, :co, :b, 'tmp-' || gen_random_uuid()::text, :v, :iva, :t, :it, :u, :us, (SELECT email FROM ddmrp.usuario WHERE usuario_id = :uid), :rr, :mr, :cg, :jf) RETURNING id"""),
