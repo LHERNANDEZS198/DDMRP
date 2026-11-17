@@ -13,6 +13,7 @@ export default function ReglasCompras() {
   const { puede } = useYo(); const editar = puede('cargar_maestros_compras', 'editar_reglas_compras')
   const [reglas, setReglas] = useState<Regla[]>([])
   const [msg, setMsg] = useState('')
+  const er = useEmpresaReglas(); const emp = er.emp
   // conexión con el BPM (no es por empresa): URL y secreto; lo vacío cae al .env del servidor. El secreto nunca vuelve a la pantalla.
   const [cx, setCx] = useState<any>(null); const [cxUrl, setCxUrl] = useState(''); const [cxSec, setCxSec] = useState('')
   const [ws, setWs] = useState<Record<string, string>>({})     // web service de Siesa de la empresa elegida (envío directo, contingencia)
@@ -25,7 +26,6 @@ export default function ReglasCompras() {
     try { await api('/reglas/conexiones', { method: 'PUT', body: JSON.stringify({ bpm_url: cxUrl, bpm_secret: cxSec, ws: Object.keys(ws).length ? { [emp]: ws } : undefined }) }); setCxSec(''); setMsg('Conexión con el BPM guardada.'); cargarCx() }
     catch (e: any) { setMsg('Error: ' + e.message) }
   }
-  const er = useEmpresaReglas(); const emp = er.emp
   const cargar = () => api('/reglas/compras?empresa=' + emp).then(setReglas).catch(e => setMsg('Error: ' + e.message))
   useEffect(() => { setReglas([]); cargar() }, [emp])
   const restablecer = async (r: Regla) => {
