@@ -119,6 +119,7 @@ export default function Despacho() {
     return rows.filter(r => (!t || `${r.producto_id} ${r.descripcion ?? ''} ${r.bodega_id}`.toLowerCase().includes(t)) && (!fLab || r.categoria === fLab) && (!fTienda || r.bodega_id === fTienda)
       && (!fZona || r.zona === fZona) && (!fLim || r.limitado) && (fCero || fSin || fLim || unidades(r) > 0))   // 'solo limitadas' muestra tambien las de 0: son justo las que el CEDI no alcanzo a cubrir
   }, [rows, fTexto, fLab, fTienda, fZona, fLim, fCero])
+  const necesarioTot = useMemo(() => vista.reduce((s: number, r: any) => s + (Number(r.cantidad_necesaria) || 0), 0), [vista])   // suma de 'Necesario' de lo que se ve
   const hayFiltro = !!(fTexto || fLab || fTienda || fZona || fLim)
   // totales de lo que se ve: unidades y costo, en total y por tienda
   const tot = useMemo(() => {
@@ -208,7 +209,7 @@ export default function Despacho() {
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 1.5, minHeight: 500 }}>
       <Plegable id="despacho" titulo="corrida, acciones y filtros" resumen={<>
-        <Chip label={`${vista.length.toLocaleString()}${vista.length !== rows.length ? ` de ${rows.length.toLocaleString()}` : ''} filas`} size="small" />
+        <Chip label={`${Math.round(necesarioTot).toLocaleString('es-CO')} uds sugeridas`} size="small" />
         <Chip label={`${Math.round(tot.uds).toLocaleString('es-CO')} uds a enviar`} size="small" color="primary" />
         <Chip label={`Costo total ${cop(tot.valor)}`} size="small" color="primary" />
         <Chip label={`${tot.lista.length} tiendas`} size="small" />
@@ -267,7 +268,7 @@ export default function Despacho() {
           <FormControlLabel control={<Checkbox size="small" checked={fSin} onChange={e => setFSin(e.target.checked)} />} label="Mostrar items sin necesidad (consulta pesada y demorada)" /></span></Tooltip>
         {hayFiltro && <Button size="small" onClick={() => { setFTexto(''); setFLab(''); setFTienda(null); setFZona(''); setFLim(false) }}>Quitar filtros</Button>}
         <Box sx={{ flex: 1 }} />
-        <Chip label={`${vista.length.toLocaleString()}${vista.length !== rows.length ? ` de ${rows.length.toLocaleString()}` : ''} filas`} size="small" />
+        <Chip label={`${Math.round(necesarioTot).toLocaleString('es-CO')} uds sugeridas`} size="small" />
         <Chip label={`${Math.round(tot.uds).toLocaleString('es-CO')} uds a enviar`} size="small" color="primary" />
         <Chip label={`Costo total ${cop(tot.valor)}`} size="small" color="primary" />
         <Chip label={`${tot.lista.length} tiendas`} size="small" />
