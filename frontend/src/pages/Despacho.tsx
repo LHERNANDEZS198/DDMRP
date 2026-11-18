@@ -125,6 +125,15 @@ export default function Despacho() {
     return rows.reduce((s: number, r: any) => (!t || `${r.producto_id} ${r.descripcion ?? ''} ${r.bodega_id}`.toLowerCase().includes(t)) && (!fLab || r.categoria === fLab) && (!fTienda || r.bodega_id === fTienda)
       && (!fZona || r.zona === fZona) && (!fLim || r.limitado) ? s + (Number(r.cantidad_necesaria) || 0) : s, 0)
   }, [rows, fTexto, fLab, fTienda, fZona, fLim])
+  // lo mismo por tienda (para la tabla "Por tienda"): incluye las filas con 0 a enviar
+  const necesarioPorTienda = useMemo(() => {
+    const t = fTexto.trim().toLowerCase(); const m = new Map<string, number>()
+    for (const r of rows as any[]) {
+      if ((!t || `${r.producto_id} ${r.descripcion ?? ''} ${r.bodega_id}`.toLowerCase().includes(t)) && (!fLab || r.categoria === fLab) && (!fTienda || r.bodega_id === fTienda)
+        && (!fZona || r.zona === fZona) && (!fLim || r.limitado)) m.set(r.bodega_id, (m.get(r.bodega_id) ?? 0) + (Number(r.cantidad_necesaria) || 0))
+    }
+    return m
+  }, [rows, fTexto, fLab, fTienda, fZona, fLim])
   const hayFiltro = !!(fTexto || fLab || fTienda || fZona || fLim)
   // totales de lo que se ve: unidades y costo, en total y por tienda
   const tot = useMemo(() => {
@@ -289,17 +298,18 @@ export default function Despacho() {
       {porTienda && (
         <Paper variant="outlined" sx={{ flex: 1, minHeight: 300, overflow: 'auto' }}>
           <Table size="small" stickyHeader>
-            <TableHead><TableRow><TableCell>Tienda</TableCell><TableCell align="right">Filas</TableCell><TableCell align="right">Unidades</TableCell>
+            <TableHead><TableRow><TableCell>Tienda</TableCell><TableCell align="right">Filas</TableCell><TableCell align="right">Unidades</TableCell><TableCell align="right">Sugeridas</TableCell>
               <TableCell align="right">Costo</TableCell><TableCell>{regla ? `Mínimo ${cop(minimo)}` : 'Mínimo'}</TableCell></TableRow></TableHead>
             <TableBody>
               {tot.lista.map(([b, x]) => { const bajo = regla && x.valor < minimo
                 return (<TableRow key={b} hover>
                   <TableCell>{b}</TableCell><TableCell align="right">{x.filas}</TableCell>
                   <TableCell align="right">{Math.round(x.uds).toLocaleString('es-CO')}</TableCell>
+                  <TableCell align="right" sx={{ color: 'text.secondary' }}>{Math.round(necesarioPorTienda.get(b) ?? 0).toLocaleString('es-CO')}</TableCell>
                   <TableCell align="right" sx={{ color: bajo ? 'error.main' : undefined, fontWeight: bajo ? 700 : 400 }}>{cop(x.valor)}</TableCell>
                   <TableCell>{!regla ? '' : bajo ? <Chip size="small" color="error" label={`Falta ${cop(minimo - x.valor)} · no se puede enviar`} /> : <Chip size="small" color="success" variant="outlined" label="Cumple" />}</TableCell>
                 </TableRow>) })}
-              {!tot.lista.length && <TableRow><TableCell colSpan={5} align="center" sx={{ color: 'text.secondary' }}>Sin filas</TableCell></TableRow>}
+              {!tot.lista.length && <TableRow><TableCell colSpan={6} align="center" sx={{ color: 'text.secondary' }}>Sin filas</TableCell></TableRow>}
             </TableBody>
           </Table>
         </Paper>)}
