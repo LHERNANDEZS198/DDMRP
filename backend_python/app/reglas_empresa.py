@@ -2,9 +2,9 @@
 parametro_empresa / compras_config_empresa y manda sobre la general. Sin empresa (None) se usa la general."""
 from sqlalchemy import text
 
-# Reglas de sistema: aplican a todo (horarios de la corrida automatica, retencion de historia, lectura de Siesa, reportes, cache del tablero).
+# Reglas de sistema: aplican a todo (retencion de historia, lectura de Siesa, reportes, cache del tablero).
 # No se pueden cambiar por empresa; todo lo demas de Reglas de pedido y de compras si es de cada empresa.
-GLOBALES_PARAM = {"pipeline_auto", "pipeline_hora", "pipeline_minuto", "pipeline_cada_dias", "pipeline_ultima_auto", "retener_dias", "meses_retencion_ventas",
+GLOBALES_PARAM = {"pipeline_ultima_auto", "retener_dias", "meses_retencion_ventas",
                   "etl_traer_ventas", "ventas_todas_tiendas", "solo_items_activos", "rec_suma_original", "inv_tiendas_resta_comprometido",
                   "inv_tiendas_resta_sin_acumular", "rit_abiertas_transito", "rit_incluir_aprobadas", "rit_dias_historia", "rit_alerta_dias", "rep_ultima_auto",
                   "meses_historia", "oc_dias_historia"}     # los dos los lee el ETL (una sola ventana de datos para ambas empresas)

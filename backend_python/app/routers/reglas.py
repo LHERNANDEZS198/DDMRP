@@ -117,7 +117,7 @@ REGLAS = [
          ayuda="Si un item tiene una requisición RIT COMPROMETIDA (el CEDI la reservó) hace más de estos días sin despacharse, sale la columna «RIT abierto (d)» y la fila resaltada en el Control y en la Matriz de despacho: hay que despacharla o anularla en Siesa. Las Aprobadas (aún sin comprometer) no generan alerta. Se aplica en el siguiente ETL.",
          opciones=None, min=1, max=365, entero=True),
     dict(clave="pipeline_auto", titulo="Corrida automática (ETL + motor)",
-         ayuda="Si: el ETL y el motor corren solos a la hora indicada. No: no corre nada solo; el personal lo lanza cuando lo necesite (botón de correr el pipeline). Útil mientras se hacen pruebas. Se aplica en menos de un minuto, sin reiniciar.",
+         ayuda="Si: el ETL y el motor de esta empresa corren solos a la hora indicada. No: no corre nada solo para esta empresa; el personal lo lanza cuando lo necesite (botón de correr el pipeline). Útil mientras una empresa está en pruebas o sin usar. Se configura por empresa y se aplica en menos de un minuto, sin reiniciar.",
          opciones=[{"valor": 1, "label": "Sí: corre sola a la hora indicada"}, {"valor": 0, "label": "No: solo cuando alguien la lance a mano"}]),
     dict(clave="pipeline_hora", titulo="Corrida automática: hora", ayuda="Hora de Colombia (0 a 23) a la que corre sola. Si el backend está apagado a esa hora, la corrida se pierde ese día (tolera hasta 30 minutos de retraso).", opciones=None, min=0, max=23, entero=True),
     dict(clave="pipeline_minuto", titulo="Corrida automática: minuto", ayuda="Minuto (0 a 59) de esa hora.", opciones=None, min=0, max=59, entero=True),

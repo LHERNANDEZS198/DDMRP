@@ -275,37 +275,42 @@ def _recalcular_compras(empresa: str = "05") -> dict:
 
 
 def revisar_pipeline():
-    """Se llama cada minuto: corre el ETL + motor a la hora configurada en Reglas de pedido (pipeline_auto / pipeline_hora / pipeline_minuto / pipeline_cada_dias).
-    Con pipeline_auto en 0 no corre nada solo. Tolera ~30 min de retraso (si el backend estaba reiniciando justo a esa hora); como maximo una vez por dia programado."""
+    """Se llama cada minuto: para CADA empresa corre el ETL + motor a la hora configurada en sus Reglas de pedido (pipeline_auto / pipeline_hora / pipeline_minuto /
+    pipeline_cada_dias; la propia de la empresa o, si no la cambio, la general). Con pipeline_auto en 0 esa empresa no corre nada sola. Tolera ~30 min de retraso
+    (si el backend estaba reiniciando justo a esa hora); como maximo una vez por dia programado y por empresa (pipeline_ultima_auto, guardado por empresa)."""
     from datetime import datetime
     import pytz      # ya viene con APScheduler: no depende de que el sistema tenga la base de zonas horarias
+    from .reglas_empresa import param
+    toca = []
     try:
+        ahora = datetime.now(pytz.timezone("America/Bogota"))
+        hoy = ahora.date()
+        minutos = ahora.hour * 60 + ahora.minute
         with pg.begin() as c:
-            p = {k: float(v) for k, v in c.execute(text("SELECT clave, valor FROM ddmrp.parametro WHERE clave IN "
-                 "('pipeline_auto', 'pipeline_hora', 'pipeline_minuto', 'pipeline_cada_dias', 'pipeline_ultima_auto')")).all()}
-            if p.get("pipeline_auto", 1) < 1:
-                return
-            ahora = datetime.now(pytz.timezone("America/Bogota"))
-            objetivo = int(p.get("pipeline_hora", settings.etl_cron_hour)) * 60 + int(p.get("pipeline_minuto", 0))
-            minutos = ahora.hour * 60 + ahora.minute
-            if not (objetivo <= minutos < objetivo + 30):
-                return
-            hoy = ahora.date()
-            ult = int(p.get("pipeline_ultima_auto", 0))
-            if ult:
-                dif = (hoy - date(ult // 10000, ult // 100 % 100, ult % 100)).days
-                if dif < max(int(p.get("pipeline_cada_dias", 1)), 1):
-                    return
-            c.execute(text("INSERT INTO ddmrp.parametro (clave, valor, detalle) VALUES ('pipeline_ultima_auto', :v, 'Ultimo dia (AAAAMMDD) en que corrio sola la corrida automatica') "
-                           "ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor"), {"v": hoy.year * 10000 + hoy.month * 100 + hoy.day})
+            for emp in EMPRESAS:
+                if float(param(c, "pipeline_auto", emp, 1)) < 1:
+                    continue
+                objetivo = int(float(param(c, "pipeline_hora", emp, settings.etl_cron_hour))) * 60 + int(float(param(c, "pipeline_minuto", emp, 0)))
+                if not (objetivo <= minutos < objetivo + 30):
+                    continue
+                ult = int(float(param(c, "pipeline_ultima_auto", emp, 0)))
+                if ult:
+                    dif = (hoy - date(ult // 10000, ult // 100 % 100, ult % 100)).days
+                    if dif < max(int(float(param(c, "pipeline_cada_dias", emp, 1))), 1):
+                        continue
+                c.execute(text("INSERT INTO ddmrp.parametro (clave, valor, detalle) VALUES ('pipeline_ultima_auto', 0, 'Ultimo dia (AAAAMMDD) en que corrio sola la corrida automatica (por empresa)') ON CONFLICT (clave) DO NOTHING"))
+                c.execute(text("INSERT INTO ddmrp.parametro_empresa (empresa, clave, valor) VALUES (:e, 'pipeline_ultima_auto', :v) "
+                               "ON CONFLICT (empresa, clave) DO UPDATE SET valor = EXCLUDED.valor"), {"e": emp, "v": hoy.year * 10000 + hoy.month * 100 + hoy.day})
+                toca.append(emp)
     except Exception:
         log.exception("No se pudo revisar la corrida automatica")
         return
-    pipeline_nocturno("auto")
+    for emp in toca:      # una tras otra (si coinciden a la misma hora); si hay otra corrida en curso, pipeline_nocturno la omite y queda en el Log
+        pipeline_nocturno("auto", None, emp)
 
 
 def pipeline_nocturno(origen: str = "auto", usuario: str | None = None, empresa: str | None = None):
-    """Programado (origen 'auto', las dos empresas) o lanzado a mano desde la pantalla (origen 'manual'; con `empresa` solo esa, sin ella las dos)."""
+    """Programado (origen 'auto', una empresa a la vez) o lanzado a mano desde la pantalla (origen 'manual'; con `empresa` solo esa, sin ella las dos)."""
     try:
         with progreso.tarea("ETL + motor", "ETL y motor listos"), bitacora.registrar("pipeline", origen, usuario):
             log.info("Pipeline: ETL")

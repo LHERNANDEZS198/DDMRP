@@ -1,5 +1,6 @@
 """Auditoria del calculo: vista previa de lo que calculo el motor y descarga a Excel con las formulas (auditoria_xlsx), desde la pagina Auditoria o
 de exactamente las filas que se ven en la matriz de despacho."""
+import time
 from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
@@ -8,6 +9,7 @@ from sqlalchemy import text
 from ..activos import solo_activos
 from ..auditoria_xlsx import construir
 from ..bitacora import evento, usuario_de
+from ..consultas import anotar
 from ..db import pg
 from ..security import empresas_permitidas, filtro_sql_permisos, requiere
 from ..modo import fijar_modo
@@ -64,14 +66,16 @@ def vista(bodegas: str | None = None, labs: str | None = None, q: str | None = N
 
 def _generar_excel(user, w: str, p: dict, limite: int, origen: str = ""):
     """Arma el Excel (con formulas) de las filas que cumplen `w` en la ultima corrida."""
+    t0 = time.perf_counter()
     with pg.connect() as c:
         ej = c.execute(text(f"SELECT id, fecha_calculo FROM ddmrp.ejecucion_motor WHERE id = {ULTIMA} ORDER BY id LIMIT 1")).mappings().first()
         if not ej:
             return Response("No hay una corrida del motor", status_code=404)
-        total = c.execute(text(f"SELECT count(*) {FROM} WHERE {w}"), p).scalar()
+        total, emp_aud = c.execute(text(f"SELECT count(*), min(s.empresa) {FROM} WHERE {w}"), p).one()     # una sola pasada por la vista (antes eran dos)
+        emp_aud = emp_aud or "05"     # el Excel lleva las reglas de la empresa de las filas
         if not total:
             return Response("Ninguna de esas filas está en la última corrida del motor (¿cambió la corrida?). Recarga la matriz.", status_code=404)
-        emp_aud = c.execute(text(f"SELECT min(s.empresa) {FROM} WHERE {w}"), p).scalar() or "05"     # el Excel lleva las reglas de la empresa de las filas
+        t1 = time.perf_counter()
         prm = todas_param(c, emp_aud)
         factores = [dict(r) for r in c.execute(text(
             "SELECT tipo, descripcion, factor::float8 factor, desde::float8 desde, hasta::float8 hasta FROM ddmrp.factor_tramo WHERE empresa = :e ORDER BY tipo, desde"), {"e": emp_aud}).mappings()]
@@ -90,6 +94,7 @@ def _generar_excel(user, w: str, p: dict, limite: int, origen: str = ""):
             LEFT JOIN ddmrp.promocion pr ON pr.empresa = s.empresa AND pr.producto_id = s.producto_id
             WHERE {w} ORDER BY s.bodega_id, s.pct_buffer LIMIT :lim"""), {**p, "lim": limite}).mappings()]
         # meses de la ventana (el ultimo es el mes de la fecha de calculo) y sus ventas
+        t2 = time.perf_counter()
         n = int(min(max(prm.get("meses_historia", 7), 2), 12))
         fc: date = ej["fecha_calculo"]
         meses = []
@@ -109,7 +114,10 @@ def _generar_excel(user, w: str, p: dict, limite: int, origen: str = ""):
                 FROM ddmrp.ventas_mensual v JOIN unnest(CAST(:e AS text[]), CAST(:b AS text[]), CAST(:p AS text[])) k(e, b, p) ON k.e = v.empresa AND k.b = v.bodega_id AND k.p = v.producto_id
                 WHERE v.mes = ANY(:m) GROUP BY 1, 2, 3, 4"""), {"e": [f["empresa"] for f in filas], "b": [f["bodega_id"] for f in filas], "p": [f["producto_id"] for f in filas], "m": meses}):
                 idx[(em, b, pid)]["ventas"][meses.index(mes)] = cant
+    t3 = time.perf_counter()
     data = construir(filas, meses, prm, factores, {"id": ej["id"], "fecha": fc.isoformat()}, truncado=total if total > len(filas) else 0)
+    t4 = time.perf_counter()
+    anotar(ms_conteo=round((t1 - t0) * 1000), ms_filas=round((t2 - t1) * 1000), ms_ventas=round((t3 - t2) * 1000), ms_xlsx=round((t4 - t3) * 1000), filas=len(filas), mb=round(len(data) / 1e6, 1))
     evento("auditoria", usuario_de(user), f"Excel de auditoría{origen}: {len(filas):,} filas de la corrida #{ej['id']}", {"filas": len(filas), "total": total, "ejecucion_id": ej["id"]})
     h = {"Content-Disposition": f'attachment; filename="Auditoria_DDMRP_{fc:%Y%m%d}.xlsx"', "X-Filas": str(len(filas)), "X-Filas-Total": str(total)}
     return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers=h)
