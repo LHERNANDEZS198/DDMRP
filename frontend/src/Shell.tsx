@@ -66,6 +66,8 @@ export default function Shell() {
   const theme = useTheme(); const movil = useMediaQuery(theme.breakpoints.down('md'))
   const [abierto, setAbierto] = useState(false); const [ancla, setAncla] = useState<HTMLElement | null>(null)
   const loc = useLocation(); const user = getUser(); const nav = useNavigate()
+  const stores = empresa === '21'      // con Stores: barra y logo de Natural Store's (verde y amarillo de su marca)
+  const logoNav = stores ? '/logo-stores.png' : '/logo-sersa.jpeg'
   const [anclaV, setAnclaV] = useState<HTMLElement | null>(null)
   const [menuEmp, setMenuEmp] = useState(false) // con el menú abierto el tooltip se apaga: tapaba la primera opción
   // menú «Config»: motor, reglas de pedido, usuarios, log y diagnóstico en un solo desplegable
@@ -80,15 +82,15 @@ export default function Shell() {
   const irA = (v: { to: string; cedi?: boolean }) => { setAnclaV(null); if (v.cedi && !soloCediOn()) { setSoloCedi(true); location.href = v.to } else nav(v.to) }
   return (
     <Box sx={{ position: 'relative', height: '100dvh', width: '100%', maxWidth: '100vw', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-      <AppBar position="static" color="primary">
+      <AppBar position="static" color="primary" sx={stores ? { bgcolor: '#096536', borderBottom: '3px solid #f9e013' } : undefined}>
         <Toolbar variant="dense" sx={{ gap: { xs: .5, md: 1 }, minWidth: 0, px: { xs: 1, md: 2 } }}>
           {movil && <IconButton color="inherit" edge="start" onClick={() => setAbierto(true)}><MenuIcon /></IconButton>}
-          <Box component="img" src="/logo-sersa.jpeg" alt="" sx={{ height: 28, borderRadius: 1, bgcolor: 'white', p: .3, flexShrink: 0, display: { xs: 'none', sm: 'block' } }} />
+          <Box component="img" src={logoNav} alt="" sx={{ height: 28, borderRadius: 1, bgcolor: 'white', p: .3, flexShrink: 0, display: { xs: 'none', sm: 'block' } }} />
           <Typography sx={{ fontWeight: 700, mr: { xs: 0, md: 2 }, display: { xs: 'none', sm: 'block' } }}>DDMRP</Typography>
           {!movil ? (<>{NAV_OK.filter(n => !CONFIG.includes(n.to) && !(ambosMaestros && n.to === '/compras/maestros')).map(n => (n as any).vistas ? (
             <Box key={n.to}>
               <Button color="inherit" startIcon={n.icon} endIcon={<ExpandMore />} onClick={e => setAnclaV(e.currentTarget)}
-                sx={{ opacity: activo(n) ? 1 : .75, borderBottom: activo(n) ? '2px solid #fff' : '2px solid transparent', borderRadius: 0 }}>{n.label}</Button>
+                sx={{ opacity: activo(n) ? 1 : .75, borderBottom: activo(n) ? `2px solid ${stores ? '#f9e013' : '#fff'}` : '2px solid transparent', borderRadius: 0 }}>{n.label}</Button>
               <Menu anchorEl={anclaV} open={!!anclaV} onClose={() => setAnclaV(null)}>
                 {[...new Set(VISTAS_OK.map(v => v.grupo))].flatMap(g => [
                   <ListSubheader key={'g' + g} sx={{ lineHeight: '30px', fontWeight: 700, color: 'primary.main' }}>{g}</ListSubheader>,
@@ -98,7 +100,7 @@ export default function Shell() {
             </Box>) : n.to === '/config' && ambosMaestros ? (
             <Box key={n.to}>
               <Button color="inherit" startIcon={n.icon} endIcon={<ExpandMore />} onClick={e => setAnclaM(e.currentTarget)}
-                sx={{ opacity: activo(n) ? 1 : .75, borderBottom: activo(n) ? '2px solid #fff' : '2px solid transparent', borderRadius: 0 }}>Maestros</Button>
+                sx={{ opacity: activo(n) ? 1 : .75, borderBottom: activo(n) ? `2px solid ${stores ? '#f9e013' : '#fff'}` : '2px solid transparent', borderRadius: 0 }}>Maestros</Button>
               <Menu anchorEl={anclaM} open={!!anclaM} onClose={() => setAnclaM(null)}>
                 <MenuItem selected={loc.pathname.startsWith('/config')} onClick={() => { setAnclaM(null); nav('/config') }}>
                   <Box><Box sx={{ fontWeight: 600 }}>Maestros DDMRP</Box><Box sx={{ fontSize: 12, color: 'text.secondary' }}>Tiendas, lead times, cotas, reglas…</Box></Box></MenuItem>
@@ -107,12 +109,12 @@ export default function Shell() {
               </Menu>
             </Box>) : (
             <Button key={n.to} component={NavLink} to={n.to} color="inherit" startIcon={n.icon}
-              sx={{ opacity: activo(n) ? 1 : .75, borderBottom: activo(n) ? '2px solid #fff' : '2px solid transparent', borderRadius: 0 }}>
+              sx={{ opacity: activo(n) ? 1 : .75, borderBottom: activo(n) ? `2px solid ${stores ? '#f9e013' : '#fff'}` : '2px solid transparent', borderRadius: 0 }}>
               {n.label}</Button>))}
             {CONFIG_OK.length > 0 && (
               <Box>
                 <Button color="inherit" startIcon={<SettingsIcon />} endIcon={<ExpandMore />} onClick={e => setAnclaC(e.currentTarget)}
-                  sx={{ opacity: enConfig ? 1 : .75, borderBottom: enConfig ? '2px solid #fff' : '2px solid transparent', borderRadius: 0 }}>Config</Button>
+                  sx={{ opacity: enConfig ? 1 : .75, borderBottom: enConfig ? `2px solid ${stores ? '#f9e013' : '#fff'}` : '2px solid transparent', borderRadius: 0 }}>Config</Button>
                 <Menu anchorEl={anclaC} open={!!anclaC} onClose={() => setAnclaC(null)}>
                   {CONFIG_OK.map(n => <MenuItem key={n.to} selected={loc.pathname.startsWith(n.to)} onClick={() => { setAnclaC(null); nav(n.to) }}>
                     <ListItemIcon sx={{ minWidth: 34 }}>{n.icon}</ListItemIcon>{n.label}</MenuItem>)}
@@ -150,7 +152,7 @@ export default function Shell() {
       <Drawer open={abierto} onClose={() => setAbierto(false)}>
         <Box sx={{ width: 290 }}>
           <Box sx={{ px: 2, py: 1.25, display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Box component="img" src="/logo-sersa.jpeg" alt="" sx={{ height: 26, borderRadius: 1, bgcolor: 'white' }} />
+            <Box component="img" src={logoNav} alt="" sx={{ height: 26, borderRadius: 1, bgcolor: 'white' }} />
             <Typography sx={{ fontWeight: 700 }}>DDMRP</Typography>
           </Box>
           <Divider />
