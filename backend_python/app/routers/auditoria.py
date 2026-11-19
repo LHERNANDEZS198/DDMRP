@@ -79,20 +79,35 @@ def _generar_excel(user, w: str, p: dict, limite: int, origen: str = ""):
         prm = todas_param(c, emp_aud)
         factores = [dict(r) for r in c.execute(text(
             "SELECT tipo, descripcion, factor::float8 factor, desde::float8 desde, hasta::float8 hasta FROM ddmrp.factor_tramo WHERE empresa = :e ORDER BY tipo, desde"), {"e": emp_aud}).mappings()]
+        # filas de la vista SIN los tres cruces pesados (pronostico, cotas, promocion): con ellos en el mismo SELECT el planner recorria esas tablas completas (10 s por 687 filas);
+        # se traen aparte, solo para las llaves de estas filas, igual que las ventas
         filas = [dict(r) for r in c.execute(text(f"""
             SELECT s.empresa, s.bodega_id, s.producto_id, mi.descripcion, COALESCE(lb.nombre, mi.categoria) AS laboratorio,
-                   COALESCE(pn.pronostico, 0)::float8 AS pronostico, s.lead_time::float8 lead_time, s.frecuencia::float8 frecuencia,
-                   s.unidad_despacho::float8 unidad_despacho, COALESCE(cr.cota_maxima, 0)::float8 cota_max, COALESCE(cr.cota_minima, 0)::float8 cota_min,
-                   COALESCE(pr.indicativo, 0)::int promo, pr.aum_cota_max::float8 aum_cota_max, pr.aum_cota_min::float8 aum_cota_min, s.vectorizacion::float8 vectorizacion, s.inventario::float8 inventario,
+                   s.lead_time::float8 lead_time, s.frecuencia::float8 frecuencia,
+                   s.unidad_despacho::float8 unidad_despacho, s.vectorizacion::float8 vectorizacion, s.inventario::float8 inventario,
                    s.en_transito::float8 en_transito, s.demanda_calificada::float8 demanda_calificada, s.condenado::int condenado, COALESCE(s.regla_objetivo, 0)::int regla_objetivo,
                    s.adu::float8 adu, s.toy_aj::float8 toy_aj, s.tog_aj::float8 tog_aj, s.zona::text zona,
                    COALESCE(s.cantidad_necesaria, s.cantidad_sugerida)::float8 necesidad, s.stock_cedi::float8 stock_cedi,
-                   s.cantidad_sugerida::float8 cantidad_sugerida, s.estado::text estado, s.cantidad_aprobada::float8 cantidad_aprobada
+                   s.cantidad_sugerida::float8 cantidad_sugerida, s.estado::text estado, s.cantidad_aprobada::float8 cantidad_aprobada, s.pct_buffer
             {FROM}
-            LEFT JOIN ddmrp.pronostico pn ON pn.empresa = s.empresa AND pn.bodega_id = s.bodega_id AND pn.producto_id = s.producto_id
-            LEFT JOIN ddmrp.abast_control_referencias cr ON cr.empresa = s.empresa AND cr.bodega_id = s.bodega_id AND cr.producto_id = s.producto_id
-            LEFT JOIN ddmrp.promocion pr ON pr.empresa = s.empresa AND pr.producto_id = s.producto_id
             WHERE {w} ORDER BY s.bodega_id, s.pct_buffer LIMIT :lim"""), {**p, "lim": limite}).mappings()]
+        kp = {"e": [f["empresa"] for f in filas], "b": [f["bodega_id"] for f in filas], "p": [f["producto_id"] for f in filas]}
+        for f in filas:
+            f.update(pronostico=0.0, cota_max=0.0, cota_min=0.0, promo=0, aum_cota_max=None, aum_cota_min=None)
+        if filas:
+            llaves = "unnest(CAST(:e AS text[]), CAST(:b AS text[]), CAST(:p AS text[])) k(e, b, p)"
+            ix0 = {(f["empresa"], f["bodega_id"], f["producto_id"]): f for f in filas}
+            for em, b, pid, v in c.execute(text(f"SELECT x.empresa, x.bodega_id, x.producto_id, x.pronostico::float8 FROM ddmrp.pronostico x JOIN {llaves} ON k.e = x.empresa AND k.b = x.bodega_id AND k.p = x.producto_id"), kp):
+                ix0[(em, b, pid)]["pronostico"] = v or 0.0
+            for em, b, pid, mx, mn in c.execute(text(f"SELECT x.empresa, x.bodega_id, x.producto_id, x.cota_maxima::float8, x.cota_minima::float8 FROM ddmrp.abast_control_referencias x JOIN {llaves} ON k.e = x.empresa AND k.b = x.bodega_id AND k.p = x.producto_id"), kp):
+                ix0[(em, b, pid)]["cota_max"] = mx or 0.0; ix0[(em, b, pid)]["cota_min"] = mn or 0.0
+            promos = {(em, pid): (ind, amx, amn) for em, pid, ind, amx, amn in c.execute(text(
+                "SELECT x.empresa, x.producto_id, COALESCE(x.indicativo, 0)::int, x.aum_cota_max::float8, x.aum_cota_min::float8 FROM ddmrp.promocion x "
+                "WHERE (x.empresa, x.producto_id) IN (SELECT k.e, k.p FROM " + llaves + ")"), kp)}
+            for f in filas:
+                pr = promos.get((f["empresa"], f["producto_id"]))
+                if pr:
+                    f["promo"], f["aum_cota_max"], f["aum_cota_min"] = pr
         # meses de la ventana (el ultimo es el mes de la fecha de calculo) y sus ventas
         t2 = time.perf_counter()
         n = int(min(max(prm.get("meses_historia", 7), 2), 12))

@@ -4,11 +4,12 @@ import { Badge, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogT
 import NotificationsIcon from '@mui/icons-material/Notifications'
 import { api } from './api'
 import { useYo } from './Yo'
+import { NOMBRE_EMPRESA } from './Empresa'
 
 /** Campana del menú: solicitudes por aprobar (si apruebas) y respuestas nuevas a lo que pediste (si solicitas). Clic = abre la vista de solicitudes. */
 export function CampanaSolicitudes() {
   const { puede } = useYo(); const ir = useNavigate()
-  const activo = puede('solicitar_cambios', 'aprobar_cambios')
+  const activo = puede('solicitar_cambios', 'aprobar_cambios', 'aprobar_compras')
   const [c, setC] = useState<{ pendientes: number; resueltas_sin_ver: number; total: number } | null>(null)
   useEffect(() => {
     if (!activo) return
@@ -37,6 +38,7 @@ export function BotonSolicitar({ filas, empresas, labsFiltro = [] }: { filas: an
   const [accion, setAccion] = useState<'agregar' | 'quitar'>('agregar')
   const [nivel, setNivel] = useState<'laboratorio' | 'item' | 'tienda_item'>('item')
   const [motivo, setMotivo] = useState(''); const [enviando, setEnviando] = useState(false)
+  const [paso, setPaso] = useState<'armar' | 'confirmar'>('armar')
   const [msg, setMsg] = useState(''); const [err, setErr] = useState('')
   const emp = (r: any) => String(r.empresa ?? '') || empresas.join(',')
   const objetivos = useMemo<Objetivo[]>(() => {
@@ -58,17 +60,34 @@ export function BotonSolicitar({ filas, empresas, labsFiltro = [] }: { filas: an
       const r: any = await api('/solicitudes', { method: 'POST', body: JSON.stringify({
         motivo, items: objetivos.map(o => ({ tipo, accion, nivel, laboratorio: o.laboratorio, producto_id: o.producto_id, bodega_id: o.bodega_id, empresa: o.empresa })) }) })
       setMsg(`Solicitud enviada: ${r.creadas} nuevas${r.ya_pendientes ? `, ${r.ya_pendientes} ya estaban pendientes` : ''}`)
-      window.dispatchEvent(new Event('solicitudes-cambio')); setAbierto(false); setMotivo('')
+      window.dispatchEvent(new Event('solicitudes-cambio')); setAbierto(false); setPaso('armar'); setMotivo('')
     } catch (e: any) { setErr(e.message || 'No se pudo enviar') } finally { setEnviando(false) }
   }
   const nombreAccion = `${accion === 'agregar' ? 'Agregar a' : 'Quitar de'} ${tipo === 'nxp' ? 'NxP' : 'compras'}`
   return (<>
     <Tooltip title="Pide agregar o quitar NxP / compras de lo marcado en la tabla (casilla de la izquierda), por laboratorio, item o tienda-item. Otro grupo la aprueba.">
-      <Button size="small" variant="outlined" onClick={() => { setNivel(filas.some(r => r.bodega_id) ? 'tienda_item' : 'item'); setAbierto(true) }}>
+      <Button size="small" variant="outlined" onClick={() => { setNivel(filas.some(r => r.bodega_id) ? 'tienda_item' : 'item'); setPaso('armar'); setAbierto(true) }}>
         Solicitar cambio{filas.length ? ` (${filas.length})` : ''}</Button>
     </Tooltip>
     <Dialog open={abierto} onClose={() => setAbierto(false)} maxWidth="sm" fullWidth>
-      <DialogTitle>Solicitar cambio</DialogTitle>
+      <DialogTitle>{paso === 'armar' ? 'Solicitar cambio' : 'Confirma lo que vas a enviar a aprobación'}</DialogTitle>
+      {paso === 'confirmar' ? <>
+        <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+          <Typography variant="body2"><b>Qué:</b> {nombreAccion} · por {nivel === 'laboratorio' ? 'laboratorio' : nivel === 'item' ? 'item' : 'tienda-item'}</Typography>
+          <Typography variant="body2"><b>Cuántos:</b> {objetivos.length.toLocaleString('es-CO')} · empresa(s): {[...new Set(objetivos.flatMap(o => o.empresa.split(',')))].map(e => NOMBRE_EMPRESA[e] ?? e).join(', ')}</Typography>
+          <Typography variant="body2"><b>Lo aprueba:</b> {tipo === 'nxp' ? 'el grupo que aprueba NxP' : 'el grupo de compras'} (al aprobarse se aplica solo)</Typography>
+          <Typography variant="body2"><b>Motivo:</b> {motivo.trim() || '—'}</Typography>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: .5, maxHeight: 200, overflow: 'auto' }}>
+            {objetivos.slice(0, 60).map(o => <Chip key={o.texto + o.empresa} size="small" label={o.texto} />)}
+            {objetivos.length > 60 && <Chip size="small" variant="outlined" label={`+${objetivos.length - 60} más`} />}
+          </Box>
+          {err && <Typography color="error" variant="body2">{err}</Typography>}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPaso('armar')} disabled={enviando}>Volver</Button>
+          <Button variant="contained" disabled={enviando} onClick={enviar}>{enviando ? 'Enviando…' : 'Confirmar y enviar'}</Button>
+        </DialogActions>
+      </> : <>
       <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: '8px !important' }}>
         <ToggleButtonGroup size="small" exclusive value={tipo} onChange={(_, v) => { if (v) { setTipo(v); if (v === 'compras' && nivel === 'tienda_item') setNivel('item') } }}>
           <ToggleButton value="nxp">NxP</ToggleButton><ToggleButton value="compras">Compras</ToggleButton>
@@ -96,8 +115,8 @@ export function BotonSolicitar({ filas, empresas, labsFiltro = [] }: { filas: an
       </DialogContent>
       <DialogActions>
         <Button onClick={() => setAbierto(false)}>Cancelar</Button>
-        <Button variant="contained" disabled={!objetivos.length || enviando} onClick={enviar}>{enviando ? 'Enviando…' : 'Enviar solicitud'}</Button>
-      </DialogActions>
+        <Button variant="contained" disabled={!objetivos.length || enviando} onClick={() => setPaso('confirmar')}>Revisar y enviar</Button>
+      </DialogActions></>}
     </Dialog>
     <Snackbar open={!!msg} autoHideDuration={5000} onClose={() => setMsg('')} message={msg} />
   </>)

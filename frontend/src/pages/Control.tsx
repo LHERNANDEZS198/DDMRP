@@ -286,7 +286,7 @@ export default function Control() {
       {/* Indicadores del alcance actual: clic en una zona = filtrar por ella */}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         <Typography variant="h6" sx={{ fontWeight: 700, flex: 1 }}>{mapaModo ? 'Control DDMRP · mapa de calor' : tendModo ? 'Control DDMRP · tendencia en el tiempo' : cambiosModo ? 'Control DDMRP · cambios en un periodo' : 'Control DDMRP · foto actual'}</Typography>
-        {!tendModo && !mapaModo && !cambiosModo && nivel === 'detalle' && <BotonSolicitar filas={selDet} empresas={empG} labsFiltro={f.labs} />}
+        {!tendModo && !mapaModo && !cambiosModo && nivel === 'detalle' && <BotonSolicitar filas={selDet} empresas={empG} labsFiltro={f.labs} labNombres={Object.fromEntries((opc.laboratorios ?? []).map((l: any) => [l.codigo, l.nombre]))} />}
         <Tooltip title="Baja a Excel lo que ves, con los mismos filtros (sin el tope de filas de la pantalla)"><span><Button size="small" variant="outlined" disabled={bajando} onClick={excel}>{bajando ? 'Generando…' : 'Descargar Excel'}</Button></span></Tooltip>
       </Box>
       <Plegable id="control" titulo="indicadores y filtros" resumen={<>

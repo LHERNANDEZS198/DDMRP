@@ -179,7 +179,7 @@ export default function Clasificacion() {
           <Button size="small" variant={verFiltros ? 'text' : 'outlined'} startIcon={verFiltros ? <ExpandLess /> : <ExpandMore />} onClick={() => cambiarFiltros(!verFiltros)}>
             {verFiltros ? 'Ocultar filtros' : `Filtros${nActivos ? ` (${nActivos} activos)` : ''}`}</Button></Tooltip>
         <Button size="small" startIcon={<HelpOutline />} onClick={() => setGuia(true)}>¿Cómo se calcula?</Button>
-        <BotonSolicitar filas={selClas} empresas={empresa} labsFiltro={labs} />
+        <BotonSolicitar filas={selClas} empresas={empresa} labsFiltro={labs} labNombres={Object.fromEntries((opc.laboratorios ?? []).map((l: any) => [l.codigo, l.nombre]))} />
         <Button size="small" variant="outlined" disabled={bajando || !valido} onClick={excel}>{bajando ? 'Generando…' : 'Descargar Excel'}</Button>
       </Box>
       {d?.meta.sin_valor && <Alert severity="warning" sx={{ flexShrink: 0 }}>Las ventas aún no traen el valor en pesos: actualiza el esquema y corre “Traer ventas por mes” (o el ETL) para llenarlo. Mientras tanto el ABC por margen/venta no es confiable.</Alert>}
