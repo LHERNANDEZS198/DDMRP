@@ -78,7 +78,8 @@ SELECT b.empresa, k.bodega_id, k.producto_id,
   COALESCE(oi.regla, ol.regla, 0)::int2    AS regla_objetivo,
   0::int2                                  AS regla_disparo,
   1::float8                                AS factor_tor,
-  COALESCE(ap.meses_espejo, -1)::float8    AS meses_espejo   -- apertura de tienda: meses que dura el espejo (-1 = sin apertura: regla global)
+  COALESCE(ap.meses_espejo, -1)::float8    AS meses_espejo,  -- apertura de tienda: meses que dura el espejo (-1 = sin apertura: regla global)
+  COALESCE(mi.categoria, '')::text         AS laboratorio
 FROM llaves k
 JOIN ddmrp.abast_bitacora b ON b.empresa = k.empresa AND b.bodega_id = k.bodega_id AND COALESCE(b.activa, 1) = 1   -- tienda apagada en la bitacora: no se calcula
 LEFT JOIN v ON v.empresa = k.empresa AND v.bodega_id = k.bodega_id AND v.producto_id = k.producto_id
@@ -192,7 +193,8 @@ SELECT k.empresa, k.bodega_id, k.producto_id,
   (CASE WHEN COALESCE(pv.pedir_verde::int, cfk.pverde::int, 0) >= 1 THEN 3 ELSE 0 END)::int2 AS regla_disparo,
   -- colchon del proveedor: multiplica la zona roja (1 = sin cambio)
   GREATEST(COALESCE(pv.factor_tor, 1), 1)::float8         AS factor_tor,
-  (-1)::float8                                            AS meses_espejo
+  (-1)::float8                                            AS meses_espejo,
+  COALESCE(mi.categoria, '')::text                        AS laboratorio
 FROM llaves k
 LEFT JOIN v ON v.empresa = k.empresa AND v.bodega_id = k.bodega_id AND v.producto_id = k.producto_id
 LEFT JOIN pron p ON p.empresa = k.empresa AND p.bodega_id = k.bodega_id AND p.producto_id = k.producto_id
@@ -268,10 +270,18 @@ fn leer_parametros(client: &mut Client, empresa: &str) -> Result<Parametros> {
             "meses_adu" => p.meses_adu = (v as usize).clamp(1, 12),
             "pron_meses_minimos" => p.pron_meses_minimos = (v as usize).min(12),
             "pron_calculado" => p.pron_calculado = v != 0.0,
+            "vectorizacion_piso_pronostico" => p.vect_piso_pron = v != 0.0,
+            "promo_en_pronostico" => p.promo_en_pron = v != 0.0,
+            "reglas_arranque" => p.arranque = v != 0.0,
+            "arranque_laboratorio" => p.arranque_lab = v,
+            "arranque_unidades" => p.arranque_u = v,
+            "arranque_unidades_promo" => p.arranque_u_promo = v,
             "pron_divisor" => p.pron_divisor = if v > 0.0 { v } else { 3.0 },
             _ => {}
         }
     }
+    // tiendas a las que aplican las reglas de arranque (se editan en Maestros); sin filas, ninguna
+    p.arranque_prefijos = client.query("SELECT prefijo FROM ddmrp.arranque_prefijo WHERE empresa = $1", &[&empresa])?.iter().map(|r| r.get::<_, String>(0).trim().to_string()).collect();
     Ok(p)
 }
 
@@ -322,6 +332,7 @@ fn main() -> Result<()> {
             regla_disparo: r.get::<_, i16>("regla_disparo") as u8,
             factor_tor: f(r, "factor_tor"),
             meses_espejo: f(r, "meses_espejo"),
+            laboratorio: r.get::<_, String>("laboratorio"),
         })
         .collect();
     if items.is_empty() {

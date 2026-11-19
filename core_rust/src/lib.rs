@@ -91,6 +91,13 @@ pub struct Parametros {
     pub meses_adu: usize,      // ultimos meses (+ forecast) que entran al ADU (Excel: 4)
     pub pron_meses_minimos: usize, // con menos meses de venta que esto, el pronostico se usa tal cual (0 = nunca; tienda/lab nuevo)
     pub pron_calculado: bool,  // true: el pronostico (BZ) se calcula del propio historial (Excel BI..CB); false: valor estatico del maestro
+    pub vect_piso_pron: bool,  // modelo de Felipe (AU): la vectorizacion es SIEMPRE el piso del ADU de referencia (promedio de la ventana) del bloque de pronostico, haya o no promocion
+    pub promo_en_pron: bool,   // true: el pronostico calculado aplica las cotas de promocion (BW/BX); false: usa TOY y TOG a secas (Felipe). La promocion igual ajusta el TOG del buffer principal
+    pub arranque: bool,        // reglas de arranque: tienda SV sin inventario ni ventas de un laboratorio dado (tiendas por prefijo): se piden `arranque_u` unidades (`arranque_u_promo` con promocion 1), al multiplo de despacho
+    pub arranque_prefijos: Vec<String>, // prefijos de codigo de tienda a los que aplica (ddmrp.arranque_prefijo, ej. SV)
+    pub arranque_lab: f64,     // laboratorio al que aplican (codigo numerico, ej. 19 = '019'); 0 = cualquiera
+    pub arranque_u: f64,
+    pub arranque_u_promo: f64,
     pub pron_divisor: f64,     // BZ = TOY aj + (TOG aj - TOY aj) / divisor (Excel de ejemplo: 3)
 }
 
@@ -100,7 +107,7 @@ impl Default for Parametros {
             mult_cota_max_promo: 1.2, mult_cota_min_promo: 1.1, adu_bajo_min: 1.0, adu_bajo_max: 4.0,
             regla_disparo: 1, regla_objetivo: 1, regla_redondeo: 1,
             sumar_vectorizacion: true, vect_en_adu: true, incluir_transito: true, restar_demanda_calificada: true, cantidad_minima: 0.0,
-            meses_historia: 7, meses_adu: 4, pron_meses_minimos: 3, pron_calculado: true, pron_divisor: 3.0,
+            meses_historia: 7, meses_adu: 4, pron_meses_minimos: 3, pron_calculado: true, vect_piso_pron: false, promo_en_pron: true, arranque: false, arranque_prefijos: vec!["SV".to_string()], arranque_lab: 19.0, arranque_u: 2.0, arranque_u_promo: 3.0, pron_divisor: 3.0,
         }
     }
 }
@@ -136,6 +143,7 @@ pub struct Entrada {
     /// Meses CON pronostico de ESTA tienda (apertura de tienda), contados desde su primera venta: durante esos meses el pronostico del maestro se usa tal cual y despues manda el historial.
     /// Negativo = la tienda no tiene apertura registrada: rige la regla global `pron_meses_minimos`. 0 = nunca.
     pub meses_espejo: f64,
+    pub laboratorio: String,  // codigo del laboratorio (categoria del item)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -253,8 +261,12 @@ pub fn adu_referencia(ventas: &[f64]) -> f64 {
 }
 
 /// (BK, BM): ADU de referencia y su indice de variabilidad (desviacion / promedio de la ventana).
-fn adu_y_variabilidad(ventas: &[f64]) -> (f64, f64) {
+fn adu_y_variabilidad(ventas: &[f64]) -> (f64, f64) { adu_y_variabilidad_piso(ventas, 0.0) }
+
+/// Igual, con `piso` como minimo del promedio (Excel de Felipe, AU: =SI(PROMEDIO(G:O)<Vectorizacion; Vectorizacion; PROMEDIO(G:O))); la variabilidad se mide contra ese promedio.
+fn adu_y_variabilidad_piso(ventas: &[f64], piso: f64) -> (f64, f64) {
     let bi = promedio(ventas);
+    let bi = if piso > 0.0 && bi < piso { piso } else { bi };
     let bm = div(desvest_m(ventas), bi);
     (roundup(bi + bi * bm), bm)
 }
@@ -284,12 +296,12 @@ pub fn calcular(e: &Entrada, f: &Factores, p: &Parametros) -> Resultado {
     // Bloque pronostico -> Q
     let n = p.meses_historia.clamp(2, e.ventas.len().max(2)).min(e.ventas.len());
     let hist = &e.ventas[e.ventas.len() - n..];
-    let (bk, bm_ref) = adu_y_variabilidad(hist);
+    let (bk, bm_ref) = adu_y_variabilidad_piso(hist, if p.vect_piso_pron { e.vectorizacion } else { 0.0 });
     // Promocion: no aplica a bodegas TC / DM
     let pref = e.bodega_id.get(..2).unwrap_or("");
     let promo = if e.promo != 0 && (pref == "TC" || pref == "DM") { 0 } else { e.promo };
     // pronostico del que parte el ajuste a 30-60 dias: el calculado del historial (Excel BI..BZ) o el valor estatico del maestro
-    let pron_base = if p.pron_calculado { pronostico_calculado(bk, bm_ref, e, promo, f, p) } else { e.pronostico };
+    let pron_base = if p.pron_calculado { pronostico_calculado(bk, bm_ref, e, if p.promo_en_pron { promo } else { 0 }, f, p) } else { e.pronostico };
     // meses con historia = desde la primera venta de la ventana hasta hoy (los meses en cero antes de abrir no cuentan)
     let meses_hist = hist.iter().position(|x| *x > 0.0).map_or(0, |i| hist.len() - i);
     // duracion del caso nuevo: con apertura registrada, el pronostico rige durante `meses_espejo` meses de venta (el mes en curso cuenta como el 1) y desde el siguiente manda el
@@ -333,7 +345,7 @@ pub fn calcular(e: &Entrada, f: &Factores, p: &Parametros) -> Resultado {
         roundup(toy_aj + z.zv + z.tog * e.cota_min)
     };
 
-    decidir(e, &z, w, y, q, toy_aj, tog_aj, p)
+    decidir(e, &z, w, y, q, toy_aj, tog_aj, promo, p)
 }
 
 /// Redondea `x` al multiplo de `ud` segun la regla (1 arriba, 2 cercano, 3 abajo).
@@ -349,7 +361,7 @@ pub fn a_multiplo(x: f64, ud: f64, regla: u8) -> f64 {
 ///  - zona segun TOR / TOY ajustado / TOG ajustado
 ///  - se pide segun `regla_disparo`; se repone hasta `regla_objetivo`, al multiplo de despacho (`regla_redondeo`)
 ///  - se suma la vectorización si `sumar_vectorizacion`
-fn decidir(e: &Entrada, z: &Zonas, w: f64, y: f64, q: f64, toy_aj: f64, tog_aj: f64, p: &Parametros) -> Resultado {
+fn decidir(e: &Entrada, z: &Zonas, w: f64, y: f64, q: f64, toy_aj: f64, tog_aj: f64, promo: i16, p: &Parametros) -> Resultado {
     let transito = if p.incluir_transito { e.en_transito } else { 0.0 };
     let dem = if p.restar_demanda_calificada { e.demanda_calificada } else { 0.0 };
     let nfp = e.inventario + transito - dem;
@@ -382,6 +394,11 @@ fn decidir(e: &Entrada, z: &Zonas, w: f64, y: f64, q: f64, toy_aj: f64, tog_aj: 
     };
     let base = if base > 0.0 && base < p.cantidad_minima { 0.0 } else { base };
     let vect = if p.sumar_vectorizacion { e.vectorizacion } else { 0.0 };
+    // Reglas de arranque (Excel de Felipe, BT): tienda SV, sin inventario y sin ventas, de un laboratorio dado (019): se piden 2 unidades, o 3 si esta en promocion (indicativo 1), al multiplo de despacho
+    let lab_ok = p.arranque_lab <= 0.0 || e.laboratorio.trim().parse::<f64>().map_or(false, |l| (l - p.arranque_lab).abs() < 1e-9);
+    let (base, vect) = if p.arranque && p.arranque_prefijos.iter().any(|x| !x.is_empty() && e.bodega_id.starts_with(x.as_str())) && lab_ok && e.inventario <= 0.0 && nfp <= 0.0 && e.ventas.iter().all(|x| *x <= 0.0) {
+        (a_multiplo(if promo == 1 { p.arranque_u_promo } else { p.arranque_u }, e.unidad_despacho, 1), 0.0)
+    } else { (base, vect) };
     Resultado {
         empresa: e.empresa.clone(),
         bodega_id: e.bodega_id.clone(),
@@ -457,6 +474,7 @@ mod tests {
             regla_disparo: 0,
             factor_tor: 1.0,
             meses_espejo: -1.0,
+            laboratorio: String::new(),
         }
     }
 

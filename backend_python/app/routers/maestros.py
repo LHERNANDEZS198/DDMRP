@@ -126,6 +126,9 @@ MAESTROS = {
     "reposicion-item": dict(
         label="Hasta donde se repone, por item (1 TOG aj · 2 TOY aj · 3 TOY aj + mitad de la zona verde)", tabla="ddmrp.reposicion_item",
         llave=["empresa", "producto_id"], editable={"regla": "int"}, bodega=None, producto="producto_id", global_=True, reemplazo_por_empresa=True),
+    "arranque-prefijos": dict(
+        label="Reglas de arranque: tiendas a las que aplican (prefijo del codigo de tienda, ej. SV)", tabla="ddmrp.arranque_prefijo",
+        llave=["empresa", "prefijo"], editable={"motivo": "txt"}, bodega=None, producto=None, global_=True, empresa_obligatoria=True, reemplazo_por_empresa=True),
     "laboratorio-sin-envio": dict(
         label="Laboratorios que NO se envian (no se sugieren, no compiten por el CEDI ni salen en el plano)", tabla="ddmrp.laboratorio_sin_envio",
         llave=["empresa", "laboratorio"], editable={"motivo": "txt"}, bodega=None, producto=None, global_=True, empresa_obligatoria=True, reemplazo_por_empresa=True),
