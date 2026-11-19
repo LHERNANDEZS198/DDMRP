@@ -10,11 +10,12 @@ import Tabla from '../Tabla'
 import Calculando from '../Calculando'
 import { CampoSelect } from '../Campos'
 import HelpOutline from '@mui/icons-material/HelpOutline'
-import { api, bajar } from '../api'
+import { api, bajar, guardarEstado, leerEstado } from '../api'
 import { bodegasDeEmpresa, tiendasDeEmpresa } from '../filtros'
 import { confirmar } from '../alertas'
 import { GuiaClasificacion } from '../guias'
 import { useEmpresa } from '../Empresa'
+import { BotonSolicitar } from '../Solicitudes'
 
 const COLOR_ABC: Record<string, string> = { I: '#1565c0', A: '#2e7d32', B: '#f9a825', C: '#9e9e9e', N: '#00acc1', D: '#6d4c41', S: '#8e24aa' }   // I azul; N cian para no confundirse
 const NOMBRE_ABC: Record<string, string> = {
@@ -45,6 +46,7 @@ export default function Clasificacion() {
   const [d, setD] = useState<any>(null)
   const [cargando, setCargando] = useState(false); const [err, setErr] = useState(''); const [bajando, setBajando] = useState(false)
   const [guia, setGuia] = useState(false)
+  const [selClas, setSelClas] = useState<any[]>([])   // filas marcadas: base de «Solicitar cambio»
   const [verFiltros, setVerFiltros] = useState(() => { try { return localStorage.getItem('clas_filtros') !== '0' } catch { return true } })
   const cambiarFiltros = (v: boolean) => { setVerFiltros(v); try { localStorage.setItem('clas_filtros', v ? '1' : '0') } catch { /* sin almacenamiento */ } }
   const nActivos = [soloCon && (agrupar || fc.some(f => f.plan)) ? 1 : 0, empresa.length, bodegas.length, labs.length, q.trim() ? 1 : 0, agrupar ? 1 : 0].filter(Boolean).length + fc.filter(f => f.plan && f.vals.length).length
@@ -67,6 +69,8 @@ export default function Clasificacion() {
     setFc(c.fc?.length ? c.fc : [{ plan: '', vals: [] }]); setAgrupar(c.agrupar ?? ''); setDentro(!!c.dentro); setSoloCon(!!c.soloCon); setIndInv(!!c.indInv)
     setAbc(c.abc ?? []); setXyz(c.xyz ?? []); setQd(c.q ?? ''); setQ(c.q ?? '')
   }
+  useEffect(() => { const g = leerEstado<any>('clasificacion'); if (g) aplicar(g) }, [])   // recarga del switch «Ver solo CEDI»: se conservan los filtros
+  useEffect(() => { guardarEstado('clasificacion', instantanea()) }, [JSON.stringify(instantanea())])
   const vistaSel = vistas.find(v => claveV(v) === sel)
   const modificada = !!vistaSel && JSON.stringify(instantanea()) !== JSON.stringify({ ...instantanea(), metodo: 'pareto', pI: 93, pA: 75, pB: 50, soloCon: false, indInv: false, ...vistaSel.config, empresa, fc: vistaSel.config.fc?.length ? vistaSel.config.fc : [{ plan: '', vals: [] }] })
   const abrir = (k: string) => { setSel(k); const v = vistas.find(x => claveV(x) === k); if (v) aplicar(v.config) }
@@ -121,9 +125,9 @@ export default function Clasificacion() {
   const alternar = (arr: string[], set: (v: string[]) => void, v: string) => set(arr.includes(v) ? arr.filter(x => x !== v) : [...arr, v])
 
   const [cx, cy] = d?.meta.cortes_iv ?? [0.5, 0.8]
-  const INV_CAMPOS = ['zona', 'zonas_txt', 'sobran', 'faltan', 'dias_hist', 'gmroi', 'rotacion', 'dias_inv', 'pct_sin_stock', 'cob_x_margen']
+  const INV_CAMPOS = ['zonas_txt', 'sobran', 'faltan', 'dias_hist', 'gmroi', 'dias_inv', 'pct_sin_stock', 'cob_x_margen']
   const cols: ColDef[] = useMemo(() => ([
-    { field: 'puesto', headerName: '#', width: 75, pinned: 'left', type: 'numericColumn', headerTooltip: 'Puesto en el ranking ABC según el criterio elegido (1 = el que más aporta). Los apartes D, N y S no tienen puesto.' },
+    { field: 'puesto', headerName: '#', width: 90, pinned: 'left', type: 'numericColumn', checkboxSelection: true, headerCheckboxSelection: true, headerTooltip: 'Puesto en el ranking ABC según el criterio elegido (1 = el que más aporta). Los apartes D, N y S no tienen puesto.' },
     { field: 'clase', headerName: 'Clase', width: 90, pinned: 'left', cellRenderer: pill, filter: true, headerTooltip: 'ABC (cuánto aporta, según el criterio elegido) + XYZ (qué tan predecible es su venta). Ej.: AX = importante y estable. Sin letra XYZ = aún sin IV. Apartes: N nuevo, D sin venta en tiendas (no cuenta lo que vende el CEDI a wholesale/digital), S sin costo.' },
     { field: 'clase_global', headerName: 'Clase global', width: 115, cellRenderer: pill, filter: true, headerTooltip: 'La clase que tendría con todo lo que puedes ver, sin los filtros de pantalla (tienda, laboratorio, criterio…). “Clase” es el ABC dentro de lo filtrado; esta es la importancia real del item.' },
     ...(nivel !== 'tienda_item' ? [{ field: 'empresa', headerName: 'Empresa', width: 80, filter: true, headerTooltip: 'Empresa del item (05 Funat, 21 Stores): el mismo código puede ser otro producto en cada empresa, por eso se clasifican por separado.' } as ColDef] : []),
@@ -131,7 +135,7 @@ export default function Clasificacion() {
     { field: 'producto_id', headerName: 'Item', width: 100, filter: true, headerTooltip: 'Referencia del producto. Un item REC se suma a su original.' },
     { field: 'descripcion', headerName: 'Descripción', width: 280, filter: true, headerTooltip: 'Nombre del producto en Siesa.' },
     { field: 'laboratorio', headerName: 'Lab.', width: 90, filter: true, headerTooltip: 'Código del laboratorio (plan 006 de Siesa).' },
-    { field: 'zona', headerName: 'Estado hoy', width: 120, filter: true, valueGetter: p => ZONA_ETQ[p.data?.zona] ?? '', cellRenderer: (p: ICellRendererParams) => !p.value ? '' :
+    { field: 'zona', headerName: 'Nivel stock', width: 120, filter: true, valueGetter: p => ZONA_ETQ[p.data?.zona] ?? '', cellRenderer: (p: ICellRendererParams) => !p.value ? '' :
       <Chip size="small" label={p.value} sx={{ bgcolor: ZONA_COLOR[p.data.zona] ?? '#999', color: '#fff', height: 20, fontSize: 11 }} />,
       headerTooltip: 'Zona del buffer DDMRP en la última corrida del motor: Rojo (crítico), Amarillo (toca reponer), Verde (sano) o Sobrestock (por encima del tope verde). Por item es la zona que más se repite entre las tiendas filtradas; el reparto está en «Tiendas por zona».' },
     ...(nivel === 'item' ? [{ field: 'zonas_txt', headerName: 'Tiendas por zona', width: 210, headerTooltip: 'Cuántas tiendas del filtro están en cada zona hoy.' } as ColDef] : []),
@@ -141,13 +145,13 @@ export default function Clasificacion() {
     { field: 'margen', headerName: 'Margen $', type: 'numericColumn', width: 125, valueFormatter: p => COP(p.value), cellStyle: p => (p.value ?? 0) < 0 ? { color: '#c62828' } : null, headerTooltip: 'Venta neta − (unidades × costo promedio actual). Es el criterio ABC por defecto. En rojo: se vendió por debajo del costo.' },
     { field: 'margen_pct', headerName: 'Margen %', type: 'numericColumn', width: 105, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(1) + '%', headerTooltip: 'Margen $ ÷ venta neta × 100.' },
     { field: 'pct_acum', headerName: '% acum.', type: 'numericColumn', width: 95, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(1) + '%', headerTooltip: 'Porcentaje acumulado del criterio hasta este item, de mayor a menor. A = hasta el corte A, B = hasta el corte B, C = el resto.' },
-    { field: 'cant', headerName: 'Unidades', type: 'numericColumn', width: 100, valueFormatter: p => NUM(p.value), headerTooltip: 'Unidades vendidas en la ventana.' },
+    { field: 'cant', headerName: 'Rot. Periodo', type: 'numericColumn', width: 110, valueFormatter: p => NUM(p.value), headerTooltip: 'Rotación del periodo: unidades vendidas en toda la ventana.' },
     { field: 'inventario', headerName: 'Inventario', type: 'numericColumn', width: 105, valueFormatter: p => NUM(p.value), headerTooltip: 'Unidades disponibles hoy en las tiendas filtradas (último corte de Siesa). Los negativos cuentan como 0.' },
     { field: 'inv_costo', headerName: 'Inv. a costo $', type: 'numericColumn', width: 135, valueFormatter: p => COP(p.value), headerTooltip: 'Inventario de hoy × costo promedio actual: el dinero parado en stock hoy.' },
     { field: 'inv_prom', headerName: 'Inv. promedio', type: 'numericColumn', width: 120, valueFormatter: p => p.value == null ? '' : Number(p.value).toLocaleString('es-CO', { maximumFractionDigits: 1 }), headerTooltip: 'Inventario promedio en unidades de los días de la ventana (foto diaria de las tiendas filtradas). Donde no hay historia se usa el inventario de hoy: mira “Días con historia”.' },
     { field: 'dias_hist', headerName: 'Días hist.', type: 'numericColumn', width: 95, valueFormatter: p => NUM(p.value), cellStyle: p => p.value ? null : { color: '#c62828' }, headerTooltip: 'Días de historia de inventario que respaldan el promedio (el de la tienda con más días). 0 = no hay historia y el GMROI usa el inventario de hoy. Si es mucho menor que la ventana, el promedio cubre solo parte de ella.' },
     { field: 'gmroi', headerName: 'GMROI', type: 'numericColumn', width: 95, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(2), headerTooltip: 'Margen anualizado ÷ inventario PROMEDIO a costo: pesos de margen por cada peso invertido en stock en un año. Más alto es mejor; bajo 1 el margen anual no cubre lo invertido.' },
-    { field: 'rotacion', headerName: 'Rotación (uds/mes)', type: 'numericColumn', width: 150, valueFormatter: p => p.value == null ? '' : Number(p.value).toLocaleString('es-CO', { maximumFractionDigits: 2 }), headerTooltip: 'Unidades vendidas por mes en promedio durante la ventana (unidades ÷ meses de la ventana). Con el inventario promedio da la cobertura: inventario promedio ÷ rotación = meses de stock.' },
+    { field: 'rotacion', headerName: 'Rot. Promedio', type: 'numericColumn', width: 150, valueFormatter: p => p.value == null ? '' : Number(p.value).toLocaleString('es-CO', { maximumFractionDigits: 2 }), headerTooltip: 'Unidades vendidas por mes en promedio durante la ventana (unidades ÷ meses de la ventana). Con el inventario promedio da la cobertura: inventario promedio ÷ rotación = meses de stock.' },
     { field: 'dias_inv', headerName: 'Días inv.', type: 'numericColumn', width: 100, valueFormatter: p => NUM(p.value), headerTooltip: 'Inventario promedio ÷ venta diaria promedio de la ventana: para cuántos días alcanza el stock.' },
     { field: 'pct_sin_stock', headerName: '% sin stock', type: 'numericColumn', width: 110, valueFormatter: p => p.value == null ? '' : Number(p.value).toFixed(1) + '%', cellStyle: p => (p.value ?? 0) >= 20 ? { color: '#c62828' } : null, headerTooltip: 'Días-tienda de la ventana con inventario 0 ÷ días-tienda con historia. Un GMROI alto con muchos días sin stock suele ser quiebre, no eficiencia. Rojo desde 20 %.' },
     { field: 'cob_x_margen', headerName: 'Cobertura×margen % (anterior)', type: 'numericColumn', width: 215, valueFormatter: p => p.value == null ? '' : Number(p.value).toLocaleString('es-CO', { maximumFractionDigits: 1 }) + '%', headerTooltip: 'Indicador anterior: (inventario promedio en unidades ÷ venta mensual en unidades) × margen %. Son meses de stock ponderados por margen: NO es un retorno y no se compara con el GMROI.' },
@@ -175,6 +179,7 @@ export default function Clasificacion() {
           <Button size="small" variant={verFiltros ? 'text' : 'outlined'} startIcon={verFiltros ? <ExpandLess /> : <ExpandMore />} onClick={() => cambiarFiltros(!verFiltros)}>
             {verFiltros ? 'Ocultar filtros' : `Filtros${nActivos ? ` (${nActivos} activos)` : ''}`}</Button></Tooltip>
         <Button size="small" startIcon={<HelpOutline />} onClick={() => setGuia(true)}>¿Cómo se calcula?</Button>
+        <BotonSolicitar filas={selClas} empresas={empresa} labsFiltro={labs} />
         <Button size="small" variant="outlined" disabled={bajando || !valido} onClick={excel}>{bajando ? 'Generando…' : 'Descargar Excel'}</Button>
       </Box>
       {d?.meta.sin_valor && <Alert severity="warning" sx={{ flexShrink: 0 }}>Las ventas aún no traen el valor en pesos: actualiza el esquema y corre “Traer ventas por mes” (o el ETL) para llenarlo. Mientras tanto el ABC por margen/venta no es confiable.</Alert>}
@@ -283,7 +288,7 @@ export default function Clasificacion() {
 
       <Typography variant="caption" color="text.secondary">{d ? (d.truncado ? `Mostrando ${d.filas.length.toLocaleString()} de ${d.total.toLocaleString()}; filtra por clase o baja el Excel` : `${d.total.toLocaleString()} filas`) : ''}</Typography>
       <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 320 }}>
-        <Tabla textoCargando="Clasificando…" vacio="Sin resultados con estos filtros" key={nivel} rowData={d?.filas ?? []} columnDefs={cols} cargando={cargando} defaultColDef={{ resizable: true, sortable: true }} />
+        <Tabla rowSelection="multiple" suppressRowClickSelection onSelectionChanged={e => setSelClas(e.api.getSelectedRows())} memoria="clasificacion" textoCargando="Clasificando…" vacio="Sin resultados con estos filtros" key={nivel} rowData={d?.filas ?? []} columnDefs={cols} cargando={cargando} defaultColDef={{ resizable: true, sortable: true }} />
       </Box>
       <Dialog open={!!dlg} onClose={() => setDlg(null)} maxWidth="xs" fullWidth>
         <DialogTitle>Guardar vista</DialogTitle>

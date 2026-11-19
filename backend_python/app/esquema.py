@@ -481,6 +481,13 @@ SENTENCIAS_COMPRAS = [
          unidad_empaque NUMERIC(12,2) DEFAULT 1 CHECK (unidad_empaque IS NULL OR unidad_empaque > 0),  -- unidades por caja / empaque
          PRIMARY KEY (empresa, producto_id))""",
     "INSERT INTO ddmrp.item_compra (empresa, producto_id) SELECT empresa, producto_id FROM ddmrp.item_empresa ON CONFLICT DO NOTHING",
+    # solicitudes de cambio (NxP / compras) que un grupo pide y otro aprueba; al aprobar se aplican a item_condenado, laboratorio_sin_envio o item_compra.activo
+    """CREATE TABLE IF NOT EXISTS ddmrp.solicitud_cambio (
+         id BIGSERIAL PRIMARY KEY, empresa TEXT NOT NULL, tipo TEXT NOT NULL CHECK (tipo IN ('nxp', 'compras')), accion TEXT NOT NULL CHECK (accion IN ('agregar', 'quitar')),
+         nivel TEXT NOT NULL CHECK (nivel IN ('laboratorio', 'item', 'tienda_item')), laboratorio TEXT, producto_id TEXT, bodega_id TEXT, motivo TEXT,
+         estado TEXT NOT NULL DEFAULT 'pendiente', solicitante TEXT NOT NULL, fecha_solicitud TIMESTAMPTZ NOT NULL DEFAULT now(),
+         resuelto_por TEXT, fecha_resuelto TIMESTAMPTZ, nota_resolucion TEXT, aplicado TEXT, visto_solicitante BOOLEAN NOT NULL DEFAULT FALSE)""",
+    "CREATE INDEX IF NOT EXISTS ix_solicitud_estado ON ddmrp.solicitud_cambio (estado, id DESC)",
     # de Siesa (el ETL los reescribe): costo de la cotizacion vigente del proveedor del item (costo bruto, con el descuento del primer rango de cantidad) y
     # tarifa de IVA del grupo impositivo del item. La columna «cotizacion» queda para que compras fije un costo a mano (pisa el de Siesa).
     "ALTER TABLE ddmrp.item_compra ADD COLUMN IF NOT EXISTS cotizacion_siesa NUMERIC(16,4)",

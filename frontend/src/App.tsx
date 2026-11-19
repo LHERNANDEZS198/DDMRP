@@ -15,6 +15,7 @@ import ReglasCompras from './pages/ReglasCompras'
 import Motor from './pages/Motor'
 import Usuarios from './pages/Usuarios'
 import Log from './pages/Log'
+import Solicitudes from './pages/Solicitudes'
 import Diagnostico from './pages/Diagnostico'
 import Lanzamientos from './pages/Lanzamientos'
 import Clasificacion from './pages/Clasificacion'
@@ -50,6 +51,7 @@ export const PANTALLAS = [
   { to: '/compras/maestros', req: ['ver_compras', 'cargar_maestros_compras'] },
   { to: '/compras/reglas', req: ['ver_compras', 'cargar_maestros_compras', 'editar_reglas_compras'] },
   { to: '/usuarios', req: ['admin_usuarios'] },
+  { to: '/solicitudes', req: ['solicitar_cambios', 'aprobar_cambios', 'aprobar_compras'] },
   { to: '/log', req: ['ver_log'] },
   { to: '/diagnostico', req: ['ver_diagnostico'] },
 ]
@@ -106,6 +108,7 @@ export default function App() {
           <Route path="/compras/necesidades" element={<Req to="/compras/necesidades"><Necesidades /></Req>} />
           <Route path="/compras/maestros" element={<Req to="/compras/maestros"><Config key="compras" grupo="compras" /></Req>} />
           <Route path="/usuarios" element={<Req to="/usuarios"><Usuarios /></Req>} />
+          <Route path="/solicitudes" element={<Req to="/solicitudes"><Solicitudes /></Req>} />
           <Route path="/log" element={<Req to="/log"><Log /></Req>} />
           <Route path="/diagnostico" element={<Req to="/diagnostico"><Diagnostico /></Req>} />
           <Route path="*" element={<Inicio />} />

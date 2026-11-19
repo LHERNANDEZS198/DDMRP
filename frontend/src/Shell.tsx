@@ -22,7 +22,8 @@ import { useYo } from './Yo'
 import { NOMBRE_EMPRESA, useEmpresa } from './Empresa'
 import { BannerSalud } from './Salud'
 import Errores from './Errores'
-import { enPrueba, getUser, logout, volverDePrueba, soloCediOn, setSoloCedi } from './api'
+import { CampanaSolicitudes } from './Solicitudes'
+import { enPrueba, getUser, logout, volverDePrueba, soloCediOn, setSoloCedi, marcarRestaurar } from './api'
 
 /** Menú «Informes»: todo lo que se consulta (no se opera). Agrupado en el desplegable. */
 export const VISTAS = [
@@ -122,11 +123,12 @@ export default function Shell() {
               </Box>)}
           </>) : <Typography noWrap sx={{ flex: 1, minWidth: 0, fontSize: { xs: 15, sm: 16 } }}>{titulo}</Typography>}
           <Box sx={{ flex: 1 }} />
+          <CampanaSolicitudes />
           {enInformes && !loc.pathname.startsWith('/compras') && (
             <Tooltip disableInteractive title="Solo el CEDI: sus necesidades, sobrestock y clasificación. La rotación suma lo que sale a las tiendas. Oculta las tiendas en Informes.">
               <FormControlLabel sx={{ color: '#fff', mr: 1, ml: 0, '.MuiFormControlLabel-label': { fontSize: 14, fontWeight: 600 } }}
                 control={<Switch size="small" color="default" checked={soloCediOn()}
-                  onChange={e => { setSoloCedi(e.target.checked); location.reload() }} />}
+                  onChange={e => { marcarRestaurar(); setSoloCedi(e.target.checked); location.reload() }} />}
                 label={movil ? 'CEDI' : 'Ver solo CEDI'} />
             </Tooltip>)}
           <Tooltip disableInteractive title={menuEmp ? '' : 'Empresa con la que trabajas en todas las pantallas. Se conserva hasta que la cambies.'}>

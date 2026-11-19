@@ -10,7 +10,7 @@ from .bitacora import cerrar_huerfanas
 from .progreso import Ocupado
 from .orchestrator import revisar_pipeline
 from .etl.reportes_compras import revisar_reportes
-from .routers import auth, alertas, maestros, despacho, admin, reglas, control, usuarios, log, auditoria, lanzamientos, clasificacion, salud, vistas, diagnostico, compras, tablero, cumplimiento, oc, bpm_oc, apertura, reportes_compras
+from .routers import auth, alertas, maestros, despacho, admin, reglas, control, usuarios, log, auditoria, lanzamientos, clasificacion, salud, vistas, diagnostico, compras, tablero, cumplimiento, oc, bpm_oc, apertura, reportes_compras, solicitudes
 from . import consultas
 
 logging.basicConfig(level=logging.INFO)
@@ -68,7 +68,7 @@ async def _registrar_consulta(request: Request, call_next):
     return resp
 
 
-for r in (auth, alertas, maestros, despacho, admin, reglas, control, usuarios, log, auditoria, lanzamientos, clasificacion, salud, vistas, diagnostico, compras, tablero, cumplimiento, oc, bpm_oc, apertura, reportes_compras):
+for r in (auth, alertas, maestros, despacho, admin, reglas, control, usuarios, log, auditoria, lanzamientos, clasificacion, salud, vistas, diagnostico, compras, tablero, cumplimiento, oc, bpm_oc, apertura, reportes_compras, solicitudes):
     app.include_router(r.router, prefix="/api")
 
 

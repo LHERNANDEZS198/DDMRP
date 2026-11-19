@@ -137,3 +137,9 @@ export async function seguirTarea(setMsg: (s: string) => void, inicioPrevio: num
   }
   return { estado: 'ok', mensaje: 'Sigue corriendo en segundo plano' }
 }
+
+// Conservar filtros al cambiar «Ver solo CEDI» (la pantalla se recarga): la pantalla guarda su estado en sessionStorage y, si el switch marcó la recarga, lo recupera
+export const marcarRestaurar = () => { try { sessionStorage.setItem('ddmrp_restaurar', String(Date.now())) } catch { /* sin almacenamiento */ } }
+export const restaurarPendiente = () => { try { return Date.now() - Number(sessionStorage.getItem('ddmrp_restaurar') || 0) < 30000 } catch { return false } }
+export const guardarEstado = (k: string, v: unknown) => { try { sessionStorage.setItem('ddmrp_est_' + k, JSON.stringify(v)) } catch { /* sin almacenamiento */ } }
+export const leerEstado = <T,>(k: string): T | null => { try { if (!restaurarPendiente()) return null; const r = sessionStorage.getItem('ddmrp_est_' + k); return r ? JSON.parse(r) as T : null } catch { return null } }

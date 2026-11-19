@@ -1,0 +1,104 @@
+import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { Badge, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, Snackbar, TextField, ToggleButton, ToggleButtonGroup, Tooltip, Typography } from '@mui/material'
+import NotificationsIcon from '@mui/icons-material/Notifications'
+import { api } from './api'
+import { useYo } from './Yo'
+
+/** Campana del menú: solicitudes por aprobar (si apruebas) y respuestas nuevas a lo que pediste (si solicitas). Clic = abre la vista de solicitudes. */
+export function CampanaSolicitudes() {
+  const { puede } = useYo(); const ir = useNavigate()
+  const activo = puede('solicitar_cambios', 'aprobar_cambios')
+  const [c, setC] = useState<{ pendientes: number; resueltas_sin_ver: number; total: number } | null>(null)
+  useEffect(() => {
+    if (!activo) return
+    let vivo = true
+    const cargar = () => api('/solicitudes/contadores').then((r: any) => { if (vivo) setC(r) }).catch(() => { /* sin red: se reintenta */ })
+    cargar(); const t = setInterval(cargar, 60000); window.addEventListener('solicitudes-cambio', cargar)
+    return () => { vivo = false; clearInterval(t); window.removeEventListener('solicitudes-cambio', cargar) }
+  }, [activo])
+  if (!activo) return null
+  const tip = c ? `${c.pendientes} por aprobar · ${c.resueltas_sin_ver} respuestas nuevas a tus solicitudes` : 'Solicitudes'
+  return (
+    <Tooltip disableInteractive title={tip}>
+      <IconButton size="small" sx={{ color: '#fff', mr: .5 }} onClick={() => ir('/solicitudes')}>
+        <Badge color="error" badgeContent={c?.total ?? 0} max={99}><NotificationsIcon /></Badge>
+      </IconButton>
+    </Tooltip>)
+}
+
+type Objetivo = { empresa: string; laboratorio?: string; producto_id?: string; bodega_id?: string; texto: string }
+
+/** Botón «Solicitar cambio» de los informes: pide agregar o quitar NxP / compras de lo que está marcado en la tabla (o del laboratorio filtrado). */
+export function BotonSolicitar({ filas, empresas, labsFiltro = [] }: { filas: any[]; empresas: string[]; labsFiltro?: string[] }) {
+  const { puede } = useYo()
+  const [abierto, setAbierto] = useState(false)
+  const [tipo, setTipo] = useState<'nxp' | 'compras'>('nxp')
+  const [accion, setAccion] = useState<'agregar' | 'quitar'>('agregar')
+  const [nivel, setNivel] = useState<'laboratorio' | 'item' | 'tienda_item'>('item')
+  const [motivo, setMotivo] = useState(''); const [enviando, setEnviando] = useState(false)
+  const [msg, setMsg] = useState(''); const [err, setErr] = useState('')
+  const emp = (r: any) => String(r.empresa ?? '') || empresas.join(',')
+  const objetivos = useMemo<Objetivo[]>(() => {
+    const m = new Map<string, Objetivo>()
+    if (nivel === 'laboratorio') {
+      filas.forEach(r => { const l = r.laboratorio; if (l && l !== '(sin laboratorio)') m.set(emp(r) + '|' + l, { empresa: emp(r), laboratorio: l, texto: `Lab. ${l}` }) })
+      if (!m.size) labsFiltro.forEach(l => l !== '(sin laboratorio)' && m.set(l, { empresa: empresas.join(','), laboratorio: l, texto: `Lab. ${l}` }))
+    } else if (nivel === 'item') {
+      filas.forEach(r => { if (r.producto_id) m.set(emp(r) + '|' + r.producto_id, { empresa: emp(r), producto_id: r.producto_id, texto: String(r.producto_id) }) })
+    } else {
+      filas.forEach(r => { if (r.producto_id && r.bodega_id) m.set(emp(r) + '|' + r.bodega_id + '|' + r.producto_id, { empresa: emp(r), producto_id: r.producto_id, bodega_id: r.bodega_id, texto: `${r.bodega_id} · ${r.producto_id}` }) })
+    }
+    return [...m.values()]
+  }, [filas, nivel, labsFiltro.join(), empresas.join()])   // eslint-disable-line react-hooks/exhaustive-deps
+  if (!puede('solicitar_cambios')) return null
+  const enviar = async () => {
+    setEnviando(true); setErr('')
+    try {
+      const r: any = await api('/solicitudes', { method: 'POST', body: JSON.stringify({
+        motivo, items: objetivos.map(o => ({ tipo, accion, nivel, laboratorio: o.laboratorio, producto_id: o.producto_id, bodega_id: o.bodega_id, empresa: o.empresa })) }) })
+      setMsg(`Solicitud enviada: ${r.creadas} nuevas${r.ya_pendientes ? `, ${r.ya_pendientes} ya estaban pendientes` : ''}`)
+      window.dispatchEvent(new Event('solicitudes-cambio')); setAbierto(false); setMotivo('')
+    } catch (e: any) { setErr(e.message || 'No se pudo enviar') } finally { setEnviando(false) }
+  }
+  const nombreAccion = `${accion === 'agregar' ? 'Agregar a' : 'Quitar de'} ${tipo === 'nxp' ? 'NxP' : 'compras'}`
+  return (<>
+    <Tooltip title="Pide agregar o quitar NxP / compras de lo marcado en la tabla (casilla de la izquierda), por laboratorio, item o tienda-item. Otro grupo la aprueba.">
+      <Button size="small" variant="outlined" onClick={() => { setNivel(filas.some(r => r.bodega_id) ? 'tienda_item' : 'item'); setAbierto(true) }}>
+        Solicitar cambio{filas.length ? ` (${filas.length})` : ''}</Button>
+    </Tooltip>
+    <Dialog open={abierto} onClose={() => setAbierto(false)} maxWidth="sm" fullWidth>
+      <DialogTitle>Solicitar cambio</DialogTitle>
+      <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: '8px !important' }}>
+        <ToggleButtonGroup size="small" exclusive value={tipo} onChange={(_, v) => { if (v) { setTipo(v); if (v === 'compras' && nivel === 'tienda_item') setNivel('item') } }}>
+          <ToggleButton value="nxp">NxP</ToggleButton><ToggleButton value="compras">Compras</ToggleButton>
+        </ToggleButtonGroup>
+        <ToggleButtonGroup size="small" exclusive value={accion} onChange={(_, v) => v && setAccion(v)}>
+          <ToggleButton value="agregar">Agregar</ToggleButton><ToggleButton value="quitar">Quitar</ToggleButton>
+        </ToggleButtonGroup>
+        <ToggleButtonGroup size="small" exclusive value={nivel} onChange={(_, v) => v && setNivel(v)}>
+          <ToggleButton value="laboratorio">Laboratorio</ToggleButton><ToggleButton value="item">Item</ToggleButton>
+          <ToggleButton value="tienda_item" disabled={tipo === 'compras'}>Tienda-item</ToggleButton>
+        </ToggleButtonGroup>
+        <Typography variant="body2" color="text.secondary">
+          {tipo === 'nxp' ? 'NxP = el item (o laboratorio) no se despacha. ' : 'Compras = el item (o los items del laboratorio) sale o vuelve a entrar a las necesidades de compra. '}
+          Por tienda-item solo aplica para NxP.
+        </Typography>
+        <Box>
+          <Typography variant="subtitle2" sx={{ mb: .5 }}>{nombreAccion} · {objetivos.length} {nivel === 'laboratorio' ? 'laboratorio(s)' : nivel === 'item' ? 'item(s)' : 'tienda-item'}</Typography>
+          {objetivos.length ? <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: .5, maxHeight: 130, overflow: 'auto' }}>
+            {objetivos.slice(0, 40).map(o => <Chip key={o.texto + o.empresa} size="small" label={o.texto} />)}
+            {objetivos.length > 40 && <Chip size="small" variant="outlined" label={`+${objetivos.length - 40} más`} />}
+          </Box> : <Typography variant="body2" color="error">No hay nada marcado para este nivel: marca filas en la tabla (casilla de la izquierda){nivel === 'tienda_item' ? ' que tengan tienda e item' : ''}.</Typography>}
+        </Box>
+        <TextField size="small" label="Motivo (opcional)" value={motivo} onChange={e => setMotivo(e.target.value)} multiline minRows={2} />
+        {err && <Typography color="error" variant="body2">{err}</Typography>}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={() => setAbierto(false)}>Cancelar</Button>
+        <Button variant="contained" disabled={!objetivos.length || enviando} onClick={enviar}>{enviando ? 'Enviando…' : 'Enviar solicitud'}</Button>
+      </DialogActions>
+    </Dialog>
+    <Snackbar open={!!msg} autoHideDuration={5000} onClose={() => setMsg('')} message={msg} />
+  </>)
+}

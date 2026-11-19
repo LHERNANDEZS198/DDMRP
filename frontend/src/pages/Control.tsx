@@ -5,11 +5,12 @@ import { ColDef, ICellRendererParams } from 'ag-grid-community'
 import { Autocomplete, Box, Button, Card, CardActionArea, Checkbox, Chip, FormControlLabel, MenuItem, Paper, Tab, Tabs, TextField, Tooltip, Typography } from '@mui/material'
 import { useLocation, useSearchParams } from 'react-router-dom'
 import { BufferTrend, ZonaShare, Punto } from '../TrendCharts'
-import { api, bajar } from '../api'
+import { api, bajar, guardarEstado, leerEstado } from '../api'
 import { bodegasDeEmpresa, colsCobertura, tiendasDeEmpresa } from '../filtros'
 import { AYUDA, ayudar } from '../ayuda'
 import { useEmpresa } from '../Empresa'
 import Calculando from '../Calculando'
+import { BotonSolicitar } from '../Solicitudes'
 
 const COLOR: Record<string, string> = { ROJA: '#c62828', AMARILLA: '#f9a825', VERDE: '#2e7d32', EXCESO: '#1565c0', NO_APLICA: '#9e9e9e' }
 const HEAT: Record<string, string> = { R: '#E8B9B7', A: '#FFC000', V: '#92D050', E: '#4792DC', N: '#D9D9D9' }   // mismos colores del Excel de control
@@ -108,6 +109,7 @@ export default function Control() {
   const [paso, setPaso] = useState(1); const [metrica, setMetrica] = useState('inventario'); const [orden, setOrden] = useState('critico')
   const [ignorarVacios, setIgnorarVacios] = useState(true)   // mapa: esconde lo que no tiene ADU ni inventario (mucho ruido)
   const [bajando, setBajando] = useState(false)
+  const [selDet, setSelDet] = useState<any[]>([])   // filas marcadas en el detalle: base de «Solicitar cambio»
   const [serie, setSerie] = useState<Punto[]>([])
   const [desde, setDesde] = useState(hace(ruta.startsWith('/control/tendencia') ? 90 : ruta.startsWith('/control/mapa') ? 30 : 7)); const [hasta, setHasta] = useState(hoy())
   const [mov, setMov] = useState('')
@@ -117,10 +119,12 @@ export default function Control() {
   const [sp] = useSearchParams()
   const tiendaUrl = sp.get('tienda') ?? '', itemUrl = sp.get('item') ?? ''
   const { lista: empG } = useEmpresa()
-  const [f0, setF] = useState<F>(() => ({ ...VACIO, bodegas: tiendaUrl ? [tiendaUrl] : [], q: itemUrl }))
+  const guardado = useMemo(() => (tiendaUrl || itemUrl) ? null : leerEstado<{ f: F; nivel: Nivel; q: string }>('control'), [])   // recarga del switch «Ver solo CEDI»: se conservan los filtros
+  const [f0, setF] = useState<F>(() => guardado ? { ...VACIO, ...guardado.f } : ({ ...VACIO, bodegas: tiendaUrl ? [tiendaUrl] : [], q: itemUrl }))
   const f = useMemo<F>(() => ({ ...f0, empresa: empG }), [f0, empG.join()])
-  const [qTxt, setQTxt] = useState(itemUrl)
-  const [nivel, setNivel] = useState<Nivel>(tiendaUrl || itemUrl ? 'detalle' : 'empresa')
+  const [qTxt, setQTxt] = useState(guardado ? guardado.q : itemUrl)
+  const [nivel, setNivel] = useState<Nivel>(guardado ? guardado.nivel : tiendaUrl || itemUrl ? 'detalle' : 'empresa')
+  useEffect(() => { guardarEstado('control', { f: f0, nivel, q: qTxt }) }, [f0, nivel, qTxt])
   const [opc, setOpc] = useState<any>({ tiendas: [], laboratorios: [], dias: [], empresas: [], criterios: [], ejecucion: null })
   // Cada dato se guarda con el modo (foto / cambios) con que se pidió: si cambias de pestaña no se usa lo de la otra
   const [kpiRaw, setKpi] = useState<{ m: boolean; v: any } | null>(null)
@@ -230,15 +234,15 @@ export default function Control() {
     { field: 'delta', headerName: 'Cambio (pp)', type: 'numericColumn', width: 115, sort: 'asc', valueFormatter: p => p.value == null ? '' : (p.value > 0 ? '+' : '') + Number(p.value).toFixed(0) },
   ]
   const colsDet: ColDef[] = [
-    { field: 'bodega_id', headerName: 'Tienda', width: 100, pinned: 'left', filter: true },
+    { field: 'bodega_id', headerName: 'Tienda', width: 120, pinned: 'left', filter: true, checkboxSelection: true, headerCheckboxSelection: true },
     { field: 'bodega_nombre', headerName: 'Nombre tienda', width: 160, filter: true },
     { field: 'clase_tienda', headerName: 'Clase', width: 80, filter: true, headerTooltip: AYUDA['Clase de tienda'] },
     { field: 'producto_id', headerName: 'Item', width: 100, filter: true },
     { field: 'descripcion', headerName: 'Descripción', flex: 1, minWidth: 220, filter: true },
     { field: 'laboratorio', headerName: 'Lab.', width: 90, filter: true },
     { field: 'zona', width: 110, cellRenderer: pill, filter: true },
-    { field: 'pct_buffer', headerName: '% buffer', type: 'numericColumn', width: 100, valueFormatter: pctCell },
-    { headerName: 'Buffer', cellRenderer: BufferBar, width: 220, sortable: false },
+    { field: 'pct_buffer', headerName: '% buffer', type: 'numericColumn', width: 100, valueFormatter: pctCell, filter: 'agNumberColumnFilter' },
+    { field: 'pct_buffer', colId: 'buffer_barra', headerName: 'Buffer', cellRenderer: BufferBar, width: 220, filter: 'agNumberColumnFilter', headerTooltip: 'Barra del buffer. Ordena y filtra por el % de buffer (0 = vacío, 100 = tope verde).' },
     { field: 'inventario', type: 'numericColumn', width: 100 },
     { field: 'en_transito', headerName: 'Tránsito', type: 'numericColumn', width: 95 },
     { field: 'rit_dias', headerName: 'RIT abierto (d)', type: 'numericColumn', width: 120, filter: true, headerTooltip: 'Días del RIT (requisición de abastecimiento) más viejo que sigue abierto para este item en esta tienda. Pasa el umbral de Configuración (rit_alerta_dias): hay que despacharlo o anularlo en Siesa', tooltipField: 'rit_detalle', cellStyle: p => p.value != null ? { color: '#b71c1c', fontWeight: 700 } : undefined },
@@ -282,6 +286,7 @@ export default function Control() {
       {/* Indicadores del alcance actual: clic en una zona = filtrar por ella */}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         <Typography variant="h6" sx={{ fontWeight: 700, flex: 1 }}>{mapaModo ? 'Control DDMRP · mapa de calor' : tendModo ? 'Control DDMRP · tendencia en el tiempo' : cambiosModo ? 'Control DDMRP · cambios en un periodo' : 'Control DDMRP · foto actual'}</Typography>
+        {!tendModo && !mapaModo && !cambiosModo && nivel === 'detalle' && <BotonSolicitar filas={selDet} empresas={empG} labsFiltro={f.labs} />}
         <Tooltip title="Baja a Excel lo que ves, con los mismos filtros (sin el tope de filas de la pantalla)"><span><Button size="small" variant="outlined" disabled={bajando} onClick={excel}>{bajando ? 'Generando…' : 'Descargar Excel'}</Button></span></Tooltip>
       </Box>
       <Plegable id="control" titulo="indicadores y filtros" resumen={<>
@@ -435,7 +440,7 @@ export default function Control() {
       </Box>}
       {!tendModo && !mapaModo && <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 320 }}>
         {nivel === 'detalle'
-          ? <Tabla textoCargando="Calculando…" vacio="Sin resultados con estos filtros" key={'det' + cambiosModo} rowData={det.filas} columnDefs={ayudar(cambiosModo ? colsDetCambios : colsDet)} tooltipShowDelay={300} getRowStyle={(p: any) => p.data?.rit_dias != null ? { background: 'rgba(239,108,0,0.14)' } : undefined} rowBuffer={20} cargando={cargando} defaultColDef={{ resizable: true, sortable: true }} />
+          ? <Tabla rowSelection={cambiosModo ? undefined : 'multiple'} suppressRowClickSelection onSelectionChanged={e => setSelDet(e.api.getSelectedRows())} memoria={'control_det' + (cambiosModo ? '_cambios' : '')} textoCargando="Calculando…" vacio="Sin resultados con estos filtros" key={'det' + cambiosModo} rowData={det.filas} columnDefs={ayudar(cambiosModo ? colsDetCambios : colsDet)} tooltipShowDelay={300} getRowStyle={(p: any) => p.data?.rit_dias != null ? { background: 'rgba(239,108,0,0.14)' } : undefined} rowBuffer={20} cargando={cargando} defaultColDef={{ resizable: true, sortable: true }} />
           : <Tabla textoCargando="Calculando…" vacio="Sin resultados con estos filtros" key={nivel + cambiosModo} rowData={grupos} columnDefs={ayudar(cambiosModo ? colsCambios : colsGrupo)} tooltipShowDelay={300} rowBuffer={20} cargando={cargando} defaultColDef={{ resizable: true, sortable: true }}
               onRowClicked={e => e.data && entrar(String(e.data.clave))} rowStyle={{ cursor: 'pointer' }} rowHeight={40} />}
       </Box>}

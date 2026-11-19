@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { AgGridReact, AgGridReactProps } from 'ag-grid-react'
 import type { CellMouseDownEvent, CellMouseOverEvent, Column, GridApi, GridReadyEvent } from 'ag-grid-community'
+import { guardarEstado, leerEstado } from './api'
 
 const cargandoHtml = (txt: string) =>
   `<span class="ag-overlay-loading-center" style="padding:14px 22px;font-size:14px;display:flex;align-items:center;gap:10px">` +
@@ -50,6 +51,9 @@ export default function Tabla({ cargando, textoCargando = 'Cargando datos…', v
     } catch { /* vista guardada invalida: se ignora */ }
   }
 
+    // filtros de columnas: se guardan para que sobrevivan a la recarga del switch «Ver solo CEDI»
+  const guardarFiltros = () => { if (memoria && api.current) guardarEstado('gf_' + memoria, api.current.getFilterModel()) }
+  const restaurarFiltros = () => { if (!memoria || !api.current) return; const m = leerEstado<any>('gf_' + memoria); if (m && Object.keys(m).length) api.current.setFilterModel(m) }
   const columnas = (): Column[] => api.current?.getAllDisplayedColumns() ?? []
   const refrescar = () => api.current?.refreshCells({ force: true, suppressFlash: true })
   const limpiar = () => { if (ancla.current) { ancla.current = fin.current = null; todo.current = false; refrescar() } }
@@ -140,8 +144,8 @@ export default function Tabla({ cargando, textoCargando = 'Cargando datos…', v
   return (
     <div ref={raiz} style={{ display: 'contents' }}>
       <AgGridReact {...p} defaultColDef={colDefBase} loading={!!cargando}
-        onGridReady={(e: GridReadyEvent) => { api.current = e.api; aplicarVista(); onGridReady?.(e) }}
-        onNewColumnsLoaded={() => aplicarVista()}
+        onGridReady={(e: GridReadyEvent) => { api.current = e.api; aplicarVista(); restaurarFiltros(); onGridReady?.(e) }}
+        onNewColumnsLoaded={() => aplicarVista()} onFilterChanged={() => guardarFiltros()}
         onColumnMoved={e => { if (e.finished) guardarVista() }} onColumnResized={e => { if (e.finished) guardarVista() }}
         onColumnPinned={() => guardarVista()} onColumnVisible={() => guardarVista()} onSortChanged={() => guardarVista()}
         onCellMouseDown={alBajar} onCellMouseOver={alPasar}
