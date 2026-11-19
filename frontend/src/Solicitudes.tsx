@@ -28,10 +28,10 @@ export function CampanaSolicitudes() {
     </Tooltip>)
 }
 
-type Objetivo = { empresa: string; laboratorio?: string; producto_id?: string; bodega_id?: string; texto: string }
+type Objetivo = { empresa: string; laboratorio?: string; producto_id?: string; bodega_id?: string; texto: string; nombre?: string; nombre2?: string }
 
 /** Botón «Solicitar cambio» de los informes: pide agregar o quitar NxP / compras de lo que está marcado en la tabla (o del laboratorio filtrado). */
-export function BotonSolicitar({ filas, empresas, labsFiltro = [] }: { filas: any[]; empresas: string[]; labsFiltro?: string[] }) {
+export function BotonSolicitar({ filas, empresas, labsFiltro = [], labNombres = {} }: { filas: any[]; empresas: string[]; labsFiltro?: string[]; labNombres?: Record<string, string> }) {
   const { puede } = useYo()
   const [abierto, setAbierto] = useState(false)
   const [tipo, setTipo] = useState<'nxp' | 'compras'>('nxp')
@@ -44,15 +44,15 @@ export function BotonSolicitar({ filas, empresas, labsFiltro = [] }: { filas: an
   const objetivos = useMemo<Objetivo[]>(() => {
     const m = new Map<string, Objetivo>()
     if (nivel === 'laboratorio') {
-      filas.forEach(r => { const l = r.laboratorio; if (l && l !== '(sin laboratorio)') m.set(emp(r) + '|' + l, { empresa: emp(r), laboratorio: l, texto: `Lab. ${l}` }) })
-      if (!m.size) labsFiltro.forEach(l => l !== '(sin laboratorio)' && m.set(l, { empresa: empresas.join(','), laboratorio: l, texto: `Lab. ${l}` }))
+      filas.forEach(r => { const l = r.laboratorio; if (l && l !== '(sin laboratorio)') m.set(emp(r) + '|' + l, { empresa: emp(r), laboratorio: l, texto: `Lab. ${l}`, nombre: labNombres[l] }) })
+      if (!m.size) labsFiltro.forEach(l => l !== '(sin laboratorio)' && m.set(l, { empresa: empresas.join(','), laboratorio: l, texto: `Lab. ${l}`, nombre: labNombres[l] }))
     } else if (nivel === 'item') {
-      filas.forEach(r => { if (r.producto_id) m.set(emp(r) + '|' + r.producto_id, { empresa: emp(r), producto_id: r.producto_id, texto: String(r.producto_id) }) })
+      filas.forEach(r => { if (r.producto_id) m.set(emp(r) + '|' + r.producto_id, { empresa: emp(r), producto_id: r.producto_id, texto: String(r.producto_id), nombre: r.descripcion, nombre2: r.laboratorio ? `Lab. ${r.laboratorio}${labNombres[r.laboratorio] ? ' · ' + labNombres[r.laboratorio] : ''}` : undefined }) })
     } else {
-      filas.forEach(r => { if (r.producto_id && r.bodega_id) m.set(emp(r) + '|' + r.bodega_id + '|' + r.producto_id, { empresa: emp(r), producto_id: r.producto_id, bodega_id: r.bodega_id, texto: `${r.bodega_id} · ${r.producto_id}` }) })
+      filas.forEach(r => { if (r.producto_id && r.bodega_id) m.set(emp(r) + '|' + r.bodega_id + '|' + r.producto_id, { empresa: emp(r), producto_id: r.producto_id, bodega_id: r.bodega_id, texto: `${r.bodega_id} · ${r.producto_id}`, nombre: r.descripcion, nombre2: r.bodega_nombre ? `${r.bodega_id} · ${r.bodega_nombre}` : String(r.bodega_id) }) })
     }
     return [...m.values()]
-  }, [filas, nivel, labsFiltro.join(), empresas.join()])   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filas, nivel, labsFiltro.join(), empresas.join(), JSON.stringify(labNombres).length])   // eslint-disable-line react-hooks/exhaustive-deps
   if (!puede('solicitar_cambios')) return null
   const enviar = async () => {
     setEnviando(true); setErr('')
@@ -69,7 +69,7 @@ export function BotonSolicitar({ filas, empresas, labsFiltro = [] }: { filas: an
       <Button size="small" variant="outlined" onClick={() => { setNivel(filas.some(r => r.bodega_id) ? 'tienda_item' : 'item'); setPaso('armar'); setAbierto(true) }}>
         Solicitar cambio{filas.length ? ` (${filas.length})` : ''}</Button>
     </Tooltip>
-    <Dialog open={abierto} onClose={() => setAbierto(false)} maxWidth="sm" fullWidth>
+    <Dialog open={abierto} onClose={() => setAbierto(false)} maxWidth="md" fullWidth>
       <DialogTitle>{paso === 'armar' ? 'Solicitar cambio' : 'Confirma lo que vas a enviar a aprobación'}</DialogTitle>
       {paso === 'confirmar' ? <>
         <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
@@ -77,10 +77,23 @@ export function BotonSolicitar({ filas, empresas, labsFiltro = [] }: { filas: an
           <Typography variant="body2"><b>Cuántos:</b> {objetivos.length.toLocaleString('es-CO')} · empresa(s): {[...new Set(objetivos.flatMap(o => o.empresa.split(',')))].map(e => NOMBRE_EMPRESA[e] ?? e).join(', ')}</Typography>
           <Typography variant="body2"><b>Lo aprueba:</b> {tipo === 'nxp' ? 'el grupo que aprueba NxP' : 'el grupo de compras'} (al aprobarse se aplica solo)</Typography>
           <Typography variant="body2"><b>Motivo:</b> {motivo.trim() || '—'}</Typography>
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: .5, maxHeight: 200, overflow: 'auto' }}>
-            {objetivos.slice(0, 60).map(o => <Chip key={o.texto + o.empresa} size="small" label={o.texto} />)}
-            {objetivos.length > 60 && <Chip size="small" variant="outlined" label={`+${objetivos.length - 60} más`} />}
+          <Box sx={{ maxHeight: '50vh', overflow: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+            <Box component="table" sx={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, '& td, & th': { px: 1, py: .5, textAlign: 'left', borderBottom: '1px solid', borderColor: 'divider' }, '& th': { position: 'sticky', top: 0, bgcolor: 'background.paper', fontWeight: 700 } }}>
+              <thead><tr>
+                <th>{nivel === 'laboratorio' ? 'Código' : nivel === 'item' ? 'Item' : 'Tienda · Item'}</th>
+                <th>{nivel === 'laboratorio' ? 'Laboratorio' : 'Descripción'}</th>
+                {nivel !== 'laboratorio' && <th>{nivel === 'item' ? 'Laboratorio' : 'Nombre tienda'}</th>}
+                {empresas.length > 1 && <th>Empresa</th>}
+              </tr></thead>
+              <tbody>{objetivos.slice(0, 500).map(o => <tr key={o.texto + o.empresa}>
+                <td style={{ whiteSpace: 'nowrap' }}>{nivel === 'laboratorio' ? o.laboratorio : o.texto}</td>
+                <td>{o.nombre ?? '—'}</td>
+                {nivel !== 'laboratorio' && <td>{o.nombre2 ?? '—'}</td>}
+                {empresas.length > 1 && <td>{o.empresa.split(',').map(e => NOMBRE_EMPRESA[e] ?? e).join(', ')}</td>}
+              </tr>)}</tbody>
+            </Box>
           </Box>
+          {objetivos.length > 500 && <Typography variant="caption" color="text.secondary">Se muestran los primeros 500 de {objetivos.length.toLocaleString('es-CO')}; se envían todos.</Typography>}
           {err && <Typography color="error" variant="body2">{err}</Typography>}
         </DialogContent>
         <DialogActions>
@@ -106,7 +119,7 @@ export function BotonSolicitar({ filas, empresas, labsFiltro = [] }: { filas: an
         <Box>
           <Typography variant="subtitle2" sx={{ mb: .5 }}>{nombreAccion} · {objetivos.length} {nivel === 'laboratorio' ? 'laboratorio(s)' : nivel === 'item' ? 'item(s)' : 'tienda-item'}</Typography>
           {objetivos.length ? <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: .5, maxHeight: 130, overflow: 'auto' }}>
-            {objetivos.slice(0, 40).map(o => <Chip key={o.texto + o.empresa} size="small" label={o.texto} />)}
+            {objetivos.slice(0, 40).map(o => <Chip key={o.texto + o.empresa} size="small" label={o.nombre ? `${o.texto} · ${o.nombre}` : o.texto} />)}
             {objetivos.length > 40 && <Chip size="small" variant="outlined" label={`+${objetivos.length - 40} más`} />}
           </Box> : <Typography variant="body2" color="error">No hay nada marcado para este nivel: marca filas en la tabla (casilla de la izquierda){nivel === 'tienda_item' ? ' que tengan tienda e item' : ''}.</Typography>}
         </Box>
