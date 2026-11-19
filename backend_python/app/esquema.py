@@ -398,8 +398,8 @@ SENTENCIAS_CEDI = [
     "CREATE TABLE IF NOT EXISTS ddmrp.rit_alerta (empresa TEXT NOT NULL, producto_id TEXT NOT NULL, bodega_id TEXT NOT NULL, documento TEXT NOT NULL, fecha DATE NOT NULL, "
     "saldo NUMERIC(14,4) NOT NULL DEFAULT 0, estado SMALLINT NOT NULL DEFAULT 1, PRIMARY KEY (empresa, producto_id, bodega_id, documento))",
     "INSERT INTO ddmrp.parametro VALUES ('vectorizacion_en_adu', 1, 'Vectorizacion como piso del ADU: 1 = en una referencia con promocion (indicativo 1) cuyo promedio de ultimos meses + forecast es menor que la vectorizacion, el ADU parte de la vectorizacion (como la columna Promedio ADU del Excel); 0 = no') ON CONFLICT DO NOTHING",
-    "INSERT INTO ddmrp.parametro VALUES ('vectorizacion_piso_pronostico', 0, 'Vectorizacion como piso del ADU de referencia del pronostico (modelo de Felipe): 1 = siempre, haya o no promocion; 0 = no') ON CONFLICT DO NOTHING",
-    "INSERT INTO ddmrp.parametro VALUES ('promo_en_pronostico', 1, 'Promocion en el pronostico calculado: 1 = aplica las cotas de promocion (actual); 0 = no (modelo de Felipe). La promocion siempre ajusta el TOG del buffer') ON CONFLICT DO NOTHING",
+    "INSERT INTO ddmrp.parametro VALUES ('vectorizacion_piso_pronostico', 0, 'Vectorizacion como piso del ADU de referencia del pronostico (modelo de excel): 1 = siempre, haya o no promocion; 0 = no') ON CONFLICT DO NOTHING",
+    "INSERT INTO ddmrp.parametro VALUES ('promo_en_pronostico', 1, 'Promocion en el pronostico calculado: 1 = aplica las cotas de promocion (actual); 0 = no (modelo de excel). La promocion siempre ajusta el TOG del buffer') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('reglas_arranque', 0, 'Reglas de arranque: tienda SV sin inventario ni ventas del laboratorio indicado: se piden 2 u. (3 con promocion) al multiplo de despacho; 0 = no') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('arranque_laboratorio', 19, 'Laboratorio al que aplican las reglas de arranque (codigo numerico: 19 = 019; 0 = cualquiera)') ON CONFLICT DO NOTHING",
     "INSERT INTO ddmrp.parametro VALUES ('arranque_unidades', 2, 'Unidades de arranque (sin promocion)') ON CONFLICT DO NOTHING",
@@ -489,7 +489,7 @@ SENTENCIAS_COMPRAS = [
     "INSERT INTO ddmrp.item_compra (empresa, producto_id) SELECT empresa, producto_id FROM ddmrp.item_empresa ON CONFLICT DO NOTHING",
     # tiendas (por prefijo del codigo de bodega, ej. SV) a las que aplican las reglas de arranque; se edita en Maestros
     "CREATE TABLE IF NOT EXISTS ddmrp.arranque_prefijo (empresa TEXT NOT NULL, prefijo TEXT NOT NULL, motivo TEXT, PRIMARY KEY (empresa, prefijo))",
-    "INSERT INTO ddmrp.arranque_prefijo (empresa, prefijo, motivo) VALUES ('05', 'SV', 'Tiendas SV (regla de arranque de Felipe)'), ('21', 'SV', 'Tiendas SV (regla de arranque de Felipe)') ON CONFLICT DO NOTHING",
+    "INSERT INTO ddmrp.arranque_prefijo (empresa, prefijo, motivo) VALUES ('05', 'SV', 'Tiendas SV (regla de arranque de excel)'), ('21', 'SV', 'Tiendas SV (regla de arranque de excel)') ON CONFLICT DO NOTHING",
     # solicitudes de cambio (NxP / compras) que un grupo pide y otro aprueba; al aprobar se aplican a item_condenado, laboratorio_sin_envio o item_compra.activo
     """CREATE TABLE IF NOT EXISTS ddmrp.solicitud_cambio (
          id BIGSERIAL PRIMARY KEY, empresa TEXT NOT NULL, tipo TEXT NOT NULL CHECK (tipo IN ('nxp', 'compras')), accion TEXT NOT NULL CHECK (accion IN ('agregar', 'quitar')),
