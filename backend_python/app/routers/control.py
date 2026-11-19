@@ -48,7 +48,7 @@ def _cond_crit(a: str, crit, p: dict) -> str | None:
     return f"({a}.empresa, {a}.producto_id) IN (SELECT u.e, u.pr FROM unnest(CAST(:cr_e AS text[]), CAST(:cr_p AS text[])) AS u(e, pr))"
 
 
-def _filtros(user, bodegas, labs, q, zonas, dia, empresa, a="s", zona_expr="s.zona::text", crit=None, ocultar_nxp=False) -> tuple[list[str], dict]:
+def _filtros(user, bodegas, labs, q, zonas, dia, empresa, a="s", zona_expr="s.zona::text", crit=None, ocultar_no_aplica=False) -> tuple[list[str], dict]:
     w, p = filtro_sql_permisos(user, f"{a}.bodega_id", "mi.categoria")
     cond = [w, solo_activos(a), cond_cedi(a)]   # solo items activos de Siesa (regla solo_items_activos), tambien en la historia; tiendas o, con «Ver solo CEDI», el CEDI
     if _csv(bodegas):
@@ -60,8 +60,8 @@ def _filtros(user, bodegas, labs, q, zonas, dia, empresa, a="s", zona_expr="s.zo
     z = [x for x in _csv(zonas) if x in ZONAS]
     if z:
         cond.append(f"{zona_expr} = ANY(:f_z)"); p["f_z"] = z
-    if ocultar_nxp and a == "s" and zona_expr == "s.zona::text" and "NO_APLICA" not in z:   # items NxP (condenados) sin buffer (NO_APLICA) no son accionables: no ensucian la foto actual, salvo que se pida esa zona
-        cond.append("NOT (COALESCE(s.condenado, FALSE) AND s.zona::text = 'NO_APLICA')")
+    if ocultar_no_aplica and a == "s" and zona_expr == "s.zona::text" and "NO_APLICA" not in z:   # sin ADU ni inventario (zona NO_APLICA) no hay nada que revisar: salen del detalle salvo que se pida esa zona
+        cond.append("s.zona::text <> 'NO_APLICA'")
     cc_ = _cond_crit(a, crit, p)
     if cc_:
         cond.append(cc_)
@@ -72,8 +72,8 @@ def _filtros(user, bodegas, labs, q, zonas, dia, empresa, a="s", zona_expr="s.zo
     return cond, p
 
 
-def _donde(user, bodegas, labs, q, zonas, dia, empresa=None, crit=None) -> tuple[str, dict]:
-    cond, p = _filtros(user, bodegas, labs, q, zonas, dia, empresa, crit=crit, ocultar_nxp=True)
+def _donde(user, bodegas, labs, q, zonas, dia, empresa=None, crit=None, ocultar_no_aplica=False) -> tuple[str, dict]:
+    cond, p = _filtros(user, bodegas, labs, q, zonas, dia, empresa, crit=crit, ocultar_no_aplica=ocultar_no_aplica)
     return " AND ".join([f"s.ejecucion_id = {ULTIMA}"] + cond), p
 
 _CACHE_FILTROS: dict = {}      # opciones de los filtros por (corrida, permisos): recorren todo el informe y la pantalla las pide en cada carga
@@ -176,7 +176,7 @@ def _sql_detalle(w: str) -> str:
 def detalle(bodegas: str | None = None, labs: str | None = None, q: str | None = None, zonas: str | None = None,
             dia: int | None = None, empresa: str | None = None, crit: str | None = None, limit: int = Query(3000, le=20000), user=Depends(usuario_actual)):
     """Combinaciones tienda/item con los datos para dibujar la barra del buffer. Las mas criticas primero."""
-    w, p = _donde(user, bodegas, labs, q, zonas, dia, empresa, crit)
+    w, p = _donde(user, bodegas, labs, q, zonas, dia, empresa, crit, ocultar_no_aplica=True)
     sql = _sql_detalle(w) + " LIMIT :lim"
     with pg.connect() as c:
         filas = [dict(r) for r in c.execute(text(sql), {**p, "lim": limit}).mappings()]

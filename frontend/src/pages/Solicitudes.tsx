@@ -64,7 +64,7 @@ export default function Solicitudes() {
         {!d.puede_aprobar && d.puede_solicitar && <Button size="small" variant="outlined" disabled={!pend.length} onClick={() => accionar('cancelar')}>Cancelar las marcadas ({pend.length})</Button>}
         <Typography variant="caption" color="text.secondary">{d.filas.length.toLocaleString()} solicitudes{d.puede_aprobar ? '' : ' tuyas'}</Typography>
       </Box>
-      <Box sx={{ flex: 1, minHeight: 300 }}>
+      <Box className="ag-theme-quartz" sx={{ flex: 1, minHeight: 300 }}>
         <Tabla memoria="solicitudes" cargando={cargando} vacio="No hay solicitudes en esta vista" rowData={d.filas} columnDefs={cols} rowSelection="multiple" suppressRowClickSelection
           onSelectionChanged={e => setSel(e.api.getSelectedRows())} defaultColDef={{ resizable: true, sortable: true }} />
       </Box>
