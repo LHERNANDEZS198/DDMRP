@@ -1,5 +1,6 @@
 """Vista por tienda: ventas (unidades, pesos, margen), inventario, GMROI y rotacion mes a mes, zonas del buffer por dia, comparativo (mismo periodo del anio anterior y
 promedio de las tiendas de su clase) y pareto de items y laboratorios. Las ventas estan por mes (ventas_mensual); el inventario y las zonas tienen historia diaria."""
+import logging
 import re
 from datetime import date
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,6 +10,7 @@ from ..db import pg
 from ..security import filtro_sql_permisos, requiere, empresas_permitidas
 from .control import FROM as CTRL_FROM, ULTIMA
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/tienda", tags=["tienda"])
 _MES = re.compile(r"^\d{6}$")
 
@@ -44,6 +46,16 @@ def _clase_abc(filas: list[dict], clave: str, a: float = 80.0, b: float = 95.0) 
 
 @router.get("")
 def vista(bodega: str, empresa: str, desde: str, hasta: str, labs: str | None = None, comparar: bool = True, user=Depends(requiere("ver_control"))):
+    try:
+        return _vista(bodega, empresa, desde, hasta, labs, comparar, user)
+    except HTTPException:
+        raise
+    except Exception as e:      # que la pantalla muestre la causa en vez de un "Internal Server Error" mudo
+        log.exception("tienda")
+        raise HTTPException(500, f"Vista por tienda: {type(e).__name__}: {str(e).strip()[:600]}")
+
+
+def _vista(bodega, empresa, desde, hasta, labs, comparar, user):
     if empresa not in ("05", "21"):
         raise HTTPException(400, "Elige la empresa")
     perm = empresas_permitidas(user["id"])
