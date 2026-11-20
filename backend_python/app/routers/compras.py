@@ -241,18 +241,39 @@ class CorreoIn(BaseModel):
     email_cc: str | None = None
 
 
+class LlaveProv(BaseModel):
+    empresa: str
+    proveedor_id: str
+    sucursal: str = "001"
+
+
+@router.post("/proveedor-correos")
+def leer_correos(llaves: list[LlaveProv], user=Depends(requiere("gestionar_compras", "ver_compras"))):
+    """Correos VIGENTES en el maestro de proveedores de esos proveedores: la pantalla de necesidades los usa para ponerse al dia (si alguien los cargo en Maestros despues de
+    calcular) sin recalcular las necesidades."""
+    if not llaves:
+        return {}
+    with pg.connect() as c:
+        rows = c.execute(text("""SELECT p.empresa, p.proveedor_id, p.sucursal, COALESCE(p.email_para, '') AS email_para, COALESCE(p.email_cc, '') AS email_cc
+                                 FROM ddmrp.proveedor p JOIN unnest(CAST(:e AS text[]), CAST(:p AS text[]), CAST(:s AS text[])) k(e, p, s)
+                                   ON k.e = p.empresa AND k.p = p.proveedor_id AND k.s = p.sucursal"""),
+                         {"e": [x.empresa for x in llaves], "p": [x.proveedor_id for x in llaves], "s": [x.sucursal for x in llaves]}).mappings().all()
+    return {f"{r['empresa']}|{r['proveedor_id']}|{r['sucursal']}": {"email_para": r["email_para"], "email_cc": r["email_cc"]} for r in rows}
+
+
 @router.put("/proveedor-correo")
 def guardar_correo(b: CorreoIn, user=Depends(requiere("gestionar_compras"))):
     """Guarda los correos del proveedor (varios separados por ; o coma) desde la vista por proveedor. Solo cambia el campo que llega (None = no tocar, vacio = borrar)."""
-    from .maestros import _emails
+    from .maestros import _EMAIL
     sets, p = [], {"e": b.empresa, "p": b.proveedor_id, "s": b.sucursal}
     for campo, v in (("email_para", b.email_para), ("email_cc", b.email_cc)):
         if v is None:
             continue
-        try:
-            p[campo] = _emails(v) or None
-        except ValueError as ex:
-            raise HTTPException(400, str(ex))
+        partes = [x.strip().lower() for x in v.split(";") if x.strip()]      # el maestro pide varios correos separados por ; (no coma ni espacios)
+        malos = [x for x in partes if not _EMAIL.match(x)]
+        if malos:
+            raise HTTPException(400, f"Correo inválido: {', '.join(malos)}. Escribe cada correo completo y sepáralos con ; (punto y coma).")
+        p[campo] = "; ".join(dict.fromkeys(partes)) or None
         sets.append(f"{campo} = :{campo}")
     if not sets:
         raise HTTPException(400, "No llegó ningún correo")

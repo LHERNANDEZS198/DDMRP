@@ -114,6 +114,54 @@ export default function Necesidades() {
   // justificación opcional para el aprobador, por proveedor (clave empresa|proveedor|sucursal) + el proveedor que se está editando en este momento
   const [justif, setJustif] = useState<Record<string, string>>({}); const [justEd, setJustEd] = useState<{ k: string; nombre: string; txt: string } | null>(null)
   const [ocRes, setOcRes] = useState<{ ordenes: any[]; avisos: string[] } | null>(null); const [ocErr, setOcErr] = useState('')
+  const [correoTxt, setCorreoTxt] = useState<Record<string, string>>({})       // lo que se escribe en la columna Correo(s) del modal de OC, por proveedor
+  const [correoMsg, setCorreoMsg] = useState<Record<string, string>>({})      // error de validación o aviso de guardado, por proveedor
+  const RE_CORREO = /^[^@\s;,]+@[^@\s;,]+\.[^@\s;,]+$/
+  /** Pone al dia los correos que ya cambiaron en el maestro de proveedores (por ejemplo, alguien los cargo en Maestros despues de calcular), sin recalcular las necesidades. */
+  const refrescarCorreos = async (): Promise<void> => {
+    const llaves = new Map<string, any>()
+    d.proveedores.forEach(p => llaves.set(kProv(p), { empresa: p.empresa, proveedor_id: p.proveedor_id, sucursal: p.sucursal }))
+    Object.values(cambioProv).forEach((p: any) => { if (p?.proveedor_id) llaves.set(`${p.empresa ?? ''}|${p.proveedor_id}|${p.sucursal}`, { empresa: p.empresa, proveedor_id: p.proveedor_id, sucursal: p.sucursal }) })
+    if (!llaves.size) return
+    try {
+      const m: Record<string, { email_para: string; email_cc: string }> = await api('/compras/proveedor-correos', { method: 'POST', body: JSON.stringify([...llaves.values()].filter(l => l.empresa)) })
+      setD(dd => {
+        let hay = false
+        const filas = dd.filas.map(f => { const x = m[kProv(f)]; if (x && x.email_para !== (f.prov_email_para ?? '')) { hay = true; return { ...f, prov_email_para: x.email_para, prov_email_cc: x.email_cc } } return f })
+        const proveedores = dd.proveedores.map(p => {
+          const x = m[kProv(p)]; if (!x || x.email_para === (p.email_para ?? '')) return p
+          hay = true
+          const sin = !x.email_para.trim()
+          const falt = String(p.faltan ?? '').split('; ').filter(t => t && t !== 'Sin correo'); if (sin) falt.unshift('Sin correo')
+          return { ...p, email_para: x.email_para, email_cc: x.email_cc, sin_email: sin, faltan: falt.join('; '),
+                   estado: sin ? (p.estado === 'OK' ? 'Sin correo del proveedor' : p.estado) : (p.estado === 'Sin correo del proveedor' ? 'OK' : p.estado) }
+        })
+        return hay ? { ...dd, filas, proveedores } : dd
+      })
+      setCambioProv(c => Object.fromEntries(Object.entries(c).map(([o, p]: [string, any]) => { const x = m[`${p.empresa ?? o.split('|')[0]}|${p.proveedor_id}|${p.sucursal}`]; return [o, x ? { ...p, email_para: x.email_para, email_cc: x.email_cc } : p] })))
+    } catch { /* sin red: se queda con lo que ya hay */ }
+  }
+  useEffect(() => {      // al volver a esta pestaña del navegador (p. ej. de Maestros) y al abrir el modal de OC
+    const al = () => { if (document.visibilityState === 'visible') refrescarCorreos() }
+    document.addEventListener('visibilitychange', al); window.addEventListener('focus', al)
+    return () => { document.removeEventListener('visibilitychange', al); window.removeEventListener('focus', al) }
+  })
+  /** Valida (varios correos separados por ;) y guarda en el maestro de proveedores al salir del campo o con Enter. */
+  const guardarCorreoOC = async (r: any) => {
+    const k = kProv(r); const txt = correoTxt[k]; if (txt === undefined) return
+    const partes = txt.split(';').map(x => x.trim()).filter(Boolean)
+    const malos = partes.filter(x => !RE_CORREO.test(x))
+    if (malos.length) { setCorreoMsg(m => ({ ...m, [k]: `Correo inválido: ${malos.join(', ')}. Sepáralos con ; (punto y coma)` })); return }
+    const nuevo = [...new Set(partes.map(x => x.toLowerCase()))].join('; ')
+    if (nuevo === (r.email_para ?? '').trim()) { setCorreoTxt(({ [k]: _x, ...rest }) => rest); setCorreoMsg(({ [k]: _x, ...rest }) => rest); return }
+    try {
+      const x = await api('/compras/proveedor-correo', { method: 'PUT', body: JSON.stringify({ empresa: r.empresa, proveedor_id: r.proveedor_id, sucursal: r.sucursal, email_para: nuevo }) })
+      const val = x.email_para ?? ''
+      setD(dd => ({ ...dd, filas: dd.filas.map(f => kProv(f) === k ? { ...f, prov_email_para: val } : f) }))
+      setCambioProv(c => Object.fromEntries(Object.entries(c).map(([o, p]: [string, any]) => [o, `${p.empresa ?? r.empresa}|${p.proveedor_id}|${p.sucursal}` === k || (o.split('|')[0] === r.empresa && p.proveedor_id === r.proveedor_id && p.sucursal === r.sucursal) ? { ...p, email_para: val } : p])))
+      setCorreoTxt(({ [k]: _x, ...rest }) => rest); setCorreoMsg(m => ({ ...m, [k]: 'Guardado en el maestro de proveedores' }))
+    } catch (e: any) { setCorreoMsg(m => ({ ...m, [k]: e.message || String(e) })) }
+  }
   // cambio de proveedor antes de enviar (por OC, clave de ORIGEN empresa|proveedor|sucursal): el proveedor del maestro (misma empresa) al que se le monta esa OC
   const [cambioProv, setCambioProv] = useState<Record<string, any>>({})
   const [provEd, setProvEd] = useState<null | { k: string; empresa: string; origen: string }>(null)
@@ -429,7 +477,7 @@ export default function Necesidades() {
             for (const a of [apiDet.current, apiProv.current]) { try { if (a && !a.isDestroyed()) a.resetColumnState() } catch { /* tabla ya cerrada */ } } }}>Restablecer columnas</Button></Tooltip>
         <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>La casilla del NIT elige todo el proveedor; la del SKU, un ítem. Puedes combinar ambas.</Typography>
         <Tooltip title={gestiona ? 'Revisa por proveedor lo que vas a montar: cantidades, valores y alertas' : 'Tu perfil no tiene permiso para enviar órdenes de compra'} placement="top" disableInteractive>
-          <span><Button variant="contained" size="small" startIcon={<SendIcon />} disabled={!elegidas.length || !gestiona} onClick={() => setOcAbierta(true)}>Revisar y enviar OC</Button></span></Tooltip>
+          <span><Button variant="contained" size="small" startIcon={<SendIcon />} disabled={!elegidas.length || !gestiona} onClick={() => { refrescarCorreos(); setOcAbierta(true) }}>Revisar y enviar OC</Button></span></Tooltip>
         <Button size="small" onClick={() => { setHistAbierta(true); cargarHist() }}>OC enviadas a Siesa</Button>
       </Paper>
       <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ minHeight: 36, '& .MuiTab-root': { minHeight: 36, textTransform: 'none' } }}>
@@ -470,7 +518,16 @@ export default function Necesidades() {
                       <Tooltip title="Cambiar el proveedor de esta OC (razón social, NIT y correos) antes de enviarla"><span><Button size="small" startIcon={<SwapHoriz />} sx={{ ml: 0.5 }} disabled={ocEnviando}
                         onClick={() => { const o = r.origenes[0]; setProvEd({ k: o, empresa: r.empresa, origen: [...(r.cambiado ? r.antes : [r.proveedor_nombre])].join(', ') }); setProvQ(''); setProvOpc([]); const cur = cambioProv[o]; elegirProvDestino(cur ?? null); if (cur) setProvCorreo({ para: cur.email_para ?? '', cc: cur.email_cc ?? '' }) }}>Cambiar</Button></span></Tooltip>
                     </TableCell>
-                    <TableCell sx={{ maxWidth: 220, wordBreak: 'break-word', color: (r.email_para ?? '').trim() ? 'inherit' : '#c62828' }}>{(r.email_para ?? '').trim() || 'Falta'}</TableCell>
+                    <TableCell sx={{ minWidth: 230 }}>
+                      <TextField size="small" variant="standard" fullWidth multiline maxRows={3} disabled={ocEnviando || !gestiona} placeholder="correo1@x.com; correo2@x.com"
+                        value={correoTxt[kProv(r)] ?? (r.email_para ?? '')}
+                        error={!!correoMsg[kProv(r)] && !correoMsg[kProv(r)].startsWith('Guardado')}
+                        helperText={correoMsg[kProv(r)] || ((r.email_para ?? '').trim() ? 'Varios correos separados por ;' : 'Falta el correo: escríbelo (se guarda en el maestro de proveedores)')}
+                        FormHelperTextProps={{ sx: { color: correoMsg[kProv(r)]?.startsWith('Guardado') ? '#2e7d32' : undefined } }}
+                        onChange={e => { const v = e.target.value; setCorreoTxt(t => ({ ...t, [kProv(r)]: v })); setCorreoMsg(({ [kProv(r)]: _x, ...rest }) => rest) }}
+                        onBlur={() => guardarCorreoOC(r)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); (e.target as HTMLElement).blur() } }}
+                        sx={{ '& .MuiInputBase-input': { fontSize: 13, color: (r.email_para ?? '').trim() || correoTxt[kProv(r)] ? 'inherit' : '#c62828' } }} />
+                    </TableCell>
                     <TableCell sx={{ fontWeight: 600, color: r.cond_pago ? 'inherit' : '#c62828' }}>{r.cond_pago || 'Falta'}</TableCell>
                     <TableCell align="right">{r.items}</TableCell><TableCell align="right">{Math.round(r.unidades).toLocaleString('es-CO')}</TableCell>
                     <TableCell align="right">{COP({ value: r.valor })}</TableCell><TableCell align="right">{COP({ value: r.iva })}</TableCell><TableCell align="right" sx={{ fontWeight: 700 }}>{COP({ value: r.total })}</TableCell>
