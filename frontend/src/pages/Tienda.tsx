@@ -47,7 +47,7 @@ function BufferModelo({ b, inv, costo }: { b: { tor: number; toy: number; tog: n
 
 export default function Tienda() {
   const { lista: emp } = useEmpresa()
-  const [opc, setOpc] = useState<any>({ tiendas: [], laboratorios: [] })
+  const [opc, setOpc] = useState<any>({ tiendas: [], laboratorios: [], ejecucion: null })
   const [bodega, setBodega] = useState<string>(() => { try { return localStorage.getItem('tienda_sel') || '' } catch { return '' } })
   const [labs, setLabs] = useState<string[]>([])
   const [desde, setDesde] = useState(mesAtras(11)); const [hasta, setHasta] = useState(mesActual())
@@ -72,6 +72,8 @@ export default function Tienda() {
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, pb: 3 }}>
       <Calculando activo={cargando} texto="Armando la vista de la tienda" />
+      {opc.ejecucion && <Typography variant="caption" color="text.secondary" sx={{ mb: -1 }}>
+        Info actualizada: {String(opc.ejecucion.fin ?? opc.ejecucion.fecha_calculo).replace('T', ' ').slice(0, 16)} · corte del motor {String(opc.ejecucion.fecha_calculo).slice(0, 10)}</Typography>}
       <Typography variant="h6" sx={{ fontWeight: 700 }}>Tienda · ventas, margen, inventario y buffer{tiendaSel ? ` · ${tiendaSel.bodega_id} ${tiendaSel.nombre ?? ''}` : ''}</Typography>
       <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
         <Autocomplete size="small" sx={{ minWidth: 280, flex: '2 1 280px' }} options={tiendas} value={tiendaSel} onChange={(_, v) => elegir(v)}
