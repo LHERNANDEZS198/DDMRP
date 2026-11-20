@@ -1,6 +1,7 @@
 """Vista por tienda: ventas (unidades, pesos, margen), inventario, GMROI y rotacion mes a mes, zonas del buffer por dia, comparativo (mismo periodo del anio anterior y
 promedio de las tiendas de su clase) y pareto de items y laboratorios. Las ventas estan por mes (ventas_mensual); el inventario y las zonas tienen historia diaria."""
 import logging
+import traceback
 import re
 from datetime import date
 from fastapi import APIRouter, Depends, HTTPException
@@ -52,7 +53,8 @@ def vista(bodega: str, empresa: str, desde: str, hasta: str, labs: str | None = 
         raise
     except Exception as e:      # que la pantalla muestre la causa en vez de un "Internal Server Error" mudo
         log.exception("tienda")
-        raise HTTPException(500, f"Vista por tienda: {type(e).__name__}: {str(e).strip()[:600]}")
+        fr = traceback.extract_tb(e.__traceback__)[-1]
+        raise HTTPException(500, f"Vista por tienda: {type(e).__name__}: {str(e).strip()[:400]} (tienda.py linea {fr.lineno}: {(fr.line or '').strip()[:200]})")
 
 
 def _vista(bodega, empresa, desde, hasta, labs, comparar, user):
@@ -117,7 +119,7 @@ def _vista(bodega, empresa, desde, hasta, labs, comparar, user):
         # --- pareto de items y de laboratorios en el periodo
         items = [dict(r) for r in c.execute(text(f"""
             SELECT a.producto_id, max(mi.descripcion) AS descripcion, max(COALESCE(mi.categoria, '')) AS laboratorio, sum(a.cantidad)::float8 AS unidades, sum(a.valor)::float8 AS venta,
-                   (sum(a.valor) FILTER (WHERE ci.costo IS NOT NULL) - COALESCE(sum(a.cantidad * ci.costo), 0))::float8 AS margen
+                   (COALESCE(sum(a.valor) FILTER (WHERE ci.costo IS NOT NULL), 0) - COALESCE(sum(a.cantidad * ci.costo), 0))::float8 AS margen
             {ventas_from} WHERE {base} AND a.mes = ANY(:ms) GROUP BY a.producto_id HAVING sum(a.valor) <> 0 OR sum(a.cantidad) <> 0"""), p).mappings()]
         nombres = {k: v for k, v in c.execute(text("SELECT codigo, nombre FROM ddmrp.laboratorio"))}
         # --- hoy: inventario a costo y zonas (ultima corrida del motor)
@@ -164,7 +166,7 @@ def _vista(bodega, empresa, desde, hasta, labs, comparar, user):
         g["margen_pct"] = 100.0 * g["margen"] / g["venta"] if g["venta"] else None
         g["rot_promedio"] = g["unidades"] / len(meses)
     for it in items:
-        it["margen_pct"] = 100.0 * it["margen"] / it["venta"] if it["venta"] else None
+        it["margen_pct"] = 100.0 * (it["margen"] or 0.0) / it["venta"] if it["venta"] else None
         it["rot_promedio"] = (it["unidades"] or 0.0) / len(meses)      # unidades por mes en promedio durante el periodo
     dias_periodo = max(1, (f_fin - f_ini).days)
     inv_hoy_u = hoy[6]
