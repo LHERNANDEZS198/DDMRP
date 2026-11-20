@@ -37,6 +37,7 @@ export const VISTAS = [
   { grupo: 'Compras', to: '/compras/reportes/proveedor', label: 'Proveedor / PT', ayuda: 'Compras vs ventas, rentabilidad y cumplimiento (OTIF) por mes', req: ['ver_control_compras'] },
   { grupo: 'Análisis', to: '/dashboard', label: 'Alertas', ayuda: 'Zona roja y lo que hay que atender', req: ['ver_alertas'] },
   { grupo: 'Análisis', to: '/salud-inventario', label: 'Salud del inventario', ayuda: 'Zona de hoy × importancia del item: qué atender primero', req: ['ver_control'] },
+  { grupo: 'Análisis', to: '/tienda', label: 'Por tienda', ayuda: 'Ventas, margen, inventario, GMROI y buffer de una tienda', req: ['ver_control'] },
   { grupo: 'Análisis', to: '/clasificacion', label: 'Clasificación ABC', ayuda: 'ABC por margen × XYZ por variabilidad, con filtros', req: ['ver_control'] },
   { grupo: 'Análisis', to: '/lanzamientos', label: 'Lanzamientos', ayuda: 'Items nuevos y reingresos al CEDI', req: ['ver_control'] },
 ] as { grupo: string; to: string; label: string; ayuda: string; req: string[]; compras?: boolean; cedi?: boolean }[]
