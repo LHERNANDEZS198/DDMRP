@@ -39,6 +39,9 @@ MAESTROS = {
     "cedis": dict(
         label="CEDIs: bodegas desde donde se abastece a las tiendas", tabla="ddmrp.maestro_cedi",
         llave=["empresa", "bodega_id"], editable={"descripcion": "txt"}, bodega=None, producto=None, global_=True, empresa_obligatoria=True),
+    "origen-categoria": dict(
+        label="Origen por categoría: items de un criterio de Siesa (ej. 001:0008 suministros) que se abastecen desde otra bodega (SM003 / SM001)", tabla="ddmrp.maestro_origen_categoria",
+        llave=["empresa", "plan_id", "criterio_id"], editable={"bodega_id": "txt", "descripcion": "txt"}, bodega=None, producto=None, global_=True, empresa_obligatoria=True),
     "control-referencias": dict(
         label="Cotas maxima / minima por bodega y referencia", tabla="ddmrp.abast_control_referencias",
         llave=["empresa", "bodega_id", "producto_id"], editable={"cota_maxima": "num", "cota_minima": "num"},
@@ -154,7 +157,9 @@ AYUDA = {
                 "CEDI que la abastece (código de bodega del maestro CEDIs, ej. PT001) y centro de operación para el archivo plano de Siesa (si lo dejas vacío, el ETL lo completa desde Siesa y si no hay, se deduce con la regla del ejemplo). "
                 "El lead time × la venta diaria da la zona amarilla y la frecuencia × la venta diaria da la verde; además el lead time define el factor de la zona roja (maestro Factores). "
                 "Una tienda que no esté aquí no entra al cálculo del motor.",
-    "control-referencias": "Cota máxima y mínima por tienda y referencia, como fracción o % (20% = 0.2). Ajustan los topes: TOY ajustado = TOG × cota máx + TOR + ZA, "
+    "origen-categoria": "Categorías de items (plan y criterio de Siesa, ej. plan 001 criterio 0008 SUMINISTROS y 0009 PUBLICIDAD) que se abastecen desde una bodega distinta al CEDI (ej. SM003 en Funat, SM001 en Stores). "
+                        "Esos items entran al maestro de items (se suman a SIESA_CRITERIOS_ITEMS, que queda como respaldo) y su inventario a repartir se lee de esa bodega en lugar del CEDI. Aplica desde el próximo ETL / corrida del motor.",
+        "control-referencias": "Cota máxima y mínima por tienda y referencia, como fracción o % (20% = 0.2). Ajustan los topes: TOY ajustado = TOG × cota máx + TOR + ZA, "
                            "TOG ajustado = TOY ajustado + ZV + TOG × cota mín. Con cotas en 0 los topes ajustados quedan iguales a los calculados. No se usan cuando la venta diaria es baja (ADU entre 1 y 4) y no hay promoción.",
     "vectorizacion": "Unidades extra que se suman a lo sugerido de esa tienda y referencia, p. ej. producto nuevo o campaña. Solo cuenta si la regla 'Sumar vectorización' está en Sí. "
                      "Escribir NxP condena el item en esa tienda (pasa al maestro Condenados).",

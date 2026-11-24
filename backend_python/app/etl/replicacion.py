@@ -306,11 +306,38 @@ def _col_estado() -> str:
     return col
 
 
+_CRIT_CACHE: dict = {"t": 0.0, "v": []}
+
+
+def _origen_categorias() -> list[tuple]:
+    """(empresa, plan, criterio, bodega) del maestro «Origen por categoria» (editable en Maestros). Si la tabla no existe o falla, lista vacia."""
+    import time
+    if time.time() - _CRIT_CACHE["t"] < 30:
+        return _CRIT_CACHE["v"]
+    try:
+        with pg.connect() as c:
+            v = [tuple(r) for r in c.execute(text("SELECT empresa, plan_id, criterio_id, bodega_id FROM ddmrp.maestro_origen_categoria WHERE COALESCE(bodega_id, '') <> ''"))]
+    except Exception as e:
+        log.warning("Origen por categoria no leido: %s", e); v = []
+    _CRIT_CACHE.update(t=time.time(), v=v)
+    return v
+
+
+def _criterios_items() -> list[tuple]:
+    """Pares (plan, criterio) que arman el maestro de items: SIESA_CRITERIOS_ITEMS (respaldo) + los del maestro «Origen por categoria»."""
+    pares = [tuple(x.strip().split(":", 1)) for x in settings.siesa_criterios_items.split(",") if ":" in x]
+    for _e, pl, cr, _b in _origen_categorias():
+        if (pl, cr) not in pares:
+            pares.append((pl, cr))
+    return pares
+
+
+
 def _cond_criterios(i: str) -> str:
     """Condicion de ITEM DEL MAESTRO sobre el alias `i` (t120): tiene alguno de los criterios de SIESA_CRITERIOS_ITEMS ("plan:criterio", los mismos
     con que se arma maestro_item) o es un REC (se suma a su original). Asi lo que no es del maestro (materia prima...) ni se trae de Siesa.
     Sin criterios configurados no filtra."""
-    pares = [tuple(x.strip().split(":", 1)) for x in settings.siesa_criterios_items.split(",") if ":" in x]
+    pares = _criterios_items()
     for plan, crit in pares:
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", plan) or not re.fullmatch(r"[A-Za-z0-9_.-]+", crit):
             raise ValueError(f"SIESA_CRITERIOS_ITEMS invalido: {plan}:{crit}")
@@ -783,7 +810,7 @@ def _items_de_siesa(cur, eng, primera: bool = True, empresa: str | None = None) 
     items = [x[:2] for x in items_all]
     labs = list(_stream(eng, SQL_LAB, {**prm, "plan": settings.siesa_plan_laboratorio}))
     crit = list(_stream(eng, SQL_ITEM_CRITERIOS, prm))
-    permitidos = {tuple(x.strip().split(":", 1)) for x in settings.siesa_criterios_items.split(",") if ":" in x}
+    permitidos = set(_criterios_items())
     if permitidos:   # el filtro elige ITEMS (los que tienen alguno de esos criterios); de cada uno se traen todos sus criterios
         validos = {c[0] for c in crit if (c[1], c[2]) in permitidos}
         crit = [c for c in crit if c[0] in validos]
@@ -912,7 +939,17 @@ def _cedi_de_siesa(cur, solo_emp: str | None = None) -> dict:
                 fisica = list(_stream(eng, _con_estado(sql_inv, False), {**prm_u, "resta": 0}, expanding="bodegas"))
             except Exception as e:
                 log.warning("Existencia fisica del CEDI %s no leida (lanzamientos omitidos): %s", emp, e); fisica = None
-            leidos[emp] = (bod, eng, filas, fisica, filtrar)
+            extra_origen = []     # inventario de las bodegas de «Origen por categoria» (ej. SM003): solo los items de esas categorias
+            for bod2 in sorted({b for e_, _pl, _cr, b in _origen_categorias() if e_ == emp and b != bod}):
+                try:
+                    cur.execute("SELECT DISTINCT producto_id FROM ddmrp.item_criterio ic WHERE ic.empresa = %s AND (ic.plan_id, ic.criterio_id) IN "
+                                "(SELECT plan_id, criterio_id FROM ddmrp.maestro_origen_categoria WHERE empresa = %s AND bodega_id = %s)", (emp, emp, bod2))
+                    items2 = {r[0] for r in cur.fetchall()}
+                    f2 = [r for r in _stream(eng, _con_estado(SQL_INVENTARIO, filtrar), {"cia": settings.siesa_cia, "bodegas": [bod2], "resta": 1, "resta_sa": 0}, expanding="bodegas") if r[0] in items2]
+                    extra_origen.append((bod2, f2, len(items2)))
+                except Exception as e:
+                    log.warning("Inventario de la bodega de origen %s (empresa %s) no leido: %s", bod2, emp, e); errores[f"{emp}:{bod2}"] = str(e)[:200]
+            leidos[emp] = (bod, eng, filas, fisica, filtrar, extra_origen)
         except Exception as e:
             if emp == "05":
                 raise
@@ -923,7 +960,7 @@ def _cedi_de_siesa(cur, solo_emp: str | None = None) -> dict:
         rec.setdefault(e_, {})[r_] = o_
     out: dict = {}
     lanz: dict = {}
-    for emp, (bod, eng, filas, fisica, filtrar) in leidos.items():
+    for emp, (bod, eng, filas, fisica, filtrar, extra_origen) in leidos.items():
         costos = _costos(cur, eng, [bod], emp, pisar=True, filtrar=filtrar)   # el costo del CEDI de cada empresa manda sobre lo suyo
         cur.execute("DELETE FROM ddmrp.inventario_cedi WHERE empresa = %s", (emp,))
         mapa = rec.get(emp, {})
@@ -933,7 +970,17 @@ def _cedi_de_siesa(cur, solo_emp: str | None = None) -> dict:
             d[1] += float(disp or 0)
         for prod, (fecha, disp) in datos.items():
             cur.execute("INSERT INTO ddmrp.inventario_cedi (empresa, producto_id, disponible, fecha_corte) VALUES (%s, %s, %s, %s)", (emp, prod, max(disp, 0.0), fecha))
-        out[emp] = {"bodega": bod, "productos": len(datos), "con_stock": sum(1 for d in datos.values() if d[1] > 0), "costos": costos, "rec_sumados": len(mapa)}
+        origen = {}
+        for bod2, f2, n_items in extra_origen:   # el stock de esos items sale de SU bodega (manda sobre lo que tuvieran en el CEDI)
+            d2: dict = {}
+            for prod, _b, fecha, disp in f2:
+                d = d2.setdefault(mapa.get(prod, prod), [fecha, 0.0]); d[1] += float(disp or 0)
+            for prod, (fecha, disp) in d2.items():
+                cur.execute("INSERT INTO ddmrp.inventario_cedi (empresa, producto_id, disponible, fecha_corte) VALUES (%s, %s, %s, %s) "
+                            "ON CONFLICT (empresa, producto_id) DO UPDATE SET disponible = EXCLUDED.disponible, fecha_corte = EXCLUDED.fecha_corte", (emp, prod, max(disp, 0.0), fecha))
+            origen[bod2] = {"items_categoria": n_items, "con_existencia": len(d2), "con_stock": sum(1 for d in d2.values() if d[1] > 0), "costos": _costos(cur, eng, [bod2], emp, pisar=False)}
+        out_origen = origen
+        out[emp] = {"bodega": bod, "productos": len(datos), "con_stock": sum(1 for d in datos.values() if d[1] > 0), "costos": costos, "rec_sumados": len(mapa), "bodegas_origen": out_origen}
         if fisica is not None:
             exist: dict[str, float] = {}
             for prod, _b, fecha, disp in fisica:

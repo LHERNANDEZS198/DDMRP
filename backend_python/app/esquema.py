@@ -74,6 +74,11 @@ SENTENCIAS = [
     "ALTER TABLE ddmrp.abast_bitacora ADD COLUMN IF NOT EXISTS cedi TEXT",
     "ALTER TABLE ddmrp.abast_bitacora ADD COLUMN IF NOT EXISTS id_co TEXT",
     "CREATE TABLE IF NOT EXISTS ddmrp.maestro_cedi (empresa TEXT NOT NULL, bodega_id TEXT NOT NULL, descripcion TEXT, PRIMARY KEY (empresa, bodega_id))",
+    # Origen por categoria: items con ese criterio de Siesa (plan:criterio) entran al maestro y su stock a repartir sale de OTRA bodega (ej. suministros: SM003 en Funat, SM001 en Stores)
+    "CREATE TABLE IF NOT EXISTS ddmrp.maestro_origen_categoria (empresa TEXT NOT NULL, plan_id TEXT NOT NULL, criterio_id TEXT NOT NULL, bodega_id TEXT NOT NULL, descripcion TEXT, PRIMARY KEY (empresa, plan_id, criterio_id))",
+    """INSERT INTO ddmrp.maestro_origen_categoria (empresa, plan_id, criterio_id, bodega_id, descripcion) VALUES
+         ('05','001','0008','SM003','SUMINISTROS'), ('05','001','0009','SM003','PUBLICIDAD'),
+         ('21','001','0008','SM001','SUMINISTROS'), ('21','001','0009','SM001','PUBLICIDAD') ON CONFLICT DO NOTHING""",
     # centro de operacion por (empresa, bodega): un mismo codigo de bodega (ej. MBG01 de Melonn) existe en Funat y en Stores con CO distinto
     "ALTER TABLE ddmrp.bodega_centro_operacion ADD COLUMN IF NOT EXISTS empresa TEXT",
     """UPDATE ddmrp.bodega_centro_operacion co SET empresa = COALESCE(
