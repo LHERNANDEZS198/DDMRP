@@ -40,7 +40,7 @@ const META: Record<string, [string, ReactElement]> = {   // clave -> [sección, 
   'control-referencias': ['Buffer y reglas de reposición', <Height />], 'factores': ['Buffer y reglas de reposición', <Tune />], 'parametros': ['Buffer y reglas de reposición', <Functions />],
   'reposicion-laboratorio': ['Buffer y reglas de reposición', <Science />], 'reposicion-item': ['Buffer y reglas de reposición', <Inventory2 />],
   'reserva-cedi': ['Buffer y reglas de reposición', <Lock />], 'unidad-despacho': ['Buffer y reglas de reposición', <ViewInAr />],
-  'items': ['Ítems y exclusiones', <Category />], 'items-rec': ['Ítems y exclusiones', <Link />], 'criterios-filtros': ['Ítems y exclusiones', <FilterAlt />],
+  'items': ['Ítems y exclusiones', <Category />], 'items-suministros': ['Ítems y exclusiones', <Category />], 'items-rec': ['Ítems y exclusiones', <Link />], 'criterios-filtros': ['Ítems y exclusiones', <FilterAlt />],
   'condenados': ['Ítems y exclusiones', <Block />], 'laboratorio-sin-envio': ['Ítems y exclusiones', <Block />],
 }
 const sinTilde = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()

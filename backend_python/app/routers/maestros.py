@@ -146,7 +146,10 @@ MAESTROS = {
 }
 
 
-SIN_VACIAR = {"items", "factores", "parametros", "items-compras"}   # se llenan desde Siesa o son del modelo: no se vacian desde la pantalla
+# Items de suministros (categorias de «Origen por categoria»): la misma tabla y pantalla que «items», filtrada a esos items y con su bodega de origen y su stock
+MAESTROS["items-suministros"] = {**MAESTROS["items"], "label": "Items de suministros y publicidad: los de las categorías de «Origen por categoría» (bodega SM003 / SM001)"}
+
+SIN_VACIAR = {"items", "items-suministros", "factores", "parametros", "items-compras"}   # se llenan desde Siesa o son del modelo: no se vacian desde la pantalla
 OPS = {"eq": "=", "ne": "<>", "gt": ">", "lt": "<", "ge": ">=", "le": "<="}
 
 AYUDA = {
@@ -319,10 +322,10 @@ def listar_maestros(user=Depends(requiere("ver_maestros", "cargar_maestros", "ve
              "solo_existentes": bool(v.get("solo_existentes")), "lectura": [{"k": a, "t": b} for a, b in v.get("lectura", [])],
              "ayuda": AYUDA.get(k, ""),
              "puede_vaciar": not v.get("sin_reemplazo") and k not in SIN_VACIAR,
-             "filtros": {"tienda": bool(v.get("bodega")), "item": bool(v.get("producto")) or k == "items",
-                         "lab": bool(v.get("producto")) or k in ("items", "reposicion-laboratorio", "laboratorio-sin-envio"), "texto": True,
-                         "empresa": k == "items",                                   # items: la empresa es obligatoria (cada base tiene su catalogo)
-                         "empresa_opc": k != "items" and "empresa" in v["llave"],   # los demas: opcional (vacio = las dos)
+             "filtros": {"tienda": bool(v.get("bodega")), "item": bool(v.get("producto")) or k in ("items", "items-suministros"),
+                         "lab": bool(v.get("producto")) or k in ("items", "items-suministros", "reposicion-laboratorio", "laboratorio-sin-envio"), "texto": True,
+                         "empresa": k in ("items", "items-suministros"),                                   # items: la empresa es obligatoria (cada base tiene su catalogo)
+                         "empresa_opc": k not in ("items", "items-suministros") and "empresa" in v["llave"],   # los demas: opcional (vacio = las dos)
                          "mes": k == "ventas-mensual"}}
             for k, v in MAESTROS.items() if not v.get("oculto") and mios.intersection(PERM_GRUPO[_grupo(v)][0])]
 
@@ -418,6 +421,9 @@ def leer(nombre: str, response: Response, bodega_id: str | None = None, producto
          categoria: str | None = None, abastecimiento: str | None = None,
          user=Depends(requiere("ver_maestros", "cargar_maestros", "ver_compras", "cargar_maestros_compras"))):
     d = _def_para(nombre, user, False)
+    sumi = nombre == "items-suministros"
+    if sumi:
+        nombre = "items"   # misma logica que items (costo, estado, columnas por plan); abajo se limita a las categorias de origen
     cols = d["llave"] + [c for c in d["editable"] if c not in d["llave"]]
     sel = ", ".join(f"t.{c}" for c in cols)
     join, w, p = "", "TRUE", {}
@@ -446,6 +452,13 @@ def leer(nombre: str, response: Response, bodega_id: str | None = None, producto
     if nombre == "items":   # costo promedio por instalacion (lo trae el ETL) y estado en Siesa: solo lectura
         join += " LEFT JOIN ddmrp.costo_item ci ON ci.empresa = t.empresa AND ci.producto_id = t.producto_id"
         sel += ", ci.costo::float8 AS costo, " + "(SELECT CASE ix2.estado WHEN 1 THEN \'Activo\' WHEN 0 THEN \'Inactivo\' WHEN 2 THEN \'Bloqueado\' END FROM ddmrp.item_estado ix2 WHERE ix2.empresa = t.empresa AND ix2.producto_id = t.producto_id) AS estado"
+    if nombre == "items":   # bodega de donde se abastece (maestro «Origen por categoria») y su existencia disponible
+        sel += (", (SELECT string_agg(DISTINCT oc.bodega_id, ',') FROM ddmrp.item_criterio ic JOIN ddmrp.maestro_origen_categoria oc ON oc.empresa = ic.empresa AND oc.plan_id = ic.plan_id "
+                "AND oc.criterio_id = ic.criterio_id WHERE ic.empresa = t.empresa AND ic.producto_id = t.producto_id) AS bodega_origen"
+                ", (SELECT ci2.disponible::float8 FROM ddmrp.inventario_cedi ci2 WHERE ci2.empresa = t.empresa AND ci2.producto_id = t.producto_id) AS stock_cedi")
+    if sumi:
+        w += (" AND EXISTS (SELECT 1 FROM ddmrp.item_criterio ic3 JOIN ddmrp.maestro_origen_categoria oc3 ON oc3.empresa = ic3.empresa AND oc3.plan_id = ic3.plan_id "
+              "AND oc3.criterio_id = ic3.criterio_id WHERE ic3.empresa = t.empresa AND ic3.producto_id = t.producto_id)")
     # orden en el servidor (la pantalla solo trae un pedazo cuando el maestro es grande): solo por columnas de la tabla
     propias = set(d["llave"]) | set(d["editable"])
     primero = f"t.{orden} {'DESC' if desc else 'ASC'}, " if orden in propias else ""
