@@ -31,7 +31,7 @@ export function CampanaSolicitudes() {
 type Objetivo = { empresa: string; laboratorio?: string; producto_id?: string; bodega_id?: string; texto: string; nombre?: string; nombre2?: string }
 
 /** Botón «Solicitar cambio» de los informes: pide agregar o quitar NxP / compras de lo que está marcado en la tabla (o del laboratorio filtrado). */
-export function BotonSolicitar({ filas, empresas, labsFiltro = [], labNombres = {}, nivelInicial }: { filas: any[]; empresas: string[]; labsFiltro?: string[]; labNombres?: Record<string, string>; nivelInicial?: 'laboratorio' | 'item' | 'tienda_item' }) {
+export function BotonSolicitar({ filas, empresas, labsFiltro = [], labNombres = {}, nivelInicial, exigirTienda = false, tiendasFiltradas = 0, hayFiltroTienda = false }: { filas: any[]; empresas: string[]; labsFiltro?: string[]; labNombres?: Record<string, string>; nivelInicial?: 'laboratorio' | 'item' | 'tienda_item'; exigirTienda?: boolean; tiendasFiltradas?: number; hayFiltroTienda?: boolean }) {
   const { puede } = useYo()
   const [abierto, setAbierto] = useState(false)
   const [tipo, setTipo] = useState<'nxp' | 'compras'>('nxp')
@@ -64,6 +64,14 @@ export function BotonSolicitar({ filas, empresas, labsFiltro = [], labNombres = 
     } catch (e: any) { setErr(e.message || 'No se pudo enviar') } finally { setEnviando(false) }
   }
   const tiendaEnMotivo = nivel !== 'tienda_item' && tipo === 'nxp' ? (motivo.toUpperCase().match(/\b[A-Z]{2,3}\d{3}\b/) ?? [])[0] : undefined
+  // Desde la vista Tienda × Item, agregar a NxP solo se permite por tienda-item y con una o más tiendas filtradas: evita pedir por error un NxP general (todas las tiendas)
+  // Con tiendas filtradas en la pantalla, un NxP por Item o Laboratorio igual aplica a TODAS las tiendas: se obliga a pedirlo por tienda-item
+  const bloqueo = hayFiltroTienda && tipo === 'nxp' && accion === 'agregar' && nivel !== 'tienda_item'
+    ? 'Tienes tiendas filtradas, pero a nivel Item o Laboratorio el NxP aplica a TODAS las tiendas. Para pedirlo solo en las tiendas filtradas cambia a «Tienda-item» (o a «Por tienda × item» en el selector de la pantalla).'
+    : exigirTienda && tipo === 'nxp' && accion === 'agregar'
+    ? (tiendasFiltradas === 0 ? 'Para agregar a NxP desde esta vista filtra primero una o más tiendas (filtro «Tienda»), así queda claro dónde aplica.'
+      : nivel !== 'tienda_item' ? 'Desde esta vista, agregar a NxP se pide por «Tienda-item». Para pedirlo en todas las tiendas usa los niveles Item o Laboratorio de Foto actual.' : '')
+    : ''
   const nombreAccion = `${accion === 'agregar' ? 'Agregar a' : 'Quitar de'} ${tipo === 'nxp' ? 'NxP' : 'compras'}`
   return (<>
     <Tooltip title="Pide agregar o quitar NxP / compras de lo marcado en la tabla (casilla de la izquierda), por laboratorio, item o tienda-item. Otro grupo la aprueba.">
@@ -127,11 +135,12 @@ export function BotonSolicitar({ filas, empresas, labsFiltro = [], labNombres = 
         </Box>
         {tiendaEnMotivo && <Typography variant="body2" color="warning.main">Mencionas la tienda {tiendaEnMotivo} en el motivo, pero el nivel «{nivel === 'item' ? 'Item' : 'Laboratorio'}» aplica a TODAS las tiendas. Si es solo esa tienda usa «Tienda-item» (marca filas que tengan tienda).</Typography>}
         <TextField size="small" label="Motivo (opcional)" value={motivo} onChange={e => setMotivo(e.target.value)} multiline minRows={2} />
+        {bloqueo && <Typography color="error" variant="body2"><b>No se puede enviar:</b> {bloqueo}</Typography>}
         {err && <Typography color="error" variant="body2">{err}</Typography>}
       </DialogContent>
       <DialogActions>
         <Button onClick={() => setAbierto(false)}>Cancelar</Button>
-        <Button variant="contained" disabled={!objetivos.length || enviando} onClick={() => setPaso('confirmar')}>Revisar y enviar</Button>
+        <Button variant="contained" disabled={!objetivos.length || enviando || !!bloqueo} onClick={() => setPaso('confirmar')}>Revisar y enviar</Button>
       </DialogActions></>}
     </Dialog>
     <Snackbar open={!!msg} autoHideDuration={5000} onClose={() => setMsg('')} message={msg} />
