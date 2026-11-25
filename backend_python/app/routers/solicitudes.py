@@ -64,8 +64,19 @@ def crear(b: Nueva, user=Depends(requiere("solicitar_cambios"))):
                           "p": it.producto_id if it.nivel != "laboratorio" else None,
                           "b": it.bodega_id if it.nivel == "tienda_item" else None})
     nuevas = repetidas = 0
+    ya_nxp: list[str] = []
     with pg.begin() as c:
         for f in filas:
+            if f["t"] == "nxp" and f["a"] == "agregar":   # lo que ya esta en NxP no se vuelve a pedir: solo se puede pedir quitarlo
+                if f["n"] == "laboratorio":
+                    esta = c.execute(text("SELECT 1 FROM ddmrp.laboratorio_sin_envio WHERE empresa = :e AND laboratorio = :l"), f).first()
+                elif f["n"] == "item":
+                    esta = c.execute(text("SELECT 1 FROM ddmrp.item_condenado WHERE empresa = :e AND producto_id = :p AND bodega_id = '*'"), f).first()
+                else:   # tienda-item: ya condenado en esa tienda o en todas
+                    esta = c.execute(text("SELECT 1 FROM ddmrp.item_condenado WHERE empresa = :e AND producto_id = :p AND bodega_id IN (:b, '*')"), f).first()
+                if esta:
+                    ya_nxp.append(f"{f['e']}/{f['l'] or ''}{f['b'] + ' ' if f['b'] else ''}{f['p'] or ''}".strip("/ "))
+                    continue
             r = c.execute(text("""INSERT INTO ddmrp.solicitud_cambio (empresa, tipo, accion, nivel, laboratorio, producto_id, bodega_id, motivo, solicitante)
                                   SELECT :e, :t, :a, :n, :l, :p, :b, :m, :u
                                   WHERE NOT EXISTS (SELECT 1 FROM ddmrp.solicitud_cambio s WHERE s.estado = 'pendiente' AND s.empresa = :e AND s.tipo = :t AND s.accion = :a
@@ -73,7 +84,9 @@ def crear(b: Nueva, user=Depends(requiere("solicitar_cambios"))):
                                                     AND COALESCE(s.bodega_id, '') = COALESCE(:b, ''))"""),
                           {**f, "m": b.motivo.strip(), "u": user["id"]})
             nuevas += r.rowcount; repetidas += 1 - r.rowcount
-    return {"ok": True, "creadas": nuevas, "ya_pendientes": repetidas}
+    if ya_nxp and not nuevas and not repetidas:
+        raise HTTPException(400, f"Ya están en NxP ({len(ya_nxp)}): no se pueden agregar de nuevo, solicita quitarlos. Ej.: " + ", ".join(ya_nxp[:5]))
+    return {"ok": True, "creadas": nuevas, "ya_pendientes": repetidas, "ya_en_nxp": len(ya_nxp), "ejemplos_ya_en_nxp": ya_nxp[:5]}
 
 
 def _puede(user) -> tuple[bool, list[str]]:
@@ -94,8 +107,11 @@ def listar(estado: str = "pendiente", user=Depends(requiere("solicitar_cambios",
         filas = [dict(r) for r in c.execute(text(f"""
             SELECT s.id, s.empresa, s.tipo, s.accion, s.nivel, s.laboratorio, s.producto_id, s.bodega_id, s.motivo, s.estado, s.solicitante, s.fecha_solicitud,
                    s.resuelto_por, s.fecha_resuelto, s.nota_resolucion, s.aplicado, s.visto_solicitante,
-                   COALESCE(mi.descripcion, lb.nombre) AS descripcion, mb.descripcion AS bodega_nombre
+                   COALESCE(mi.descripcion, lb.nombre) AS descripcion, mb.descripcion AS bodega_nombre,
+                   COALESCE(NULLIF(us.nombre, ''), s.solicitante) AS solicitante_nombre, COALESCE(NULLIF(ur.nombre, ''), s.resuelto_por) AS resuelto_por_nombre
             FROM ddmrp.solicitud_cambio s
+            LEFT JOIN ddmrp.usuario us ON us.usuario_id = s.solicitante
+            LEFT JOIN ddmrp.usuario ur ON ur.usuario_id = s.resuelto_por
             LEFT JOIN ddmrp.maestro_item mi ON mi.empresa = s.empresa AND mi.producto_id = s.producto_id
             LEFT JOIN ddmrp.laboratorio lb ON lb.codigo = s.laboratorio
             LEFT JOIN ddmrp.maestro_bodega mb ON mb.empresa = s.empresa AND mb.bodega_id = s.bodega_id

@@ -59,10 +59,11 @@ export function BotonSolicitar({ filas, empresas, labsFiltro = [], labNombres = 
     try {
       const r: any = await api('/solicitudes', { method: 'POST', body: JSON.stringify({
         motivo, items: objetivos.map(o => ({ tipo, accion, nivel, laboratorio: o.laboratorio, producto_id: o.producto_id, bodega_id: o.bodega_id, empresa: o.empresa })) }) })
-      setMsg(`Solicitud enviada: ${r.creadas} nuevas${r.ya_pendientes ? `, ${r.ya_pendientes} ya estaban pendientes` : ''}`)
+      setMsg(`Solicitud enviada: ${r.creadas} nuevas${r.ya_pendientes ? `, ${r.ya_pendientes} ya estaban pendientes` : ''}${r.ya_en_nxp ? `, ${r.ya_en_nxp} omitidas porque ya están en NxP (para esas solicita quitar)` : ''}`)
       window.dispatchEvent(new Event('solicitudes-cambio')); setAbierto(false); setPaso('armar'); setMotivo('')
     } catch (e: any) { setErr(e.message || 'No se pudo enviar') } finally { setEnviando(false) }
   }
+  const tiendaEnMotivo = nivel !== 'tienda_item' && tipo === 'nxp' ? (motivo.toUpperCase().match(/\b[A-Z]{2,3}\d{3}\b/) ?? [])[0] : undefined
   const nombreAccion = `${accion === 'agregar' ? 'Agregar a' : 'Quitar de'} ${tipo === 'nxp' ? 'NxP' : 'compras'}`
   return (<>
     <Tooltip title="Pide agregar o quitar NxP / compras de lo marcado en la tabla (casilla de la izquierda), por laboratorio, item o tienda-item. Otro grupo la aprueba.">
@@ -77,6 +78,7 @@ export function BotonSolicitar({ filas, empresas, labsFiltro = [], labNombres = 
           <Typography variant="body2"><b>Cuántos:</b> {objetivos.length.toLocaleString('es-CO')} · empresa(s): {[...new Set(objetivos.flatMap(o => o.empresa.split(',')))].map(e => NOMBRE_EMPRESA[e] ?? e).join(', ')}</Typography>
           <Typography variant="body2"><b>Lo aprueba:</b> {tipo === 'nxp' ? 'el grupo que aprueba NxP' : 'el grupo de compras'} (al aprobarse se aplica solo)</Typography>
           <Typography variant="body2"><b>Motivo:</b> {motivo.trim() || '—'}</Typography>
+          {nivel === 'item' && tipo === 'nxp' && <Typography variant="body2" color="warning.main"><b>Ojo:</b> a nivel Item aplica a TODAS las tiendas{tiendaEnMotivo ? ` (en el motivo mencionas ${tiendaEnMotivo}: si es solo esa tienda, vuelve y elige «Tienda-item»)` : ''}.</Typography>}
           <Box sx={{ maxHeight: '50vh', overflow: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
             <Box component="table" sx={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, '& td, & th': { px: 1, py: .5, textAlign: 'left', borderBottom: '1px solid', borderColor: 'divider' }, '& th': { position: 'sticky', top: 0, bgcolor: 'background.paper', fontWeight: 700 } }}>
               <thead><tr>
@@ -123,6 +125,7 @@ export function BotonSolicitar({ filas, empresas, labsFiltro = [], labNombres = 
             {objetivos.length > 40 && <Chip size="small" variant="outlined" label={`+${objetivos.length - 40} más`} />}
           </Box> : <Typography variant="body2" color="error">No hay nada marcado para este nivel: marca filas en la tabla (casilla de la izquierda){nivel === 'tienda_item' ? ' que tengan tienda e item' : ''}.</Typography>}
         </Box>
+        {tiendaEnMotivo && <Typography variant="body2" color="warning.main">Mencionas la tienda {tiendaEnMotivo} en el motivo, pero el nivel «{nivel === 'item' ? 'Item' : 'Laboratorio'}» aplica a TODAS las tiendas. Si es solo esa tienda usa «Tienda-item» (marca filas que tengan tienda).</Typography>}
         <TextField size="small" label="Motivo (opcional)" value={motivo} onChange={e => setMotivo(e.target.value)} multiline minRows={2} />
         {err && <Typography color="error" variant="body2">{err}</Typography>}
       </DialogContent>
