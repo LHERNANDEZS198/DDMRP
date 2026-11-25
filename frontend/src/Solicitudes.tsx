@@ -31,7 +31,7 @@ export function CampanaSolicitudes() {
 type Objetivo = { empresa: string; laboratorio?: string; producto_id?: string; bodega_id?: string; texto: string; nombre?: string; nombre2?: string }
 
 /** Botón «Solicitar cambio» de los informes: pide agregar o quitar NxP / compras de lo que está marcado en la tabla (o del laboratorio filtrado). */
-export function BotonSolicitar({ filas, empresas, labsFiltro = [], labNombres = {} }: { filas: any[]; empresas: string[]; labsFiltro?: string[]; labNombres?: Record<string, string> }) {
+export function BotonSolicitar({ filas, empresas, labsFiltro = [], labNombres = {}, nivelInicial }: { filas: any[]; empresas: string[]; labsFiltro?: string[]; labNombres?: Record<string, string>; nivelInicial?: 'laboratorio' | 'item' | 'tienda_item' }) {
   const { puede } = useYo()
   const [abierto, setAbierto] = useState(false)
   const [tipo, setTipo] = useState<'nxp' | 'compras'>('nxp')
@@ -67,7 +67,7 @@ export function BotonSolicitar({ filas, empresas, labsFiltro = [], labNombres = 
   const nombreAccion = `${accion === 'agregar' ? 'Agregar a' : 'Quitar de'} ${tipo === 'nxp' ? 'NxP' : 'compras'}`
   return (<>
     <Tooltip title="Pide agregar o quitar NxP / compras de lo marcado en la tabla (casilla de la izquierda), por laboratorio, item o tienda-item. Otro grupo la aprueba.">
-      <Button size="small" variant="outlined" onClick={() => { setNivel(filas.some(r => r.bodega_id) ? 'tienda_item' : 'item'); setPaso('armar'); setAbierto(true) }}>
+      <Button size="small" variant="outlined" onClick={() => { setNivel(nivelInicial ?? (filas.some(r => r.bodega_id) ? 'tienda_item' : 'item')); setPaso('armar'); setAbierto(true) }}>
         Solicitar cambio{filas.length ? ` (${filas.length})` : ''}</Button>
     </Tooltip>
     <Dialog open={abierto} onClose={() => setAbierto(false)} maxWidth="md" fullWidth>

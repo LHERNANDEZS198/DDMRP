@@ -42,12 +42,23 @@ const conModo = (path: string) => {
   return m ? path + (path.includes('?') ? '&' : '?') + 'solo_cedi=' + m : path
 }
 
+/** Sesion deslizante: el servidor manda un token nuevo (X-Nuevo-Token) cuando el actual ya gasto la mitad de su vida; se guarda sin que el usuario note nada. */
+const renovar = (r: Response) => { const n = r.headers.get('X-Nuevo-Token'); if (n && n !== token && !enPrueba()) setToken(n) }
+/** Sesion vencida (401): se guarda el motivo para mostrarlo en la pantalla de ingreso en vez de dejar al usuario sin explicacion. */
+async function sesionVencida(r: Response) {
+  let m = 'Tu sesión venció, entra de nuevo.'
+  try { const j = JSON.parse(await r.clone().text()); if (typeof j.detail === 'string' && j.detail) m = j.detail } catch { /* sin detalle */ }
+  try { sessionStorage.setItem('aviso_sesion', m + ' (' + new Date().toLocaleTimeString('es-CO') + ')') } catch { /* sin almacenamiento */ }
+  localStorage.removeItem('token'); location.reload()
+}
+
 export async function api<T = any>(path: string, init: RequestInit = {}): Promise<T> {
   const r = await fetch('/api' + conModo(path), {
     ...init,
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(init.headers || {}) },
   })
-  if (r.status === 401) { localStorage.removeItem('token'); location.reload() }
+  if (r.status === 401) await sesionVencida(r)
+  renovar(r)
   if (!r.ok) throw new Error(await errorDe(r))
   return r.json()
 }
@@ -55,7 +66,8 @@ export async function api<T = any>(path: string, init: RequestInit = {}): Promis
 /** GET de una lista que el servidor puede recortar: devuelve las filas y el total real (cabecera X-Total-Rows). */
 export async function apiLista<T = any>(path: string): Promise<{ datos: T[]; total: number }> {
   const r = await fetch('/api' + conModo(path), { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } })
-  if (r.status === 401) { localStorage.removeItem('token'); location.reload() }
+  if (r.status === 401) await sesionVencida(r)
+  renovar(r)
   if (!r.ok) throw new Error(await errorDe(r))
   const datos = await r.json()
   return { datos, total: Number(r.headers.get('x-total-rows') ?? datos.length) }
@@ -79,7 +91,8 @@ export async function descargar(path: string, body: unknown) {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify(body),
   })
-  if (r.status === 401) { localStorage.removeItem('token'); location.reload() }
+  if (r.status === 401) await sesionVencida(r)
+  renovar(r)
   if (!r.ok) throw new Error(await errorDe(r))
   const nombre = /filename="([^"]+)"/.exec(r.headers.get('content-disposition') ?? '')?.[1] ?? 'archivo.xlsx'
   const url = URL.createObjectURL(await r.blob())
@@ -95,7 +108,8 @@ function bajarBlob(blob: Blob, nombre: string) {
 /** GET que devuelve un archivo (p.ej. el Excel de un maestro). */
 export async function bajar(path: string, nombre: string) {
   const r = await fetch('/api' + conModo(path), { headers: { Authorization: `Bearer ${token}` } })
-  if (r.status === 401) { localStorage.removeItem('token'); location.reload() }
+  if (r.status === 401) await sesionVencida(r)
+  renovar(r)
   if (!r.ok) throw new Error(await errorDe(r))
   bajarBlob(await r.blob(), nombre)
 }
@@ -105,7 +119,8 @@ export async function subir<T = any>(path: string, archivo: File): Promise<T> {
   if (archivo.size > MAX_SUBIDA_MB * 1024 * 1024) throw new Error(`${MSG_ARCHIVO_GRANDE} (el tuyo pesa ${(archivo.size / 1024 / 1024).toFixed(1)} MB)`)
   const fd = new FormData(); fd.append('archivo', archivo)
   const r = await fetch('/api' + path, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd })
-  if (r.status === 401) { localStorage.removeItem('token'); location.reload() }
+  if (r.status === 401) await sesionVencida(r)
+  renovar(r)
   if (!r.ok) throw new Error(await errorDe(r))
   return r.json()
 }

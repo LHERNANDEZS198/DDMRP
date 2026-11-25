@@ -109,6 +109,7 @@ export default function Control() {
   const [paso, setPaso] = useState(1); const [metrica, setMetrica] = useState('inventario'); const [orden, setOrden] = useState('critico')
   const [ignorarVacios, setIgnorarVacios] = useState(true)   // mapa: esconde lo que no tiene ADU ni inventario (mucho ruido)
   const [bajando, setBajando] = useState(false)
+  const [selGrp, setSelGrp] = useState<any[]>([])   // filas marcadas en los niveles Laboratorio / Item: base de «Solicitar cambio» a ese nivel
   const [selDet, setSelDet] = useState<any[]>([])   // filas marcadas en el detalle: base de «Solicitar cambio»
   const [serie, setSerie] = useState<Punto[]>([])
   const [desde, setDesde] = useState(hace(ruta.startsWith('/control/tendencia') ? 90 : ruta.startsWith('/control/mapa') ? 30 : 7)); const [hasta, setHasta] = useState(hoy())
@@ -132,6 +133,7 @@ export default function Control() {
   const [detRaw, setDet] = useState<{ m: boolean; v: { filas: any[]; total: number; truncado: boolean } } | null>(null)
   const kpi = kpiRaw && kpiRaw.m === cambiosModo ? kpiRaw.v : null
   const grupos = gruposRaw && gruposRaw.m === cambiosModo ? gruposRaw.v : []
+  useEffect(() => { setSelGrp([]) }, [nivel, gruposRaw])
   const det = detRaw && detRaw.m === cambiosModo ? detRaw.v : { filas: [], total: 0, truncado: false }
   const [cargando, setCargando] = useState(false)
   const [kpiCargando, setKpiCargando] = useState(false); const [opcCargando, setOpcCargando] = useState(true)   // los indicadores y las opciones de filtro llegan aparte de la tabla
@@ -187,7 +189,7 @@ export default function Control() {
   const hayFiltros = f.bodegas.length + f.labs.length + f.zonas.length + f.crit.length > 0 || !!f.q || !!f.dia
 
   const colsGrupo: ColDef[] = useMemo(() => [
-    { field: 'clave', headerName: NIVELES.find(n => n.k === nivel)?.label, width: 130, pinned: 'left' },
+    { field: 'clave', headerName: NIVELES.find(n => n.k === nivel)?.label, width: 130, pinned: 'left', ...(nivel === 'laboratorio' || nivel === 'item' ? { checkboxSelection: true, headerCheckboxSelection: true } : {}) },
     { field: 'nombre', headerName: 'Nombre', flex: 1, minWidth: 180 },
     { field: 'clase_tienda', headerName: 'Clase', width: 80, filter: true, hide: nivel !== 'bodega', headerTooltip: AYUDA['Clase de tienda'] },
     { field: 'n', headerName: 'Combinaciones', type: 'numericColumn', width: 130, headerTooltip: 'Pares tienda × item que tiene el motor en este grupo: cada fila de buffer que calcula' },
@@ -286,7 +288,8 @@ export default function Control() {
       {/* Indicadores del alcance actual: clic en una zona = filtrar por ella */}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         <Typography variant="h6" sx={{ fontWeight: 700, flex: 1 }}>{mapaModo ? 'Control DDMRP · mapa de calor' : tendModo ? 'Control DDMRP · tendencia en el tiempo' : cambiosModo ? 'Control DDMRP · cambios en un periodo' : 'Control DDMRP · foto actual'}</Typography>
-        {!tendModo && !mapaModo && !cambiosModo && nivel === 'detalle' && <BotonSolicitar filas={selDet} empresas={empG} labsFiltro={f.labs} labNombres={Object.fromEntries((opc.laboratorios ?? []).map((l: any) => [l.codigo, l.nombre]))} />}
+        {!tendModo && !mapaModo && !cambiosModo && (nivel === 'detalle' || nivel === 'laboratorio' || nivel === 'item') && <BotonSolicitar key={nivel} nivelInicial={nivel === 'laboratorio' ? 'laboratorio' : nivel === 'item' ? 'item' : undefined}
+          filas={nivel === 'detalle' ? selDet : selGrp.map(g => nivel === 'laboratorio' ? { laboratorio: g.clave, descripcion: g.nombre } : { producto_id: g.clave, descripcion: g.nombre })} empresas={empG} labsFiltro={f.labs} labNombres={Object.fromEntries((opc.laboratorios ?? []).map((l: any) => [l.codigo, l.nombre]))} />}
         <Tooltip title="Baja a Excel lo que ves, con los mismos filtros (sin el tope de filas de la pantalla)"><span><Button size="small" variant="outlined" disabled={bajando} onClick={excel}>{bajando ? 'Generando…' : 'Descargar Excel'}</Button></span></Tooltip>
       </Box>
       <Plegable id="control" titulo="indicadores y filtros" resumen={<>
@@ -442,7 +445,8 @@ export default function Control() {
         {nivel === 'detalle'
           ? <Tabla rowSelection={cambiosModo ? undefined : 'multiple'} suppressRowClickSelection onSelectionChanged={e => setSelDet(e.api.getSelectedRows())} memoria={'control_det' + (cambiosModo ? '_cambios' : '')} textoCargando="Calculando…" vacio="Sin resultados con estos filtros" key={'det' + cambiosModo} rowData={det.filas} columnDefs={ayudar(cambiosModo ? colsDetCambios : colsDet)} tooltipShowDelay={300} getRowStyle={(p: any) => p.data?.rit_dias != null ? { background: 'rgba(239,108,0,0.14)' } : undefined} rowBuffer={20} cargando={cargando} defaultColDef={{ resizable: true, sortable: true }} />
           : <Tabla textoCargando="Calculando…" vacio="Sin resultados con estos filtros" key={nivel + cambiosModo} rowData={grupos} columnDefs={ayudar(cambiosModo ? colsCambios : colsGrupo)} tooltipShowDelay={300} rowBuffer={20} cargando={cargando} defaultColDef={{ resizable: true, sortable: true }}
-              onRowClicked={e => e.data && entrar(String(e.data.clave))} rowStyle={{ cursor: 'pointer' }} rowHeight={40} />}
+              {...(!cambiosModo && (nivel === 'laboratorio' || nivel === 'item') ? { rowSelection: 'multiple' as const, suppressRowClickSelection: true, onSelectionChanged: (e: any) => setSelGrp(e.api.getSelectedRows()) } : {})}
+              onRowClicked={e => { if ((e.event?.target as HTMLElement | null)?.closest?.('.ag-selection-checkbox, .ag-header-select-all')) return; e.data && entrar(String(e.data.clave)) }} rowStyle={{ cursor: 'pointer' }} rowHeight={40} />}
       </Box>}
     </Box>)
 }

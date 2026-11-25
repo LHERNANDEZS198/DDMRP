@@ -9,6 +9,7 @@ import { VERDE } from './theme'
 
 export default function Login({ onOk }: { onOk: () => void }) {
   const [u, setU] = useState(''); const [p, setP] = useState(''); const [ver, setVer] = useState(false)
+  const [aviso] = useState(() => { try { const m = sessionStorage.getItem('aviso_sesion') || ''; sessionStorage.removeItem('aviso_sesion'); return m } catch { return '' } })
   const [err, setErr] = useState(''); const [cargando, setCargando] = useState(false)
   const enviar = async (e: React.FormEvent) => {
     e.preventDefault(); setErr(''); setCargando(true)
@@ -25,6 +26,7 @@ export default function Login({ onOk }: { onOk: () => void }) {
             <Box sx={{ fontSize: 20, fontWeight: 700 }}>Abastecimiento DDMRP</Box>
             <Box sx={{ color: 'text.secondary', fontSize: 14 }}>Inicia sesión para continuar</Box>
           </Box>
+          {aviso && !err && <Alert severity="warning">{aviso}</Alert>}
           {err && <Alert severity="error">{err}</Alert>}
           <TextField label="Usuario" value={u} onChange={e => setU(e.target.value)} autoFocus fullWidth size="small"
             slotProps={{ input: { startAdornment: <InputAdornment position="start"><PersonOutline fontSize="small" /></InputAdornment> } }} />

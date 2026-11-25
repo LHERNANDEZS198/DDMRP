@@ -68,6 +68,24 @@ async def _registrar_consulta(request: Request, call_next):
     return resp
 
 
+@app.middleware("http")
+async def _renovar_sesion(request: Request, call_next):
+    """Sesion deslizante: al usar la app con la mitad de la vida del token ya gastada, se manda uno nuevo en X-Nuevo-Token (el front lo guarda). Asi la sesion solo vence
+    tras JWT_EXPIRE_MINUTES SIN actividad y no a las horas fijas de haber entrado. Los tokens temporales de «ver como perfil» no se renuevan."""
+    resp = await call_next(request)
+    try:
+        ruta = request.url.path
+        if resp.status_code < 400 and ruta.startswith("/api") and not ruta.endswith("/auth/login"):
+            tok = request.headers.get("authorization", "").split(" ", 1)[-1]
+            p = jwt.decode(tok, settings.jwt_secret, algorithms=["HS256"]) if tok else None
+            if p and not str(p["sub"]).startswith("prueba:") and p["exp"] - time.time() < settings.jwt_expire_minutes * 30:
+                from .security import crear_token
+                resp.headers["X-Nuevo-Token"] = crear_token({"id": p["sub"], "nombre": p["nombre"]})
+    except Exception:       # noqa: BLE001  token invalido o vencido: lo dice usuario_actual, aqui no se hace nada
+        pass
+    return resp
+
+
 for r in (auth, alertas, maestros, despacho, admin, reglas, control, usuarios, log, auditoria, lanzamientos, clasificacion, salud, vistas, diagnostico, compras, tablero, cumplimiento, oc, bpm_oc, apertura, reportes_compras, solicitudes, tienda):
     app.include_router(r.router, prefix="/api")
 
