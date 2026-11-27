@@ -67,16 +67,19 @@ export function BotonSolicitar({ filas, empresas, labsFiltro = [], labNombres = 
   // Desde la vista Tienda × Item, agregar a NxP solo se permite por tienda-item y con una o más tiendas filtradas: evita pedir por error un NxP general (todas las tiendas)
   // Con tiendas filtradas en la pantalla, un NxP por Item o Laboratorio igual aplica a TODAS las tiendas: se obliga a pedirlo por tienda-item
   const bloqueo = hayFiltroTienda && tipo === 'nxp' && accion === 'agregar' && nivel !== 'tienda_item'
-    ? 'Tienes tiendas filtradas, pero a nivel Item o Laboratorio el NxP aplica a TODAS las tiendas. Para pedirlo solo en las tiendas filtradas cambia a «Tienda-item» (o a «Por tienda × item» en el selector de la pantalla).'
+    ? 'Tienes tiendas filtradas, pero a nivel Item o Laboratorio el NxP aplica a TODAS las tiendas. Para pedirlo solo en las tiendas filtradas cambia a «Por tienda × item» en el selector del filtro "Clasificar".'
     : exigirTienda && tipo === 'nxp' && accion === 'agregar'
     ? (tiendasFiltradas === 0 ? 'Para agregar a NxP desde esta vista filtra primero una o más tiendas (filtro «Tienda»), así queda claro dónde aplica.'
       : nivel !== 'tienda_item' ? 'Desde esta vista, agregar a NxP se pide por «Tienda-item». Para pedirlo en todas las tiendas usa los niveles Item o Laboratorio de Foto actual.' : '')
     : ''
   const nombreAccion = `${accion === 'agregar' ? 'Agregar a' : 'Quitar de'} ${tipo === 'nxp' ? 'NxP' : 'compras'}`
   return (<>
-    <Tooltip title="Pide agregar o quitar NxP / compras de lo marcado en la tabla (casilla de la izquierda), por laboratorio, item o tienda-item. Otro grupo la aprueba.">
-      <Button size="small" variant="outlined" onClick={() => { setNivel(nivelInicial ?? (filas.some(r => r.bodega_id) ? 'tienda_item' : 'item')); setPaso('armar'); setAbierto(true) }}>
-        Solicitar cambio{filas.length ? ` (${filas.length})` : ''}</Button>
+    <Tooltip title={filas.length ? 'Pide agregar o quitar NxP / compras de lo marcado en la tabla (casilla de la izquierda), por laboratorio, item o tienda-item. Otro grupo la aprueba.'
+      : 'Marca una o más filas en la tabla (casilla de la izquierda) para solicitar un cambio.'}>
+      <span>
+        <Button size="small" variant="outlined" disabled={!filas.length} onClick={() => { setNivel(nivelInicial ?? (filas.some(r => r.bodega_id) ? 'tienda_item' : 'item')); setPaso('armar'); setAbierto(true) }}>
+          Solicitar cambio{filas.length ? ` (${filas.length})` : ''}</Button>
+      </span>
     </Tooltip>
     <Dialog open={abierto} onClose={() => setAbierto(false)} maxWidth="md" fullWidth>
       <DialogTitle>{paso === 'armar' ? 'Solicitar cambio' : 'Confirma lo que vas a enviar a aprobación'}</DialogTitle>

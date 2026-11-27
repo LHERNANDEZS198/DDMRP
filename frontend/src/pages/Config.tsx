@@ -173,7 +173,7 @@ function ConfigTabla({ grupo = 'ddmrp' }: { grupo?: 'ddmrp' | 'compras' }) {
   }
 
   const confirmarModo = async () => modo !== 'reemplazar' ||
-    await confirmar('Reemplazar todo el maestro', `Se borra todo “${def?.label}” y queda exactamente lo que cargues. No se puede deshacer.`, { peligro: true, si: 'Sí, reemplazar' })
+    await confirmar('Reemplazar todo el maestro', (def?.llave ?? []).includes('empresa') ? `Se borra lo de “${def?.label}” de las empresas que traiga el archivo (lo de la otra empresa no se toca) y queda exactamente lo que cargues. No se puede deshacer.` : `Se borra todo “${def?.label}” y queda exactamente lo que cargues. No se puede deshacer.`, { peligro: true, si: 'Sí, reemplazar' })
 
   const descargar = async () => {
     try { setMsg(`Preparando ${sel}.xlsx… los maestros grandes tardan un poco`); await bajar(`/maestros/${sel}/excel${consultaExcel()}`, `${sel}.xlsx`); setMsg('Descargado ' + sel + '.xlsx' + (hayFiltro ? ' (solo lo filtrado)' : '')) }

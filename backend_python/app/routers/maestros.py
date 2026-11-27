@@ -827,8 +827,9 @@ def _importar_(nombre: str, d: dict, filas: list[dict], modo: str, user, omitir:
         existentes = c.execute(text(f"SELECT count(*) FROM {uniq} JOIN {tabla} t ON " +
                                     " AND ".join(f"t.{k} = CAST(s.{k} AS {CAST[tipos[k]]})" for k in llave))).scalar()
         if reemplazo:
-            if d.get("reemplazo_por_empresa"):   # items: reemplazar una empresa no borra lo de la otra
-                c.execute(text(f"DELETE FROM {tabla} WHERE empresa = ANY(:em)"), {"em": sorted({f["empresa"] for f in filas})})
+            ems = sorted({str(f["empresa"]) for f in filas if f.get("empresa")}) if "empresa" in llave else []
+            if d.get("reemplazo_por_empresa") or ems:   # items y todo maestro con empresa en la llave: reemplazar una empresa NO borra lo de la otra (la bitacora de Stores se perdio asi)
+                c.execute(text(f"DELETE FROM {tabla} WHERE empresa = ANY(:em)"), {"em": ems or sorted({f["empresa"] for f in filas})})
             else:
                 c.execute(text(f"DELETE FROM {tabla}"))
             existentes = 0
